@@ -106,6 +106,7 @@ export interface EmailMeta {
   dateDisplay: string;
   timestamp: number;
   unread: boolean;
+  flagged: boolean;
   lang: string;
   trust: TrustTag;
   risk?: RiskInfo | null;

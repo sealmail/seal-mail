@@ -96,7 +96,7 @@ fn e2e_verified_mail() {
     let body = "Quarterly report attached.\nNumbers look good.";
     let raw = build_raw("Mara Castellanos", "mara@aragon.eth", "Q2 Report", body, Some(&id));
     let trusted = trusted_for(&id, "Mara Castellanos", "mara@aragon.eth");
-    let mail = parse_email(&raw, 1, "acc1", "INBOX", true, &trusted).unwrap();
+    let mail = parse_email(&raw, 1, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "verified");
     match mail.verify {
         VerifyDetail::Verified { contact_name, verified_count, .. } => {
@@ -111,7 +111,7 @@ fn e2e_verified_mail() {
 fn e2e_signed_unknown_mail() {
     let id = test_identity();
     let raw = build_raw("New Person", "new@startup.io", "Intro", "Hi, we just met.", Some(&id));
-    let mail = parse_email(&raw, 2, "acc1", "INBOX", true, &[]).unwrap();
+    let mail = parse_email(&raw, 2, "acc1", "INBOX", true, false, &[]).unwrap();
     assert_eq!(mail.meta.trust, "signedUnknown");
 }
 
@@ -125,7 +125,7 @@ fn e2e_tampered_mail() {
         .unwrap()
         .replace("The amount is 100 USD.", "The amount is 999 USD.");
     let trusted = trusted_for(&id, "Mara Castellanos", "mara@aragon.eth");
-    let mail = parse_email(tampered.as_bytes(), 3, "acc1", "INBOX", true, &trusted).unwrap();
+    let mail = parse_email(tampered.as_bytes(), 3, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "tampered");
     match mail.verify {
         VerifyDetail::Tampered { signed_hash, got_hash, .. } => assert_ne!(signed_hash, got_hash),
@@ -145,7 +145,7 @@ fn e2e_impersonation_by_display_name() {
         None,
     );
     let trusted = trusted_for(&id, "Mara Castellanos", "mara@aragon.eth");
-    let mail = parse_email(&raw, 4, "acc1", "INBOX", true, &trusted).unwrap();
+    let mail = parse_email(&raw, 4, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "impersonation");
     match mail.verify {
         VerifyDetail::Impersonation { got_domain, real_domain, .. } => {
@@ -172,14 +172,14 @@ fn e2e_impersonation_wrong_key_same_address() {
         Some(&id_fake),
     );
     let trusted = trusted_for(&id_real, "Mara Castellanos", "mara@aragon.eth");
-    let mail = parse_email(&raw, 5, "acc1", "INBOX", true, &trusted).unwrap();
+    let mail = parse_email(&raw, 5, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "impersonation");
 }
 
 #[test]
 fn e2e_unsigned_mail() {
     let raw = build_raw("Yuki Tanaka", "yuki@kanso.jp", "こんにちは", "初めてご連絡いたします。", None);
-    let mail = parse_email(&raw, 6, "acc1", "INBOX", false, &[]).unwrap();
+    let mail = parse_email(&raw, 6, "acc1", "INBOX", false, false, &[]).unwrap();
     assert_eq!(mail.meta.trust, "unsigned");
     assert_eq!(mail.meta.lang, "JA");
 }
@@ -246,7 +246,7 @@ fn e2e_eth_verified_mail() {
         since: "2025-01-01".into(),
         verified_count: 7,
     }];
-    let mail = parse_email(&raw, 10, "acc1", "INBOX", true, &trusted).unwrap();
+    let mail = parse_email(&raw, 10, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "verified");
     match mail.verify {
         VerifyDetail::Verified { method, fingerprint, .. } => {
@@ -257,7 +257,7 @@ fn e2e_eth_verified_mail() {
     }
 
     // 无可信记录 → signedUnknown
-    let mail2 = parse_email(&raw, 11, "acc1", "INBOX", true, &[]).unwrap();
+    let mail2 = parse_email(&raw, 11, "acc1", "INBOX", true, false, &[]).unwrap();
     assert_eq!(mail2.meta.trust, "signedUnknown");
 }
 
@@ -270,7 +270,7 @@ fn e2e_eth_tampered_mail() {
     let tampered = String::from_utf8(raw)
         .unwrap()
         .replace("Wire 100 USD to account A.", "Wire 999 USD to account B.");
-    let mail = parse_email(tampered.as_bytes(), 12, "acc1", "INBOX", true, &[]).unwrap();
+    let mail = parse_email(tampered.as_bytes(), 12, "acc1", "INBOX", true, false, &[]).unwrap();
     assert_eq!(mail.meta.trust, "tampered");
 }
 
@@ -310,7 +310,7 @@ fn lang_detection() {
 
 fn mk_mail(from_addr: &str, subject: &str, body: &str) -> EmailFull {
     let raw = build_raw("Someone", from_addr, subject, body, None);
-    parse_email(&raw, 1, "acc1", "INBOX", true, &[]).unwrap()
+    parse_email(&raw, 1, "acc1", "INBOX", true, false, &[]).unwrap()
 }
 
 #[test]
@@ -374,12 +374,12 @@ fn e2e_self_signed_mail_is_verified() {
     let raw = build_raw("Molin", "me@example.com", "test", "self test\r\n", Some(&store.identity));
 
     // 不注入本人身份：黄色 signedUnknown
-    let plain = parse_email(&raw, 1, "a1", "INBOX", false, &store.trusted).unwrap();
+    let plain = parse_email(&raw, 1, "a1", "INBOX", false, false, &store.trusted).unwrap();
     assert_eq!(plain.meta.trust, "signedUnknown");
 
     // 注入本人身份：绿色 verified
     let trusted = store.trusted_for_verify(&account);
-    let own = parse_email(&raw, 1, "a1", "INBOX", false, &trusted).unwrap();
+    let own = parse_email(&raw, 1, "a1", "INBOX", false, false, &trusted).unwrap();
     assert_eq!(own.meta.trust, "verified");
     match own.verify {
         VerifyDetail::Verified { contact_name, fingerprint, .. } => {

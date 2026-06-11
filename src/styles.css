@@ -204,6 +204,22 @@ input, textarea, select { font-family: inherit; }
   border: 1px solid transparent; background: transparent; color: var(--mut);
 }
 .list-filterbar .seg.on { background: var(--bg-chip); border-color: var(--border-2); color: var(--ink-3); font-weight: 600; }
+.list-error-bar {
+  font-size: 11px; color: #9A5B16; background: #FBF7EC; border-bottom: 1px solid #E2C893;
+  padding: 6px 14px; line-height: 1.5;
+}
+.star-btn {
+  border: none; background: transparent; cursor: pointer; padding: 0 2px;
+  font-size: 13px; color: #C7C1B2; line-height: 1; flex-shrink: 0;
+}
+.star-btn.on { color: #C99B4E; }
+.star-btn:hover { color: #C99B4E; }
+.load-more {
+  display: block; width: calc(100% - 28px); margin: 10px 14px 14px; height: 32px;
+  border: 1px dashed var(--border-2); border-radius: 9px; background: transparent;
+  color: var(--mut); font-size: 12px; cursor: pointer;
+}
+.load-more:hover { background: var(--bg-chip); }
 .icon-btn {
   border: none; background: none; cursor: pointer; color: var(--mut-2); font-size: 14px;
   padding: 4px 6px; border-radius: 6px; line-height: 1;

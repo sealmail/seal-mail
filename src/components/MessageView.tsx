@@ -17,6 +17,7 @@ interface Props {
   onShowRisk: () => void;
   onTrustSender: () => void;
   onMarkUnread: () => void;
+  onToggleFlag: () => void;
 }
 
 function fmtSize(n: number) {
@@ -114,6 +115,9 @@ export function MessageView(p: Props) {
                     </option>
                   ))}
                 </select>
+                <button className="btn-ghost" onClick={p.onToggleFlag} title={m.meta.flagged ? "取消星标" : "加星标"}>
+                  {m.meta.flagged ? "★ 已星标" : "☆ 星标"}
+                </button>
                 <button className="btn-ghost" onClick={p.onMarkUnread} title="标为未读">
                   标为未读
                 </button>

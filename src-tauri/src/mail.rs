@@ -252,6 +252,7 @@ pub fn parse_email(
     account_id: &str,
     folder: &str,
     unread: bool,
+    flagged: bool,
     trusted: &[TrustedContact],
 ) -> Result<EmailFull, String> {
     let msg = MessageParser::default()
@@ -334,6 +335,7 @@ pub fn parse_email(
         date_display: format_date(timestamp),
         timestamp,
         unread,
+        flagged,
         lang: detect_lang(&body_text),
         trust: verify.trust_tag().to_string(),
         risk,

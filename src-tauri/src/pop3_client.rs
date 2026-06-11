@@ -101,6 +101,21 @@ impl Pop3Client {
         self.read_multiline()
     }
 
+    /// UIDL 列表：(seq, uidl)。uidl 是跨会话稳定的邮件标识
+    pub fn uidl(&mut self) -> Result<Vec<(u32, String)>, String> {
+        self.cmd("UIDL")?;
+        let body = self.read_multiline()?;
+        let text = String::from_utf8_lossy(&body);
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let mut parts = line.split_whitespace();
+            let (Some(seq), Some(uidl)) = (parts.next(), parts.next()) else { continue };
+            let seq: u32 = seq.parse().map_err(|_| format!("UIDL 响应异常: {}", line))?;
+            out.push((seq, uidl.to_string()));
+        }
+        Ok(out)
+    }
+
     pub fn delete(&mut self, n: u32) -> Result<(), String> {
         self.cmd(&format!("DELE {}", n)).map(|_| ())
     }
@@ -112,42 +127,63 @@ impl Pop3Client {
     }
 }
 
-pub struct RawPopMail {
-    pub seq: u32,
-    pub raw: Vec<u8>,
+/// 一次 POP3 增量同步的结果
+pub struct PopSync {
+    /// 新邮件 (uidl, raw)
+    pub new_mails: Vec<(String, Vec<u8>)>,
+    /// 服务器现存全部 uidl（用于检测服务器侧删除）
+    pub all_uidls: Vec<String>,
 }
 
-pub fn fetch_window(
+/// 按 UIDL 增量拉取：known 里没有的才下载；首次（known 为空）只取最近 initial_window 封
+pub fn sync_fetch(
     account: &Account,
     secret: &AccountSecret,
-    limit: u32,
-) -> Result<Vec<RawPopMail>, String> {
+    known: &std::collections::HashSet<String>,
+    initial_window: u32,
+) -> Result<PopSync, String> {
     let mut c = Pop3Client::connect(account, secret)?;
-    let count = c.message_count()?;
-    let start = count.saturating_sub(limit.saturating_sub(1)).max(1);
-    let mut out = Vec::new();
-    if count > 0 {
-        for n in (start..=count).rev() {
-            match c.retrieve(n) {
-                Ok(raw) => out.push(RawPopMail { seq: n, raw }),
-                Err(_) => continue,
-            }
+    let list = c.uidl()?;
+    let all_uidls: Vec<String> = list.iter().map(|(_, u)| u.clone()).collect();
+    let mut unknown: Vec<&(u32, String)> = list.iter().filter(|(_, u)| !known.contains(u)).collect();
+    if known.is_empty() && unknown.len() > initial_window as usize {
+        // 首次同步只取最近一窗，避免一口气下完整个邮箱
+        unknown = unknown.split_off(unknown.len() - initial_window as usize);
+    }
+    let mut new_mails = Vec::new();
+    for (seq, uidl) in unknown {
+        match c.retrieve(*seq) {
+            Ok(raw) => new_mails.push((uidl.clone(), raw)),
+            Err(e) => eprintln!("[pop3] RETR {} 失败: {}", seq, e),
         }
     }
     c.quit();
-    Ok(out)
+    Ok(PopSync { new_mails, all_uidls })
 }
 
-/// 拉取单封邮件原文（附件下载用）
-pub fn fetch_raw(account: &Account, secret: &AccountSecret, seq: u32) -> Result<Vec<u8>, String> {
+/// 按 UIDL 拉取单封原文（附件下载用；seq 跨会话不稳定，必须用 uidl 定位）
+pub fn fetch_raw_by_uidl(account: &Account, secret: &AccountSecret, uidl: &str) -> Result<Vec<u8>, String> {
     let mut c = Pop3Client::connect(account, secret)?;
+    let seq = c
+        .uidl()?
+        .into_iter()
+        .find(|(_, u)| u == uidl)
+        .map(|(s, _)| s)
+        .ok_or("邮件已不在服务器上")?;
     let raw = c.retrieve(seq)?;
     c.quit();
     Ok(raw)
 }
 
-pub fn delete_message(account: &Account, secret: &AccountSecret, seq: u32) -> Result<(), String> {
+/// 按 UIDL 物理删除
+pub fn delete_by_uidl(account: &Account, secret: &AccountSecret, uidl: &str) -> Result<(), String> {
     let mut c = Pop3Client::connect(account, secret)?;
+    let seq = c
+        .uidl()?
+        .into_iter()
+        .find(|(_, u)| u == uidl)
+        .map(|(s, _)| s)
+        .ok_or("邮件已不在服务器上")?;
     c.delete(seq)?;
     c.quit();
     Ok(())

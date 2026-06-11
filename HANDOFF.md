@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v8：阅读窗一键信任发件人）
+> 最后更新：2026-06-11（v9：产品 review 后 P0/P1 全量落地——SQLite 缓存、HTML 渲染、附件、联系人、草稿、撤销发送、回收站、星标、快捷键、系统通知）
 
 ## 项目定位
 
@@ -117,6 +117,37 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
       带外核实建议 + 「确认信任」/「取消」；确认走原 trust_sender 流程，封印即刻变绿
 - [x] 换邮件自动收起确认卡（useEffect on uid）；styles.css 新增 .trust-chip / .trust-confirm
 
+### v9（产品 review 后 P0/P1 一次性落地，9 个 commit）
+- [x] **SQLite 本地缓存 + 增量同步**（db.rs，rusqlite bundled，mail.db）：
+      存原始 RFC822 + 少量列（unread/flagged/timestamp/pop_uidl）；**读取时重新解析+验证**，
+      信任列表变化无需迁移缓存即可生效。IMAP：UIDVALIDITY 变化全量重建，否则先 UID 探测再拉新邮件全文，
+      FLAGS 回扫最近 200 封（已读/星标/服务器侧删除检测）；POP3：UIDL 识别、本地自增 uid、
+      目录/已读/星标全在本地列（弃用 local_assign/local_read 旧路径）。
+      前端 list_cached 秒出（离线可用）+ sync_messages 后台同步 + 「加载更早的邮件」分页；
+      同步失败显示细条提示，缓存列表不消失
+- [x] **删除安全**：删除=移入回收站（LIST 找 \Trash 特殊属性或常见名，找不到就建 "Trash"；
+      POP3 用本地「已删除」虚拟目录）；回收站内删除才物理删且弹确认框
+- [x] **HTML 正文渲染**（HtmlBody.tsx）：DOMParser 消毒（去 script/iframe/form/on*/javascript: 等）
+      → sandbox iframe（仅 allow-same-origin，无脚本）；远程图片默认阻止（防追踪像素）可一键加载；
+      链接经 opener 跳系统浏览器。**已签名邮件默认仍显示纯文本（签名 canon 只覆盖文本，所见即所验）**，
+      可手动切 HTML 并带警示；未签名邮件默认 HTML
+- [x] **附件**：阅读窗每个附件可「保存」（优先用本地缓存原文，缺失回源；POP3 用 UIDL 定位）；
+      写信可添加多个附件（tauri-plugin-dialog 选文件，后端读取，mail-builder 按扩展名猜 MIME）。
+      注意：附件不在签名哈希范围内
+- [x] **联系人自动收集 + 补全**（contacts.json）：收信记发件人、发信记收件人（次数+最近往来）；
+      写信 To/Cc 输入片段即出下拉（AddrInput.tsx，键盘 ↑↓/Enter/Tab）
+- [x] **草稿**（drafts.json）：写信防抖 800ms 自动保存，关窗前再 flush；发送成功自动删除；
+      侧栏「草稿」入口（DraftsPane）可恢复/删除
+- [x] **撤销发送**：点发送先进 10 秒倒计时（标题+底部提示），期间可「↩ 撤销」或「立即发送」；
+      倒计时中点 × 只取消发送不关窗
+- [x] **快捷键**：Cmd+/-/0 缩放（body zoom，localStorage 持久）、Cmd+N 写信、Cmd+R 回复、
+      Cmd+Shift+R 回复全部、Cmd+F 聚焦搜索、↑↓/j/k 切邮件、Delete 删除（输入框聚焦时不抢键）
+- [x] **未读/星标**：列表头「全部/未读/星标」三段切换；全部已读（mark_read 批量单连接）；
+      标为未读按钮；星标 IMAP \Flagged 双向同步（回扫窗口内），POP3 本地记录
+- [x] **To/Cc 显示**：阅读窗头部显示收件人/抄送列表
+- [x] **新邮件系统通知**（tauri-plugin-notification）：watcher 检测到新邮件且窗口未聚焦时弹横幅，
+      设置页可关（prefs.notify_new_mail）
+
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）
 - `TAURI_SIGNING_PRIVATE_KEY` = ~/.tauri/sealmail-updater.key 的内容（私钥，签 updater 工件）
@@ -125,32 +156,9 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 
 ## 待办 / 路线图（2026-06-11 产品 review 后重排，定位「小而美」）
 
-### P0 — 没有就当不了主力客户端
+P0/P1 全部 12 项已在 v9 落地（见上）。剩余：
 
-1. **SQLite 本地缓存 + 增量同步**（病根：目前每次全量拉最近 30 封 BODY.PEEK[]，
-   无本地存储 → 切目录等网络、只有 30 封、断网全瞎、搜索范围小。
-   方案：rusqlite mail.db；IMAP 按 UIDVALIDITY+UID 增量、近窗口同步 FLAGS、检测删除；
-   POP3 用 UIDL；列表秒出本地数据+后台刷新+加载更多）
-2. **删除安全**：删除 = 移入"已删除"目录（IMAP 找/建 Trash），永久删除仅限 Trash 内且弹确认
-   （现状是 \Deleted+EXPUNGE 直接物理删除，手抖即丢信）
-3. **HTML 正文安全渲染**：sanitize 后入 sandbox iframe，默认阻止远程图片（防追踪），
-   一键"加载图片"；链接跳系统浏览器（现状只渲染纯文本，现代邮件大半没法看）
-4. **附件**：下载保存收到的附件；写信可添加附件
-5. **联系人自动收集 + 收件人自动补全**：从收发历史静默建表（本地），To/Cc 输入下拉补全。
-   不做完整通讯录页面——"输两个字母就出来"才是刚需本体
-6. **草稿自动保存**：写一半关掉不丢；侧栏草稿入口可恢复
-
-### P1 — 好用与否的分水岭
-
-7. **撤销发送**：点发送后本地倒计时 10s 再真正走 SMTP，期间可一键撤销
-8. **键盘快捷键**：Cmd+/-/0 字号缩放（存偏好）、Cmd+N 写信、Cmd+R 回复、
-   ↑↓/j/k 切邮件、Delete 删除、Cmd+F 聚焦搜索
-9. **未读过滤 + 标为未读 / 全部已读**（列表头"全部/未读"切换）
-10. **MessageView 显示 To/Cc 收件人列表**（数据已有，未渲染；回复全部前应能看到都有谁）
-11. **新邮件系统通知**（tauri-plugin-notification，窗口隐藏/失焦时弹横幅，可在设置关闭）
-12. **星标/旗标**（IMAP \Flagged；POP3 本地记录）
-
-### P2 — 缓存落地后再做
+### P2 — 下一批
 
 13. 会话线程视图（References/In-Reply-To 聚合）
 14. IMAP 服务器端搜索（本地缓存已覆盖大部分场景后补盲区）

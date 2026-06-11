@@ -44,6 +44,7 @@ hidapi = "2"
 chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"

@@ -84,8 +84,28 @@ export async function createFolder(accountId: string, name: string): Promise<voi
 }
 
 // ── 邮件 ──
-export async function fetchMessages(accountId: string, folder: string, limit = 30): Promise<EmailMeta[]> {
-  return invoke("fetch_messages", { accountId, folder, limit });
+export interface CachedList {
+  metas: EmailMeta[];
+  total: number;
+}
+
+export interface SyncResult {
+  added: number;
+  total: number;
+}
+
+/** 本地缓存分页读取（秒出、可离线） */
+export async function listCached(accountId: string, folder: string, offset: number, limit: number): Promise<CachedList> {
+  return invoke("list_cached", { accountId, folder, offset, limit });
+}
+
+/** 与服务器增量同步（只下载新邮件 + 回扫已读/星标/删除） */
+export async function syncMessages(accountId: string, folder: string): Promise<SyncResult> {
+  return invoke("sync_messages", { accountId, folder });
+}
+
+export async function setFlagged(accountId: string, folder: string, uid: number, flagged: boolean): Promise<void> {
+  return invoke("set_flagged", { accountId, folder, uid, flagged });
 }
 
 export async function getMessage(accountId: string, folder: string, uid: number): Promise<EmailFull> {

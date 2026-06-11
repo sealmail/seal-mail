@@ -188,44 +188,110 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
 pub struct RawMail {
     pub uid: u32,
     pub unread: bool,
+    pub flagged: bool,
     pub raw: Vec<u8>,
 }
 
-pub fn fetch_window(
+/// 一次增量同步从服务器带回的所有信息
+pub struct SyncFetch {
+    pub uidvalidity: u32,
+    /// true = 本地该目录缓存需清空重建（UIDVALIDITY 变化或首次同步）
+    pub reset: bool,
+    pub new_mails: Vec<RawMail>,
+    /// 回扫窗口内服务器现存邮件的 (uid, unread, flagged)，用于同步已读/星标并检测删除
+    pub server_flags: Vec<(u32, bool, bool)>,
+    /// 回扫窗口下界 uid（reset 时无意义）
+    pub flags_low: u32,
+}
+
+fn flags_of(f: &imap::types::Fetch) -> (bool, bool) {
+    let unread = !f.flags().iter().any(|fl| matches!(fl, imap::types::Flag::Seen));
+    let flagged = f.flags().iter().any(|fl| matches!(fl, imap::types::Flag::Flagged));
+    (unread, flagged)
+}
+
+/// 增量同步：
+/// - UIDVALIDITY 变化/首次 → 抓最近 initial_window 封全文
+/// - 否则只抓 uid > max_uid 的新邮件全文，并对最近窗口做 FLAGS 回扫（已读/星标/删除）
+pub fn sync_fetch(
     account: &Account,
     secret: &AccountSecret,
     folder: &str,
-    limit: u32,
-) -> Result<Vec<RawMail>, String> {
+    stored_validity: Option<u32>,
+    max_uid: Option<u32>,
+    flags_low: Option<u32>,
+    initial_window: u32,
+) -> Result<SyncFetch, String> {
     let mut sess = connect(account, secret)?;
     let mailbox = sess
         .select(folder)
         .map_err(|e| format!("无法打开目录 {}: {}", folder, e))?;
-    if mailbox.exists == 0 {
+    let uidvalidity = mailbox.uid_validity.unwrap_or(0);
+    let reset = stored_validity != Some(uidvalidity) || max_uid.is_none();
+
+    let mut new_mails = Vec::new();
+    if reset {
+        if mailbox.exists > 0 {
+            let start = mailbox.exists.saturating_sub(initial_window.saturating_sub(1)).max(1);
+            let fetches = sess
+                .fetch(format!("{}:{}", start, mailbox.exists), "(UID FLAGS BODY.PEEK[])")
+                .map_err(|e| format!("拉取邮件失败: {}", e))?;
+            for f in fetches.iter() {
+                let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+                let (unread, flagged) = flags_of(f);
+                new_mails.push(RawMail { uid, unread, flagged, raw: raw.to_vec() });
+            }
+        }
         let _ = sess.logout();
-        return Ok(vec![]);
+        return Ok(SyncFetch { uidvalidity, reset: true, new_mails, server_flags: vec![], flags_low: 0 });
     }
-    let start = mailbox.exists.saturating_sub(limit.saturating_sub(1)).max(1);
-    let range = format!("{}:{}", start, mailbox.exists);
-    let fetches = sess
-        .fetch(&range, "(UID FLAGS BODY.PEEK[])")
-        .map_err(|e| format!("拉取邮件失败: {}", e))?;
-    let mut out = Vec::new();
-    for f in fetches.iter() {
-        let uid = match f.uid {
-            Some(u) => u,
-            None => continue,
-        };
-        let raw = match f.body() {
-            Some(b) => b.to_vec(),
-            None => continue,
-        };
-        let unread = !f.flags().iter().any(|fl| matches!(fl, imap::types::Flag::Seen));
-        out.push(RawMail { uid, unread, raw });
+
+    let max = max_uid.expect("checked above");
+    // 先只探测新 UID（UID FETCH n:* 在没有新邮件时也会返回最大 uid 那封，需过滤），
+    // 有新邮件才拉全文，避免每轮同步重复下载最新一封
+    let probe = sess
+        .uid_fetch(format!("{}:*", max + 1), "UID")
+        .map_err(|e| format!("探测新邮件失败: {}", e))?;
+    let new_uids: Vec<u32> = probe.iter().filter_map(|f| f.uid).filter(|u| *u > max).collect();
+    if !new_uids.is_empty() {
+        let set = new_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+        let fetches = sess
+            .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
+            .map_err(|e| format!("拉取新邮件失败: {}", e))?;
+        for f in fetches.iter() {
+            let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+            let (unread, flagged) = flags_of(f);
+            new_mails.push(RawMail { uid, unread, flagged, raw: raw.to_vec() });
+        }
+    }
+    // FLAGS 回扫（轻量，不带正文）
+    let low = flags_low.unwrap_or(1);
+    let flag_fetches = sess
+        .uid_fetch(format!("{}:*", low), "(UID FLAGS)")
+        .map_err(|e| format!("同步邮件状态失败: {}", e))?;
+    let mut server_flags = Vec::new();
+    for f in flag_fetches.iter() {
+        let Some(uid) = f.uid else { continue };
+        let (unread, flagged) = flags_of(f);
+        server_flags.push((uid, unread, flagged));
     }
     let _ = sess.logout();
-    out.reverse(); // 最新的在前
-    Ok(out)
+    Ok(SyncFetch { uidvalidity, reset: false, new_mails, server_flags, flags_low: low })
+}
+
+pub fn set_flagged(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    uid: u32,
+    flagged: bool,
+) -> Result<(), String> {
+    let mut sess = connect(account, secret)?;
+    sess.select(folder).map_err(|e| e.to_string())?;
+    let op = if flagged { "+FLAGS (\\Flagged)" } else { "-FLAGS (\\Flagged)" };
+    sess.uid_store(uid.to_string(), op).map_err(|e| e.to_string())?;
+    let _ = sess.logout();
+    Ok(())
 }
 
 /// 拉取单封邮件原文（附件下载用）

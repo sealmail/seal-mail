@@ -7,11 +7,15 @@ interface Props {
   messages: EmailMeta[];
   selectedUid: number | null;
   loading: boolean;
+  syncing: boolean;
   error: string | null;
-  unreadOnly: boolean;
+  filterMode: "all" | "unread" | "flagged";
   unreadCount: number;
-  onToggleUnreadOnly: () => void;
+  hasMore: boolean;
+  onFilterMode: (m: "all" | "unread" | "flagged") => void;
   onMarkAllRead: () => void;
+  onToggleFlag: (m: EmailMeta) => void;
+  onLoadMore: () => void;
   onSelect: (m: EmailMeta) => void;
   onRefresh: () => void;
 }
@@ -30,7 +34,7 @@ export function MailList(p: Props) {
       <div className="list-head">
         <span className="title">{p.title}</span>
         <span className="meta">
-          {p.messages.length} 封
+          {p.syncing ? "同步中…" : `${p.messages.length} 封`}
           {p.unreadCount > 0 && (
             <button className="icon-btn" title="全部标为已读" onClick={p.onMarkAllRead}>
               ✓✓
@@ -42,16 +46,20 @@ export function MailList(p: Props) {
         </span>
       </div>
       <div className="list-filterbar">
-        <button className={`seg${p.unreadOnly ? "" : " on"}`} onClick={() => p.unreadOnly && p.onToggleUnreadOnly()}>
+        <button className={`seg${p.filterMode === "all" ? " on" : ""}`} onClick={() => p.onFilterMode("all")}>
           全部
         </button>
-        <button className={`seg${p.unreadOnly ? " on" : ""}`} onClick={() => !p.unreadOnly && p.onToggleUnreadOnly()}>
+        <button className={`seg${p.filterMode === "unread" ? " on" : ""}`} onClick={() => p.onFilterMode("unread")}>
           未读{p.unreadCount > 0 ? ` ${p.unreadCount}` : ""}
+        </button>
+        <button className={`seg${p.filterMode === "flagged" ? " on" : ""}`} onClick={() => p.onFilterMode("flagged")}>
+          ★ 星标
         </button>
       </div>
       <div className="list-scroll">
-        {p.loading && <div className="empty-pane">正在拉取邮件…</div>}
-        {!p.loading && p.error && (
+        {p.loading && <div className="empty-pane">正在读取本地缓存…</div>}
+        {!p.loading && p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
+        {!p.loading && p.error && p.messages.length === 0 && (
           <div className="empty-pane">
             <div style={{ fontSize: 20 }}>⚠</div>
             {p.error}
@@ -67,7 +75,6 @@ export function MailList(p: Props) {
           </div>
         )}
         {!p.loading &&
-          !p.error &&
           p.messages.map((m) => {
             const selected = m.uid === p.selectedUid;
             return (
@@ -84,6 +91,16 @@ export function MailList(p: Props) {
                   <div className="top">
                     {m.unread && <div className="unread-dot" />}
                     <span className="from">{m.fromName}</span>
+                    <button
+                      className={`star-btn${m.flagged ? " on" : ""}`}
+                      title={m.flagged ? "取消星标" : "加星标"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        p.onToggleFlag(m);
+                      }}
+                    >
+                      {m.flagged ? "★" : "☆"}
+                    </button>
                     <span className="time">{m.dateDisplay}</span>
                   </div>
                   <div className="subject">{m.subject}</div>
@@ -98,6 +115,11 @@ export function MailList(p: Props) {
               </div>
             );
           })}
+        {!p.loading && p.hasMore && (
+          <button className="load-more" onClick={p.onLoadMore}>
+            加载更早的邮件
+          </button>
+        )}
       </div>
     </div>
   );

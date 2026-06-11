@@ -181,6 +181,8 @@ pub struct EmailMeta {
     pub date_display: String,
     pub timestamp: i64,
     pub unread: bool,
+    #[serde(default)]
+    pub flagged: bool,
     pub lang: String,
     pub trust: String,
     pub risk: Option<RiskInfo>,

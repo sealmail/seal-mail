@@ -33,7 +33,9 @@ export default function App() {
   // 验证面板默认折叠成图标条，用户主动展开后记住偏好
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem("sealmail.railOpen") === "1");
   const [search, setSearch] = useState("");
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [filterMode, setFilterMode] = useState<"all" | "unread" | "flagged">("all");
+  const [total, setTotal] = useState(0);
+  const [syncing, setSyncing] = useState(false);
   // 界面缩放（Cmd+/-/0），WebKit 支持非标准 zoom 属性
   const [zoom, setZoom] = useState(() => {
     const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
@@ -99,35 +101,65 @@ export default function App() {
     refreshFolders(accountId).catch((e) => setListError(String(e)));
   }, [accountId, refreshFolders]);
 
-  // ── 拉邮件 ──
+  // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
+  const PAGE = 50;
+  const loadedRef = useRef(0);
+
+  const loadCached = useCallback(
+    async (count: number) => {
+      const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+      const res = await api.listCached(accountId, realFolder, 0, count);
+      loadedRef.current = res.metas.length;
+      setTotal(res.total);
+      if (realFolder === "INBOX") setInboxMetas(res.metas);
+      let metas = folder === RISK_FOLDER ? res.metas.filter(isRisky) : res.metas;
+      metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
+      setMessages(metas);
+      setSelected((prev) => (prev && metas.some((m) => m.uid === prev.meta.uid) ? prev : null));
+    },
+    [accountId, folder]
+  );
+
   const loadMessages = useCallback(async () => {
     if (!accountId) return;
     if (folder === DRAFTS_FOLDER) return; // 草稿是本地数据，不走邮件拉取
     const seq = ++fetchSeq.current;
-    setLoading(true);
     setListError(null);
+    // 1) 本地缓存先上屏（离线也能看）
+    setLoading(loadedRef.current === 0);
     try {
-      const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-      let metas = await api.fetchMessages(accountId, realFolder);
-      if (seq !== fetchSeq.current) return;
-      if (realFolder === "INBOX") setInboxMetas(metas);
-      if (folder === RISK_FOLDER) metas = metas.filter(isRisky);
-      metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
-      setMessages(metas);
-      setSelected((prev) => (prev && metas.some((m) => m.uid === prev.meta.uid) ? prev : null));
+      await loadCached(Math.max(loadedRef.current, PAGE));
     } catch (e) {
-      if (seq === fetchSeq.current) {
-        setMessages([]);
-        setListError(String(e));
-      }
+      if (seq === fetchSeq.current) setListError(String(e));
     } finally {
       if (seq === fetchSeq.current) setLoading(false);
     }
-  }, [accountId, folder]);
+    if (seq !== fetchSeq.current) return;
+    // 2) 后台与服务器增量同步，再回填
+    setSyncing(true);
+    try {
+      const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+      await api.syncMessages(accountId, realFolder);
+      if (seq === fetchSeq.current) await loadCached(Math.max(loadedRef.current, PAGE));
+    } catch (e) {
+      if (seq === fetchSeq.current) setListError(`同步失败（本地缓存仍可用）：${e}`);
+    } finally {
+      if (seq === fetchSeq.current) setSyncing(false);
+    }
+  }, [accountId, folder, loadCached]);
 
   useEffect(() => {
+    loadedRef.current = 0;
     loadMessages();
   }, [loadMessages]);
+
+  async function handleLoadMore() {
+    try {
+      await loadCached(loadedRef.current + PAGE);
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
 
   // ── 新邮件推送（后端 IMAP IDLE / POP3 轮询发出 new-mail 事件）──
   useEffect(() => {
@@ -161,11 +193,12 @@ export default function App() {
     }
   }
 
-  // ── 搜索（本地过滤：发件人/主题/摘要/地址）+ 未读过滤 ──
+  // ── 搜索（本地过滤：发件人/主题/摘要/地址）+ 未读/星标过滤 ──
   const shownMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = messages;
-    if (unreadOnly) list = list.filter((m) => m.unread);
+    if (filterMode === "unread") list = list.filter((m) => m.unread);
+    if (filterMode === "flagged") list = list.filter((m) => m.flagged);
     if (!q) return list;
     return list.filter(
       (m) =>
@@ -174,7 +207,7 @@ export default function App() {
         m.subject.toLowerCase().includes(q) ||
         m.preview.toLowerCase().includes(q)
     );
-  }, [messages, search, unreadOnly]);
+  }, [messages, search, filterMode]);
 
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
@@ -205,6 +238,21 @@ export default function App() {
     try {
       await api.markRead(accountId, realFolder, uids);
       markLocal(uids, false);
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
+
+  async function handleToggleFlag(m: EmailMeta) {
+    const next = !m.flagged;
+    try {
+      await api.setFlagged(m.accountId, m.folder, m.uid, next);
+      const patch = (ms: EmailMeta[]) => ms.map((x) => (x.uid === m.uid ? { ...x, flagged: next } : x));
+      setMessages(patch);
+      setInboxMetas(patch);
+      setSelected((prev) =>
+        prev && prev.meta.uid === m.uid ? { ...prev, meta: { ...prev.meta, flagged: next } } : prev
+      );
     } catch (e) {
       setListError(String(e));
     }
@@ -510,11 +558,15 @@ export default function App() {
                 messages={shownMessages}
                 selectedUid={selected?.meta.uid ?? null}
                 loading={loading}
+                syncing={syncing}
                 error={listError}
-                unreadOnly={unreadOnly}
+                filterMode={filterMode}
                 unreadCount={listUnread}
-                onToggleUnreadOnly={() => setUnreadOnly((v) => !v)}
+                hasMore={loadedRef.current < total && folder !== RISK_FOLDER}
+                onFilterMode={setFilterMode}
                 onMarkAllRead={handleMarkAllRead}
+                onToggleFlag={handleToggleFlag}
+                onLoadMore={handleLoadMore}
                 onSelect={selectMail}
                 onRefresh={loadMessages}
               />
@@ -529,6 +581,7 @@ export default function App() {
                 onShowRisk={() => setRiskOpen(true)}
                 onTrustSender={handleTrustSender}
                 onMarkUnread={handleMarkUnread}
+                onToggleFlag={() => selected && handleToggleFlag(selected.meta)}
               />
               <VerifyRail
                 mail={selected}

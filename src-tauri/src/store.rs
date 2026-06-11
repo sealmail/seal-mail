@@ -31,6 +31,8 @@ pub struct StoreData {
     pub drafts: Vec<Draft>,
     /// 内存缓存：完整邮件，key = account/folder/uid
     pub mail_cache: HashMap<String, EmailFull>,
+    /// SQLite 邮件缓存（mail.db；原始邮件 + 列表状态，离线可读）
+    pub db: rusqlite::Connection,
 }
 
 fn read_json<T: DeserializeOwned + Default>(path: &PathBuf) -> T {
@@ -49,7 +51,9 @@ impl StoreData {
     pub fn load(dir: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let identity = crate::crypto::load_or_create_identity(&dir)?;
+        let db = crate::db::open(&dir)?;
         Ok(StoreData {
+            db,
             accounts: read_json(&dir.join("accounts.json")),
             secrets: read_json(&dir.join("secrets.json")),
             filters: read_json(&dir.join("filters.json")),
