@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Seal } from "./Seal";
-import { getCloseBehavior, setCloseBehavior, useLocalKey } from "../api";
+import { getCloseBehavior, getNotifyNewMail, setCloseBehavior, setNotifyNewMail, useLocalKey } from "../api";
 import { LedgerBindModal } from "./LedgerBindModal";
 import { shortFpr } from "../trust";
 import {
@@ -42,6 +42,22 @@ export function KeysView(p: Props) {
   async function handleCloseBehavior(next: "hide" | "quit") {
     try {
       setCloseBehaviorState(await setCloseBehavior(next));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // ── 新邮件系统通知 ──
+  const [notify, setNotify] = useState<boolean | null>(null);
+  useEffect(() => {
+    getNotifyNewMail()
+      .then(setNotify)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  async function handleNotify(next: boolean) {
+    try {
+      setNotify(await setNotifyNewMail(next));
     } catch (e) {
       setError(String(e));
     }
@@ -352,6 +368,30 @@ export function KeysView(p: Props) {
             >
               <option value="hide">隐藏窗口</option>
               <option value="quit">退出应用</option>
+            </select>
+          </div>
+
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 14, marginTop: 16,
+              paddingTop: 16, borderTop: "1px solid #ECE8DC",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#2A2E36" }}>新邮件系统通知</div>
+              <div style={{ fontSize: 11.5, color: "#8A8576", marginTop: 2, lineHeight: 1.5 }}>
+                窗口在后台或隐藏时，收到新邮件弹系统横幅
+              </div>
+            </div>
+            <select
+              className="select"
+              style={{ width: 130 }}
+              value={notify === null ? "on" : notify ? "on" : "off"}
+              disabled={notify === null}
+              onChange={(e) => void handleNotify(e.target.value === "on")}
+            >
+              <option value="on">开启</option>
+              <option value="off">关闭</option>
             </select>
           </div>
         </div>

@@ -125,6 +125,19 @@ fn set_close_behavior(state: State<'_, AppState>, behavior: String) -> Result<St
     Ok(behavior)
 }
 
+#[tauri::command]
+fn get_notify_new_mail(state: State<'_, AppState>) -> bool {
+    state.inner.lock().unwrap().prefs.notify_new_mail
+}
+
+#[tauri::command]
+fn set_notify_new_mail(state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
+    let mut s = state.inner.lock().unwrap();
+    s.prefs.notify_new_mail = enabled;
+    s.save_prefs()?;
+    Ok(enabled)
+}
+
 // ───────────────────────── oauth2 (Microsoft 设备码) ─────────────────────────
 
 #[tauri::command]
@@ -797,7 +810,8 @@ async fn check_for_update() -> Result<updater::UpdateInfo, String> {
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init());
     #[cfg(desktop)]
     {
         builder = builder
@@ -862,6 +876,8 @@ pub fn run() {
             remove_trusted,
             get_close_behavior,
             set_close_behavior,
+            get_notify_new_mail,
+            set_notify_new_mail,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

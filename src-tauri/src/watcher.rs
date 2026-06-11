@@ -46,8 +46,43 @@ pub fn ensure_watchers(app: &AppHandle) {
     }
 }
 
-fn emit_new_mail(app: &AppHandle, account_id: &str) {
+fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32) {
     let _ = app.emit("new-mail", serde_json::json!({ "accountId": account_id }));
+    notify_new_mail(app, account_id, new_count);
+}
+
+/// 窗口未聚焦且偏好开启时弹系统通知横幅
+fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32) {
+    use tauri_plugin_notification::NotificationExt;
+    let (enabled, email) = {
+        let state = app.state::<AppState>();
+        let s = state.inner.lock().unwrap();
+        let email = match s.accounts.iter().find(|a| a.id == account_id) {
+            Some(a) => a.email.clone(),
+            None => return,
+        };
+        (s.prefs.notify_new_mail, email)
+    };
+    if !enabled {
+        return;
+    }
+    let focused = app
+        .webview_windows()
+        .values()
+        .next()
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    if focused {
+        return; // 正在看着应用就不用打扰了
+    }
+    let body = if new_count > 1 {
+        format!("{} 收到 {} 封新邮件", email, new_count)
+    } else {
+        format!("{} 收到新邮件", email)
+    };
+    if let Err(e) = app.notification().builder().title("SealMail 信印").body(body).show() {
+        eprintln!("[watcher] 系统通知发送失败: {}", e);
+    }
 }
 
 /// 取账户凭据（OAuth 令牌临近过期则阻塞刷新并回写）。
@@ -133,7 +168,7 @@ fn idle_session(
 fn check_exists(app: &AppHandle, account_id: &str, exists: u32, last: &mut Option<u32>) {
     if let Some(prev) = *last {
         if exists > prev {
-            emit_new_mail(app, account_id);
+            emit_new_mail(app, account_id, exists - prev);
         }
     }
     *last = Some(exists);

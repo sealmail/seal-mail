@@ -44,6 +44,14 @@ export async function setCloseBehavior(behavior: "hide" | "quit"): Promise<"hide
   return invoke("set_close_behavior", { behavior });
 }
 
+export async function getNotifyNewMail(): Promise<boolean> {
+  return invoke("get_notify_new_mail");
+}
+
+export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
+  return invoke("set_notify_new_mail", { enabled });
+}
+
 // ── OAuth2（Microsoft 设备码授权）──
 export async function oauthBeginDevice(clientId?: string): Promise<DeviceFlowStart> {
   return invoke("oauth_begin_device", { clientId: clientId ?? null });

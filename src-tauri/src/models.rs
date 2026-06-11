@@ -206,6 +206,8 @@ pub struct EmailFull {
 #[serde(default, rename_all = "camelCase")]
 pub struct AppPrefs {
     pub close_behavior: String,
+    /// 新邮件系统通知（窗口未聚焦时弹横幅）
+    pub notify_new_mail: bool,
 }
 
 fn default_close_behavior() -> String {
@@ -218,7 +220,10 @@ fn default_close_behavior() -> String {
 
 impl Default for AppPrefs {
     fn default() -> Self {
-        AppPrefs { close_behavior: default_close_behavior() }
+        AppPrefs {
+            close_behavior: default_close_behavior(),
+            notify_new_mail: true,
+        }
     }
 }
 
