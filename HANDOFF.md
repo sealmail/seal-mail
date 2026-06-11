@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v2 进行中）
+> 最后更新：2026-06-11（v4：Microsoft OAuth2 设备码登录）
 
 ## 项目定位
 
@@ -65,6 +65,21 @@
 - [x] 公私钥都不入库：tauri.conf.json pubkey 留空占位，CI 构建时用 --config 注入
 - [x] __APP_VERSION__ 由 vite define 注入（package.json version 为准）
 
+### v4（Microsoft OAuth2 设备码登录）
+背景：用户实测 Exchange Online（wanchain.org）密码登录报 `AUTHENTICATE failed`——
+微软官方文档明确 Outlook.com / Exchange Online 的 IMAP/POP/SMTP "requires the use of
+Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
+- [x] `oauth.rs`：RFC 8628 设备码流程（begin/poll）+ refresh_token 自动刷新 + XOAUTH2 SASL 串；
+      默认 client_id 用 Thunderbird 公共客户端（已实测 /common 支持设备码），UI 可改填自有 Azure 应用
+- [x] 三协议接入：IMAP `AUTHENTICATE XOAUTH2`（二次挑战回空串拿最终错误）、
+      POP3 `AUTH XOAUTH2 <base64>`、SMTP lettre `Mechanism::Xoauth2`
+- [x] `Account.auth`（password|oauth2，serde 默认 password 兼容旧数据）；
+      `AccountSecret.oauth: Option<OAuthTokens>` 存 secrets.json（0600）
+- [x] `fresh_secret()`：所有连接前检查 access_token（到期前 2 分钟）自动刷新并回写
+- [x] AccountModal：Exchange 预设默认 OAuth2 模式——「用 Microsoft 账户授权」→ 自动开浏览器
+      （microsoft.com/devicelogin）→ 大字号显示设备代码 → 轮询直到授权成功 → 测试/保存
+- [x] 测试：oauth 单测 2 个（SASL 串格式、令牌解析/刷新沿用旧 refresh_token/缺失报错）
+
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）
 - `TAURI_SIGNING_PRIVATE_KEY` = ~/.tauri/sealmail-updater.key 的内容（私钥，签 updater 工件）
@@ -73,8 +88,8 @@
 
 ## 待办 / 路线图（按优先级）
 
-1. **OAuth2 / XOAUTH2**（Exchange Online、Gmail 个人账户基础认证均被淘汰，应用密码是过渡方案）
-   - IMAP XOAUTH2 SASL + SMTP AUTH XOAUTH2；设备码流程 UI
+1. **Gmail OAuth2**（Microsoft 已完成；Gmail 需注册 Google Cloud OAuth 客户端，
+   目前 Gmail 走应用专用密码仍可用）
 2. **本地邮件缓存**（SQLite）：目前每次刷新全量拉最近 30 封 BODY.PEEK[]，应增量缓存
 3. IMAP IDLE 实时推送 / 定时轮询
 4. 附件：下载保存、发送带附件

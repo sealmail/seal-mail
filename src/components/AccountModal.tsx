@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { addAccount, testConnection } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { addAccount, oauthBeginDevice, oauthPollDevice, testConnection } from "../api";
 import { PROVIDER_PRESETS } from "../types";
-import type { Account } from "../types";
+import type { Account, AccountSecret, DeviceFlowStart, OAuthTokens } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -25,6 +26,15 @@ export function AccountModal(p: Props) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
+  // OAuth2 设备码授权状态（Exchange Online / Outlook.com 已强制 OAuth2）
+  const [authMode, setAuthMode] = useState<"password" | "oauth2">(preset.oauth ? "oauth2" : "password");
+  const [clientId, setClientId] = useState("");
+  const [device, setDevice] = useState<DeviceFlowStart | null>(null);
+  const [tokens, setTokens] = useState<OAuthTokens | null>(null);
+  // 轮询代际：+1 即作废正在跑的轮询循环（取消/重开/关闭弹窗）
+  const pollGen = useRef(0);
+  useEffect(() => () => void pollGen.current++, []);
+
   function applyPreset(key: string) {
     const pr = PROVIDER_PRESETS.find((x) => x.key === key)!;
     setPresetKey(key);
@@ -33,8 +43,47 @@ export function AccountModal(p: Props) {
     setSmtpHost(pr.smtpHost);
     setSmtpPort(pr.smtpPort);
     setSmtpSecurity(pr.smtpSecurity);
+    setAuthMode(pr.oauth ? "oauth2" : "password");
+    cancelDeviceFlow();
+    setTokens(null);
     setOk(null);
     setError(null);
+  }
+
+  function cancelDeviceFlow() {
+    pollGen.current++;
+    setDevice(null);
+  }
+
+  async function startDeviceFlow() {
+    setError(null);
+    setOk(null);
+    setTokens(null);
+    const gen = ++pollGen.current;
+    try {
+      const d = await oauthBeginDevice(clientId.trim() || undefined);
+      if (pollGen.current !== gen) return;
+      setDevice(d);
+      await openUrl(d.verificationUri);
+      const intervalMs = Math.max(1, d.interval) * 1000;
+      while (pollGen.current === gen) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        if (pollGen.current !== gen) return;
+        const res = await oauthPollDevice(d.clientId, d.deviceCode);
+        if (pollGen.current !== gen) return;
+        if (res.status === "ok") {
+          setTokens(res.tokens);
+          setDevice(null);
+          setOk("Microsoft 授权成功，现在可以测试连接并保存账户");
+          return;
+        }
+      }
+    } catch (e) {
+      if (pollGen.current === gen) {
+        setError(String(e));
+        setDevice(null);
+      }
+    }
   }
 
   function buildAccount(): Account {
@@ -50,12 +99,18 @@ export function AccountModal(p: Props) {
       smtpPort,
       smtpSecurity,
       username: (username || email).trim(),
+      auth: authMode,
     };
+  }
+
+  function buildSecret(): AccountSecret {
+    return authMode === "oauth2" ? { password: "", oauth: tokens } : { password };
   }
 
   function validate(): string | null {
     if (!email.includes("@")) return "请填写正确的邮箱地址";
-    if (!password) return "请填写密码 / 授权码";
+    if (authMode === "oauth2" && !tokens) return "请先点击「用 Microsoft 账户授权」完成登录";
+    if (authMode === "password" && !password) return "请填写密码 / 授权码";
     if (!incomingHost.trim() || !smtpHost.trim()) return "请填写服务器地址";
     return null;
   }
@@ -67,7 +122,7 @@ export function AccountModal(p: Props) {
     setError(null);
     setOk(null);
     try {
-      await testConnection(buildAccount(), { password });
+      await testConnection(buildAccount(), buildSecret());
       setOk("连接成功：收件与发件服务器均验证通过");
     } catch (e) {
       setError(String(e));
@@ -82,7 +137,7 @@ export function AccountModal(p: Props) {
     setBusy("save");
     setError(null);
     try {
-      const acc = await addAccount(buildAccount(), { password });
+      const acc = await addAccount(buildAccount(), buildSecret());
       p.onAdded(acc);
     } catch (e) {
       setError(String(e));
@@ -125,16 +180,88 @@ export function AccountModal(p: Props) {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {preset.oauth && (
             <div className="field">
-              <label>登录用户名（默认同邮箱）</label>
-              <input className="input mono" placeholder={email || "可留空"} value={username} onChange={(e) => setUsername(e.target.value)} />
+              <label>认证方式</label>
+              <select
+                className="select"
+                value={authMode}
+                onChange={(e) => {
+                  setAuthMode(e.target.value as "password" | "oauth2");
+                  cancelDeviceFlow();
+                  setError(null);
+                  setOk(null);
+                }}
+              >
+                <option value="oauth2">OAuth2 授权登录（微软现已强制，推荐）</option>
+                <option value="password">密码 / 应用密码（多数租户已被微软禁用）</option>
+              </select>
             </div>
-            <div className="field">
-              <label>密码 / 授权码 / 应用密码</label>
-              <input className="input mono" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          )}
+
+          {authMode === "oauth2" ? (
+            <div
+              className="field"
+              style={{ border: "1px solid #E4DFD3", borderRadius: 10, padding: 14, gap: 10, display: "flex", flexDirection: "column" }}
+            >
+              {tokens ? (
+                <>
+                  <div className="form-ok">✓ 已获得 Microsoft 授权（令牌只保存在本机）</div>
+                  <button className="btn-ghost" style={{ height: 34, alignSelf: "flex-start" }} onClick={startDeviceFlow}>
+                    重新授权
+                  </button>
+                </>
+              ) : device ? (
+                <>
+                  <div style={{ fontSize: 12, color: "#6F6A5E" }}>
+                    已在浏览器打开 Microsoft 登录页面，请输入以下代码并用 <b>{email || "你的邮箱"}</b> 登录：
+                  </div>
+                  <div
+                    className="mono"
+                    style={{ fontSize: 26, letterSpacing: 4, fontWeight: 700, textAlign: "center", padding: "6px 0", userSelect: "all" }}
+                  >
+                    {device.userCode}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#6F6A5E", textAlign: "center" }}>正在等待授权完成…</div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button className="btn-ghost" style={{ height: 34 }} onClick={() => openUrl(device.verificationUri)}>
+                      重新打开登录页面
+                    </button>
+                    <button className="btn-ghost" style={{ height: 34 }} onClick={cancelDeviceFlow}>
+                      取消
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <button className="btn-primary" style={{ height: 40 }} onClick={startDeviceFlow}>
+                    用 Microsoft 账户授权
+                  </button>
+                  <div style={{ fontSize: 11, color: "#A39E91", lineHeight: 1.5 }}>
+                    将打开浏览器，在 microsoft.com/devicelogin 输入代码完成登录。组织若禁止第三方应用，可在下方填入自己注册的
+                    Azure 应用 Client ID。
+                  </div>
+                  <input
+                    className="input mono"
+                    placeholder="Client ID（可留空，默认使用通用邮件客户端 ID）"
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                  />
+                </>
+              )}
             </div>
-          </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div className="field">
+                <label>登录用户名（默认同邮箱）</label>
+                <input className="input mono" placeholder={email || "可留空"} value={username} onChange={(e) => setUsername(e.target.value)} />
+              </div>
+              <div className="field">
+                <label>密码 / 授权码 / 应用密码</label>
+                <input className="input mono" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
             <div className="field">
@@ -179,8 +306,8 @@ export function AccountModal(p: Props) {
           {ok && <div className="form-ok">{ok}</div>}
 
           <div style={{ fontSize: 11, color: "#A39E91", lineHeight: 1.6 }}>
-            密码只保存在本机（应用配置目录，权限 600），不会上传。Exchange Online 用户：管理员需启用 IMAP 与
-            SMTP AUTH，个人账户建议使用应用密码。
+            密码与 OAuth 令牌只保存在本机（应用配置目录，权限 600），不会上传。Exchange Online / Outlook.com
+            已被微软强制使用 OAuth2，请选择「用 Microsoft 账户授权」。
           </div>
         </div>
         <div className="modal-foot">

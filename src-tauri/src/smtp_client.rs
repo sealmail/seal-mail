@@ -1,7 +1,7 @@
 use crate::crypto::{self, Identity};
 use crate::models::*;
 use lettre::address::Envelope;
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::{SmtpTransport, Transport};
 use mail_builder::headers::raw::Raw;
 use mail_builder::MessageBuilder;
@@ -39,12 +39,19 @@ fn transport(account: &Account, secret: &AccountSecret) -> Result<SmtpTransport,
         SmtpTransport::relay(&account.smtp_host)
     }
     .map_err(|e| format!("SMTP 配置错误: {}", e))?;
+    let builder = builder.port(account.smtp_port);
+    if let Some(oauth) = &secret.oauth {
+        // XOAUTH2：密码位传 access_token
+        return Ok(builder
+            .credentials(Credentials::new(account.username.clone(), oauth.access_token.clone()))
+            .authentication(vec![Mechanism::Xoauth2])
+            .build());
+    }
     let password = secret
         .smtp_password
         .clone()
         .unwrap_or_else(|| secret.password.clone());
     Ok(builder
-        .port(account.smtp_port)
         .credentials(Credentials::new(account.username.clone(), password))
         .build())
 }

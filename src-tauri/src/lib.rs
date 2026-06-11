@@ -4,6 +4,7 @@ pub mod imap_client;
 pub mod ledger;
 pub mod mail;
 pub mod models;
+pub mod oauth;
 pub mod pop3_client;
 pub mod smtp_client;
 pub mod store;
@@ -105,6 +106,43 @@ fn use_local_key(state: State<'_, AppState>) -> Result<IdentityInfo, String> {
     Ok(identity_info(&s))
 }
 
+// ───────────────────────── oauth2 (Microsoft 设备码) ─────────────────────────
+
+#[tauri::command]
+async fn oauth_begin_device(client_id: Option<String>) -> Result<oauth::DeviceFlowStart, String> {
+    let cid = client_id
+        .filter(|c| !c.trim().is_empty())
+        .unwrap_or_else(|| oauth::DEFAULT_MS_CLIENT_ID.to_string());
+    oauth::begin_device_flow(cid.trim()).await
+}
+
+#[tauri::command]
+async fn oauth_poll_device(client_id: String, device_code: String) -> Result<oauth::DevicePoll, String> {
+    oauth::poll_device(&client_id, &device_code).await
+}
+
+/// 取账户凭据；OAuth2 账户的 access_token 临近过期时先刷新并回写 secrets.json
+async fn fresh_secret(state: &State<'_, AppState>, account_id: &str) -> Result<AccountSecret, String> {
+    let secret = {
+        let s = state.inner.lock().unwrap();
+        s.secret(account_id)?
+    };
+    let Some(tokens) = &secret.oauth else { return Ok(secret) };
+    if !tokens.needs_refresh() {
+        return Ok(secret);
+    }
+    let refreshed = oauth::refresh_tokens(tokens).await?;
+    let mut s = state.inner.lock().unwrap();
+    let entry = s
+        .secrets
+        .get_mut(account_id)
+        .ok_or_else(|| format!("账户密码缺失: {}", account_id))?;
+    entry.oauth = Some(refreshed);
+    let updated = entry.clone();
+    s.save_secrets()?;
+    Ok(updated)
+}
+
 #[tauri::command]
 async fn test_connection(account: Account, secret: AccountSecret) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -166,10 +204,11 @@ fn remove_account(state: State<'_, AppState>, account_id: String) -> Result<(), 
 
 #[tauri::command]
 async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<Vec<FolderInfo>, String> {
-    let (account, secret, local) = {
+    let (account, local) = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.secret(&account_id)?, s.local_folders.clone())
+        (s.account(&account_id)?, s.local_folders.clone())
     };
+    let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
             tauri::async_runtime::spawn_blocking(move || imap_client::list_folders(&account, &secret))
@@ -186,10 +225,11 @@ async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<
 
 #[tauri::command]
 async fn create_folder(state: State<'_, AppState>, account_id: String, name: String) -> Result<(), String> {
-    let (account, secret) = {
+    let account = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.secret(&account_id)?)
+        s.account(&account_id)?
     };
+    let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
             tauri::async_runtime::spawn_blocking(move || imap_client::create_folder(&account, &secret, &name))
@@ -221,10 +261,11 @@ async fn fetch_messages(
     limit: Option<u32>,
 ) -> Result<Vec<EmailMeta>, String> {
     let limit = limit.unwrap_or(30).min(100);
-    let (account, secret, trusted) = {
+    let (account, trusted) = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.secret(&account_id)?, s.trusted.clone())
+        (s.account(&account_id)?, s.trusted.clone())
     };
+    let secret = fresh_secret(&state, &account_id).await?;
 
     match account.protocol {
         IncomingProtocol::Imap => {
@@ -295,10 +336,11 @@ async fn move_message(
     uid: u32,
     target: String,
 ) -> Result<(), String> {
-    let (account, secret) = {
+    let account = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.secret(&account_id)?)
+        s.account(&account_id)?
     };
+    let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
             let (f2, t2) = (folder.clone(), target.clone());
@@ -335,10 +377,11 @@ async fn set_read(
     uid: u32,
     read: bool,
 ) -> Result<(), String> {
-    let (account, secret) = {
+    let account = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.secret(&account_id)?)
+        s.account(&account_id)?
     };
+    let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
             let f2 = folder.clone();
@@ -373,10 +416,11 @@ async fn delete_message(
     folder: String,
     uid: u32,
 ) -> Result<(), String> {
-    let (account, secret) = {
+    let account = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.secret(&account_id)?)
+        s.account(&account_id)?
     };
+    let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
             let f2 = folder.clone();
@@ -411,16 +455,16 @@ async fn send_mail(
     body: String,
     sign: bool,
 ) -> Result<smtp_client::SendResult, String> {
-    let (account, secret, key_bytes, created, id_cfg) = {
+    let (account, key_bytes, created, id_cfg) = {
         let s = state.inner.lock().unwrap();
         (
             s.account(&account_id)?,
-            s.secret(&account_id)?,
             s.identity.signing_key.to_bytes(),
             s.identity.created.clone(),
             s.identity_config.clone(),
         )
     };
+    let secret = fresh_secret(&state, &account_id).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let identity = crypto::Identity {
             signing_key: ed25519_dalek::SigningKey::from_bytes(&key_bytes),
@@ -573,6 +617,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_state,
             check_for_update,
+            oauth_begin_device,
+            oauth_poll_device,
             ledger_get_addresses,
             bind_ledger,
             use_local_key,

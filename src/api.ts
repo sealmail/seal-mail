@@ -4,6 +4,8 @@ import type {
   AccountSecret,
   AppStateView,
   ApplyResult,
+  DeviceFlowStart,
+  DevicePoll,
   EmailFull,
   EmailMeta,
   FilterRule,
@@ -29,6 +31,15 @@ export async function bindLedger(path: string, address: string): Promise<Identit
 
 export async function useLocalKey(): Promise<IdentityInfo> {
   return invoke("use_local_key");
+}
+
+// ── OAuth2（Microsoft 设备码授权）──
+export async function oauthBeginDevice(clientId?: string): Promise<DeviceFlowStart> {
+  return invoke("oauth_begin_device", { clientId: clientId ?? null });
+}
+
+export async function oauthPollDevice(clientId: string, deviceCode: string): Promise<DevicePoll> {
+  return invoke("oauth_poll_device", { clientId, deviceCode });
 }
 
 // ── 账户 ──

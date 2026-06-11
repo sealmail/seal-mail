@@ -12,11 +12,34 @@ export interface Account {
   smtpPort: number;
   smtpSecurity: "ssl" | "starttls";
   username: string;
+  /** password | oauth2 */
+  auth: "password" | "oauth2";
 }
+
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  clientId: string;
+}
+
+export interface DeviceFlowStart {
+  userCode: string;
+  verificationUri: string;
+  message: string;
+  deviceCode: string;
+  /** 轮询间隔（秒） */
+  interval: number;
+  expiresIn: number;
+  clientId: string;
+}
+
+export type DevicePoll = { status: "pending" } | { status: "ok"; tokens: OAuthTokens };
 
 export interface AccountSecret {
   password: string;
   smtpPassword?: string | null;
+  oauth?: OAuthTokens | null;
 }
 
 export interface TrustedContact {
@@ -144,6 +167,8 @@ export interface ProviderPreset {
   key: string;
   label: string;
   note?: string;
+  /** 支持 Microsoft OAuth2 设备码授权（Exchange Online / Outlook.com 已强制） */
+  oauth?: boolean;
   protocol: "imap" | "pop3";
   incomingHost: string;
   incomingPort: number;
@@ -156,7 +181,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     key: "exchange-online",
     label: "Exchange Online / Outlook · Office 365",
-    note: "需在 Microsoft 账户开启应用密码（或由管理员启用 IMAP+SMTP AUTH）",
+    note: "微软已停用 IMAP/SMTP 密码登录，请使用 OAuth2 授权（点击下方按钮用 Microsoft 账户登录）",
+    oauth: true,
     protocol: "imap",
     incomingHost: "outlook.office365.com",
     incomingPort: 993,

@@ -21,9 +21,23 @@ impl Pop3Client {
             .map_err(|e| format!("TLS 握手失败: {}", e))?;
         let mut c = Pop3Client { reader: BufReader::new(stream) };
         c.read_line_ok()?; // 服务器问候
-        c.cmd(&format!("USER {}", account.username))?;
-        c.cmd(&format!("PASS {}", secret.password))
-            .map_err(|e| format!("POP3 登录失败（请检查密码或应用专用密码）: {}", e))?;
+        if let Some(oauth) = &secret.oauth {
+            // RFC 5034 SASL 带初始响应：AUTH XOAUTH2 <base64>
+            use base64::{engine::general_purpose::STANDARD as B64, Engine};
+            let b64 = B64.encode(crate::oauth::xoauth2_string(&account.username, &oauth.access_token));
+            if let Err(e) = c.cmd(&format!("AUTH XOAUTH2 {}", b64)) {
+                // 服务器可能用 "+ <base64>" 继续挑战携带错误详情：回空行取最终 -ERR
+                if e.starts_with('+') {
+                    let _ = c.write_cmd("");
+                    let _ = c.read_line_ok();
+                }
+                return Err(format!("POP3 OAuth2 登录失败（授权可能已失效，请重新授权）: {}", e));
+            }
+        } else {
+            c.cmd(&format!("USER {}", account.username))?;
+            c.cmd(&format!("PASS {}", secret.password))
+                .map_err(|e| format!("POP3 登录失败（请检查密码或应用专用密码）: {}", e))?;
+        }
         Ok(c)
     }
 

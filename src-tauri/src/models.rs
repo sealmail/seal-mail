@@ -22,15 +22,26 @@ pub struct Account {
     /// "ssl" (implicit TLS) or "starttls" — applies to SMTP; incoming is implicit TLS
     pub smtp_security: String,
     pub username: String,
+    /// "password" | "oauth2"（Exchange Online / Outlook.com 已强制 OAuth2）
+    #[serde(default = "default_auth")]
+    pub auth: String,
+}
+
+fn default_auth() -> String {
+    "password".into()
 }
 
 /// Secrets are kept out of accounts.json, in a 0600 file in the app config dir.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountSecret {
+    #[serde(default)]
     pub password: String,
     #[serde(default)]
     pub smtp_password: Option<String>,
+    /// OAuth2 令牌（auth = "oauth2" 时使用；access_token 过期会自动刷新回写）
+    #[serde(default)]
+    pub oauth: Option<crate::oauth::OAuthTokens>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,7 +1,27 @@
 use crate::models::*;
 use native_tls::TlsConnector;
+use std::cell::Cell;
 
 type ImapSession = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
+
+/// XOAUTH2 SASL：首次挑战回初始响应，服务器若再发挑战（携带错误详情）则回空串
+/// 以拿到最终 NO 响应，避免协议卡死。
+struct XOAuth2<'a> {
+    user: &'a str,
+    token: &'a str,
+    sent: Cell<bool>,
+}
+
+impl imap::Authenticator for XOAuth2<'_> {
+    type Response = String;
+    fn process(&self, _challenge: &[u8]) -> String {
+        if self.sent.replace(true) {
+            String::new()
+        } else {
+            crate::oauth::xoauth2_string(self.user, self.token)
+        }
+    }
+}
 
 pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession, String> {
     let tls = TlsConnector::builder()
@@ -13,9 +33,16 @@ pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession,
         &tls,
     )
     .map_err(|e| format!("无法连接 {}:{} — {}", account.incoming_host, account.incoming_port, e))?;
-    client
-        .login(&account.username, &secret.password)
-        .map_err(|(e, _)| format!("IMAP 登录失败（请检查用户名/密码或应用专用密码）: {}", e))
+    if let Some(oauth) = &secret.oauth {
+        let auth = XOAuth2 { user: &account.username, token: &oauth.access_token, sent: Cell::new(false) };
+        client
+            .authenticate("XOAUTH2", &auth)
+            .map_err(|(e, _)| format!("IMAP OAuth2 登录失败（授权可能已失效，请重新授权）: {}", e))
+    } else {
+        client
+            .login(&account.username, &secret.password)
+            .map_err(|(e, _)| format!("IMAP 登录失败（请检查用户名/密码或应用专用密码）: {}", e))
+    }
 }
 
 pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<FolderInfo>, String> {
