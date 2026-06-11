@@ -234,4 +234,7 @@ pub struct IdentityInfo {
 pub struct FolderInfo {
     pub name: String,
     pub display: String,
+    /// 特殊目录角色："trash" 等；普通目录为 None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }

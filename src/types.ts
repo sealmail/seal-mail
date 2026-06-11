@@ -141,6 +141,8 @@ export interface LedgerAccountRow {
 export interface FolderInfo {
   name: string;
   display: string;
+  /** 特殊目录角色："trash" 等 */
+  role?: string;
 }
 
 export interface AppStateView {

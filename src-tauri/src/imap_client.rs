@@ -129,6 +129,35 @@ pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession,
     }
 }
 
+/// 回收站目录的常见名字（去层级后的末段，小写比较）
+const TRASH_NAMES: &[&str] = &["trash", "deleted items", "deleted messages", "已删除", "已删除邮件", "垃圾箱", "废件箱"];
+
+fn name_is_trash(n: &imap::types::Name) -> bool {
+    // RFC 6154 special-use（Gmail 等在 LIST 中直接返回 \Trash）
+    if n.attributes()
+        .iter()
+        .any(|a| matches!(a, imap::types::NameAttribute::Custom(c) if c.eq_ignore_ascii_case("\\Trash")))
+    {
+        return true;
+    }
+    let name = n.name();
+    let last = name.rsplit(n.delimiter().unwrap_or("/")).next().unwrap_or(name);
+    TRASH_NAMES.contains(&decode_mutf7(last).to_lowercase().as_str())
+}
+
+/// 找到服务器上的回收站目录；不存在则创建 "Trash"
+fn find_or_create_trash(sess: &mut ImapSession) -> Result<String, String> {
+    let names = sess
+        .list(None, Some("*"))
+        .map_err(|e| format!("获取目录失败: {}", e))?;
+    if let Some(n) = names.iter().find(|n| name_is_trash(n)) {
+        return Ok(n.name().to_string());
+    }
+    sess.create("Trash")
+        .map_err(|e| format!("创建回收站目录失败: {}", e))?;
+    Ok("Trash".into())
+}
+
 pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<FolderInfo>, String> {
     let mut sess = connect(account, secret)?;
     let names = sess
@@ -143,7 +172,11 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
                 .rsplit(n.delimiter().unwrap_or("/"))
                 .next()
                 .unwrap_or(&name);
-            FolderInfo { display: decode_mutf7(last), name }
+            FolderInfo {
+                display: decode_mutf7(last),
+                role: if name_is_trash(n) { Some("trash".into()) } else { None },
+                name,
+            }
         })
         .collect();
     let _ = sess.logout();
@@ -255,17 +288,35 @@ pub fn set_read_many(
     Ok(())
 }
 
+/// permanent=false：移入回收站（默认，可恢复）；permanent=true：物理删除（仅回收站内使用）
 pub fn delete_message(
     account: &Account,
     secret: &AccountSecret,
     folder: &str,
     uid: u32,
+    permanent: bool,
 ) -> Result<(), String> {
     let mut sess = connect(account, secret)?;
+    let trash = if permanent { None } else { Some(find_or_create_trash(&mut sess)?) };
     sess.select(folder).map_err(|e| e.to_string())?;
-    sess.uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
-        .map_err(|e| e.to_string())?;
-    sess.expunge().map_err(|e| e.to_string())?;
+    let uidset = uid.to_string();
+    match trash {
+        // 已经在回收站里点删除（前端没要求 permanent 也兜底物理删，避免原地自移）
+        Some(t) if !t.eq_ignore_ascii_case(folder) => {
+            if sess.uid_mv(&uidset, &t).is_err() {
+                sess.uid_copy(&uidset, &t)
+                    .map_err(|e| format!("移入回收站失败: {}", e))?;
+                sess.uid_store(&uidset, "+FLAGS (\\Deleted)")
+                    .map_err(|e| e.to_string())?;
+                sess.expunge().map_err(|e| e.to_string())?;
+            }
+        }
+        _ => {
+            sess.uid_store(&uidset, "+FLAGS (\\Deleted)")
+                .map_err(|e| e.to_string())?;
+            sess.expunge().map_err(|e| e.to_string())?;
+        }
+    }
     let _ = sess.logout();
     Ok(())
 }

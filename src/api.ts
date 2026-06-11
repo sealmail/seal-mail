@@ -94,8 +94,13 @@ export async function markRead(accountId: string, folder: string, uids: number[]
   return invoke("mark_read", { accountId, folder, uids, read });
 }
 
-export async function deleteMessage(accountId: string, folder: string, uid: number): Promise<void> {
-  return invoke("delete_message", { accountId, folder, uid });
+export async function deleteMessage(
+  accountId: string,
+  folder: string,
+  uid: number,
+  permanent = false
+): Promise<void> {
+  return invoke("delete_message", { accountId, folder, uid, permanent });
 }
 
 export async function sendMail(

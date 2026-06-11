@@ -51,6 +51,7 @@ export default function App() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderErr, setNewFolderErr] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const fetchSeq = useRef(0);
 
@@ -209,12 +210,27 @@ export default function App() {
     }
   }
 
-  async function handleDelete() {
+  // 当前选中邮件所在目录是否是回收站（回收站内删除 = 物理删除，需确认）
+  const selectedInTrash = !!selected && folders.find((f) => f.name === selected.meta.folder)?.role === "trash";
+
+  function handleDelete() {
     if (!selected) return;
+    if (selectedInTrash) {
+      setConfirmDelete(true);
+      return;
+    }
+    doDelete(false);
+  }
+
+  async function doDelete(permanent: boolean) {
+    if (!selected) return;
+    setConfirmDelete(false);
     try {
-      await api.deleteMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid);
+      await api.deleteMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid, permanent);
       setSelected(null);
       loadMessages();
+      // 第一次软删除可能刚在服务器上创建了回收站目录，刷新目录列表
+      if (!permanent) refreshFolders(accountId).catch(() => {});
     } catch (e) {
       setListError(String(e));
     }
@@ -255,7 +271,8 @@ export default function App() {
   }
 
   // ── 全局键盘快捷键 ──
-  const anyModalOpen = composeOpen || accountModal || filtersOpen || profileOpen || riskOpen || newFolderOpen;
+  const anyModalOpen =
+    composeOpen || accountModal || filtersOpen || profileOpen || riskOpen || newFolderOpen || confirmDelete;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
@@ -534,6 +551,34 @@ export default function App() {
       )}
 
       {riskOpen && selected && <RiskModal mail={selected} onClose={() => setRiskOpen(false)} />}
+
+      {confirmDelete && selected && (
+        <div className="overlay" onClick={() => setConfirmDelete(false)}>
+          <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span className="title">永久删除</span>
+              <button className="modal-close" onClick={() => setConfirmDelete(false)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "#6E6A5F" }}>
+              「{selected.meta.subject}」已在回收站中，继续删除将<b style={{ color: "#9A2C1D" }}>从服务器上永久移除，无法恢复</b>。
+            </div>
+            <div className="modal-foot">
+              <button className="btn-ghost" style={{ height: 40 }} onClick={() => setConfirmDelete(false)}>
+                取消
+              </button>
+              <button
+                className="btn-primary"
+                style={{ height: 40, background: "#9A2C1D" }}
+                onClick={() => doDelete(true)}
+              >
+                永久删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {newFolderOpen && (
         <div className="overlay" onClick={() => setNewFolderOpen(false)}>

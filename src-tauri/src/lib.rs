@@ -239,8 +239,17 @@ async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<
                 .map_err(|e| e.to_string())?
         }
         IncomingProtocol::Pop3 => {
-            let mut out = vec![FolderInfo { name: "INBOX".into(), display: "收件箱".into() }];
-            out.extend(local.into_iter().map(|f| FolderInfo { display: f.clone(), name: f }));
+            // POP3 无服务器目录：内置一个本地「已删除」虚拟目录承接软删除
+            let mut out = vec![
+                FolderInfo { name: "INBOX".into(), display: "收件箱".into(), role: None },
+                FolderInfo { name: POP3_TRASH.into(), display: "已删除".into(), role: Some("trash".into()) },
+            ];
+            out.extend(
+                local
+                    .into_iter()
+                    .filter(|f| f != POP3_TRASH)
+                    .map(|f| FolderInfo { display: f.clone(), name: f, role: None }),
+            );
             Ok(out)
         }
     }
@@ -275,6 +284,9 @@ async fn create_folder(state: State<'_, AppState>, account_id: String, name: Str
 fn pop_key(account_id: &str, uid: u32) -> String {
     format!("{}/{}", account_id, uid)
 }
+
+/// POP3 本地虚拟回收站目录名
+const POP3_TRASH: &str = "已删除";
 
 #[tauri::command]
 async fn fetch_messages(
@@ -479,13 +491,16 @@ async fn mark_read(
     Ok(())
 }
 
+/// permanent=false（默认）：移入回收站，可恢复；permanent=true：物理删除（前端仅在回收站内确认后使用）
 #[tauri::command]
 async fn delete_message(
     state: State<'_, AppState>,
     account_id: String,
     folder: String,
     uid: u32,
+    permanent: Option<bool>,
 ) -> Result<(), String> {
+    let permanent = permanent.unwrap_or(false);
     let account = {
         let s = state.inner.lock().unwrap();
         s.account(&account_id)?
@@ -495,17 +510,29 @@ async fn delete_message(
         IncomingProtocol::Imap => {
             let f2 = folder.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                imap_client::delete_message(&account, &secret, &f2, uid)
+                imap_client::delete_message(&account, &secret, &f2, uid, permanent)
             })
             .await
             .map_err(|e| e.to_string())??;
         }
         IncomingProtocol::Pop3 => {
-            tauri::async_runtime::spawn_blocking(move || {
-                pop3_client::delete_message(&account, &secret, uid)
-            })
-            .await
-            .map_err(|e| e.to_string())??;
+            if permanent {
+                tauri::async_runtime::spawn_blocking(move || {
+                    pop3_client::delete_message(&account, &secret, uid)
+                })
+                .await
+                .map_err(|e| e.to_string())??;
+                let mut s = state.inner.lock().unwrap();
+                let key = pop_key(&account_id, uid);
+                s.local_assign.remove(&key);
+                s.local_read.retain(|k| k != &key);
+                s.save_local_folders()?;
+            } else {
+                // 软删除：归入本地「已删除」虚拟目录
+                let mut s = state.inner.lock().unwrap();
+                s.local_assign.insert(pop_key(&account_id, uid), POP3_TRASH.into());
+                s.save_local_folders()?;
+            }
         }
     }
     let mut s = state.inner.lock().unwrap();
