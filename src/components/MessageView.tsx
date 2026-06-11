@@ -6,6 +6,7 @@ interface Props {
   mail: EmailFull | null;
   folders: FolderInfo[];
   onReply: () => void;
+  onReplyAll: () => void;
   onForward: () => void;
   onMove: (target: string) => void;
   onDelete: () => void;
@@ -53,6 +54,9 @@ export function MessageView(p: Props) {
               <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <button className="btn-ghost" onClick={p.onReply}>
                   回复
+                </button>
+                <button className="btn-ghost" onClick={p.onReplyAll}>
+                  回复全部
                 </button>
                 <button className="btn-ghost" onClick={p.onForward}>
                   转发

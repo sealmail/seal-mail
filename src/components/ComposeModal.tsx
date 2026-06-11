@@ -6,6 +6,7 @@ import type { Account, IdentityInfo, SendResult } from "../types";
 
 export interface ComposePrefill {
   to?: string;
+  cc?: string;
   subject?: string;
   body?: string;
 }
@@ -25,7 +26,7 @@ function shortAddr(addr: string) {
 export function ComposeModal(p: Props) {
   const [accountId, setAccountId] = useState(p.currentAccountId);
   const [to, setTo] = useState(p.prefill?.to ?? "");
-  const [cc, setCc] = useState("");
+  const [cc, setCc] = useState(p.prefill?.cc ?? "");
   const [subject, setSubject] = useState(p.prefill?.subject ?? "");
   const [body, setBody] = useState(p.prefill?.body ?? "");
   const [sign, setSign] = useState(true);

@@ -4,24 +4,58 @@ import type { EmailFull } from "../types";
 
 interface Props {
   mail: EmailFull | null;
+  /** 展开完整面板；折叠时只显示图标条 */
+  open: boolean;
+  onToggle: () => void;
   onOpenProfile: () => void;
   onTrustSender: () => void;
 }
 
 export function VerifyRail(p: Props) {
-  if (!p.mail) {
+  const st = p.mail ? statusText(p.mail.verify) : null;
+
+  // ── 折叠态：窄条 + 封印图标 + 状态，点击展开 ──
+  if (!p.open) {
+    return (
+      <div
+        className="rail rail-collapsed"
+        style={{ background: st?.railBg ?? "#FAF9F5" }}
+        onClick={p.onToggle}
+        title="展开验证面板"
+      >
+        {p.mail && st ? (
+          <>
+            <Seal trust={p.mail.meta.trust} size={34} />
+            <div className="rail-mini-label" style={{ color: TONE_COLOR[st.tone] }}>
+              {st.title}
+            </div>
+          </>
+        ) : (
+          <div className="rail-mini-label">验证面板</div>
+        )}
+        <div className="rail-toggle">‹</div>
+      </div>
+    );
+  }
+
+  if (!p.mail || !st) {
     return (
       <div className="rail" style={{ background: "#FAF9F5" }}>
+        <button className="rail-collapse-btn" onClick={p.onToggle} title="收起验证面板">
+          »
+        </button>
         <div className="empty-pane">验证面板</div>
       </div>
     );
   }
-  const st = statusText(p.mail.verify);
   const checks = buildChecks(p.mail);
   const canTrust = p.mail.verify.status === "signedUnknown";
 
   return (
     <div className="rail" style={{ background: st.railBg }}>
+      <button className="rail-collapse-btn" onClick={p.onToggle} title="收起验证面板">
+        »
+      </button>
       <div className="rail-scroll">
         <div className="rail-hero">
           <Seal trust={p.mail.meta.trust} size={116} />

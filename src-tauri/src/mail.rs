@@ -265,6 +265,14 @@ pub fn parse_email(
                 .collect()
         })
         .unwrap_or_default();
+    let cc: Vec<String> = msg
+        .cc()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.address().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let subject = msg.subject().unwrap_or("(无主题)").to_string();
     let timestamp = msg.date().map(|d| d.to_timestamp()).unwrap_or(0);
@@ -322,6 +330,7 @@ pub fn parse_email(
     Ok(EmailFull {
         meta,
         to,
+        cc,
         body_text,
         body_html,
         attachments,

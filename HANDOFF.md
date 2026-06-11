@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v4：Microsoft OAuth2 设备码登录）
+> 最后更新：2026-06-11（v5：回复全部 / mUTF-7 目录名 / 验证面板折叠）
 
 ## 项目定位
 
@@ -79,6 +79,16 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] AccountModal：Exchange 预设默认 OAuth2 模式——「用 Microsoft 账户授权」→ 自动开浏览器
       （microsoft.com/devicelogin）→ 大字号显示设备代码 → 轮询直到授权成功 → 测试/保存
 - [x] 测试：oauth 单测 2 个（SASL 串格式、令牌解析/刷新沿用旧 refresh_token/缺失报错）
+
+### v5（实测反馈修复：回复全部 / 目录名乱码 / 验证面板折叠）
+用户用 Exchange 真实账户实测（OAuth 登录成功）后反馈三个问题：
+- [x] 回复全部：EmailFull 增加 cc（mail.rs 解析 Cc 头）；MessageView 新增「回复全部」按钮；
+      To = 原发件人 + 原 To（去自己、去重），Cc = 原 Cc（去自己）
+- [x] 目录名乱码：IMAP 目录名是 modified UTF-7（RFC 3501 §5.1.3，如 &T797Og-）；
+      imap_client.rs 实现 decode/encode_mutf7（3 个单测含 RFC 官方示例「台北」=&U,BTFw-）；
+      display 解码显示，与服务器交互仍用原始名；create_folder 创建中文目录时编码
+- [x] 验证面板太显眼：默认折叠成 54px 窄条（小封印 + 竖排状态字），点击展开完整面板，
+      展开后右上角 » 收起；偏好存 localStorage("sealmail.railOpen")
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）

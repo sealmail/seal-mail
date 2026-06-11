@@ -165,6 +165,8 @@ pub struct EmailMeta {
 pub struct EmailFull {
     pub meta: EmailMeta,
     pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
     pub body_text: String,
     pub body_html: Option<String>,
     pub attachments: Vec<AttachmentMeta>,

@@ -115,6 +115,7 @@ export interface EmailMeta {
 export interface EmailFull {
   meta: EmailMeta;
   to: string[];
+  cc: string[];
   bodyText: string;
   bodyHtml?: string | null;
   attachments: AttachmentMeta[];

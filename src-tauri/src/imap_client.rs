@@ -23,6 +23,90 @@ impl imap::Authenticator for XOAuth2<'_> {
     }
 }
 
+// ── IMAP modified UTF-7（RFC 3501 §5.1.3）──
+// 服务器目录名里的非 ASCII 字符（如中文「已发送」）以 &<改良base64>- 形式传输，
+// 显示时解码、创建目录时编码；与服务器交互一律用原始（编码后）名字。
+
+/// 改良 base64：用 ',' 代替 '/'，无填充，内容为 UTF-16BE
+fn decode_mutf7(s: &str) -> String {
+    use base64::engine::general_purpose::STANDARD_NO_PAD;
+    use base64::Engine;
+    let mut out = String::new();
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c != '&' {
+            out.push(c);
+            continue;
+        }
+        let mut seg = String::new();
+        let mut closed = false;
+        for n in it.by_ref() {
+            if n == '-' {
+                closed = true;
+                break;
+            }
+            seg.push(n);
+        }
+        if seg.is_empty() {
+            // "&-" 表示字面量 '&'
+            out.push('&');
+            continue;
+        }
+        let b64: String = seg.chars().map(|c| if c == ',' { '/' } else { c }).collect();
+        let decoded = STANDARD_NO_PAD.decode(b64.as_bytes()).ok().and_then(|bytes| {
+            let units: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|p| u16::from_be_bytes([p[0], p[1]]))
+                .collect();
+            String::from_utf16(&units).ok()
+        });
+        match decoded {
+            Some(t) => out.push_str(&t),
+            None => {
+                // 不是合法编码段：原样保留
+                out.push('&');
+                out.push_str(&seg);
+                if closed {
+                    out.push('-');
+                }
+            }
+        }
+    }
+    out
+}
+
+fn encode_mutf7(s: &str) -> String {
+    use base64::engine::general_purpose::STANDARD_NO_PAD;
+    use base64::Engine;
+    fn flush(out: &mut String, buf: &mut Vec<u16>) {
+        if buf.is_empty() {
+            return;
+        }
+        let bytes: Vec<u8> = buf.iter().flat_map(|u| u.to_be_bytes()).collect();
+        let b64 = STANDARD_NO_PAD.encode(&bytes).replace('/', ",");
+        out.push('&');
+        out.push_str(&b64);
+        out.push('-');
+        buf.clear();
+    }
+    let mut out = String::new();
+    let mut buf: Vec<u16> = Vec::new();
+    for c in s.chars() {
+        if c == '&' {
+            flush(&mut out, &mut buf);
+            out.push_str("&-");
+        } else if (' '..='~').contains(&c) {
+            flush(&mut out, &mut buf);
+            out.push(c);
+        } else {
+            let mut u = [0u16; 2];
+            buf.extend_from_slice(c.encode_utf16(&mut u));
+        }
+    }
+    flush(&mut out, &mut buf);
+    out
+}
+
 pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession, String> {
     let tls = TlsConnector::builder()
         .build()
@@ -55,12 +139,11 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
         .filter(|n| !n.attributes().iter().any(|a| matches!(a, imap::types::NameAttribute::NoSelect)))
         .map(|n| {
             let name = n.name().to_string();
-            let display = name
+            let last = name
                 .rsplit(n.delimiter().unwrap_or("/"))
                 .next()
-                .unwrap_or(&name)
-                .to_string();
-            FolderInfo { name, display }
+                .unwrap_or(&name);
+            FolderInfo { display: decode_mutf7(last), name }
         })
         .collect();
     let _ = sess.logout();
@@ -114,7 +197,8 @@ pub fn fetch_window(
 
 pub fn create_folder(account: &Account, secret: &AccountSecret, name: &str) -> Result<(), String> {
     let mut sess = connect(account, secret)?;
-    sess.create(name).map_err(|e| format!("创建目录失败: {}", e))?;
+    sess.create(encode_mutf7(name))
+        .map_err(|e| format!("创建目录失败: {}", e))?;
     let _ = sess.logout();
     Ok(())
 }
@@ -169,4 +253,35 @@ pub fn delete_message(
     sess.expunge().map_err(|e| e.to_string())?;
     let _ = sess.logout();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_mutf7, encode_mutf7};
+
+    #[test]
+    fn mutf7_rfc3501_examples() {
+        // RFC 3501 §5.1.3 示例：~peter/mail/&U,BTFw-/&ZeVnLIqe-
+        assert_eq!(decode_mutf7("&U,BTFw-"), "台北");
+        assert_eq!(encode_mutf7("台北"), "&U,BTFw-");
+        // "&-" 是字面量 '&'
+        assert_eq!(decode_mutf7("a&-b"), "a&b");
+        assert_eq!(encode_mutf7("a&b"), "a&-b");
+        // 纯 ASCII 原样
+        assert_eq!(decode_mutf7("INBOX/Sent"), "INBOX/Sent");
+        assert_eq!(encode_mutf7("INBOX/Sent"), "INBOX/Sent");
+    }
+
+    #[test]
+    fn mutf7_roundtrip() {
+        for s in ["已发送", "重要客户 2026", "工作&生活", "收件箱/发票", "Ω≈ç√∫"] {
+            assert_eq!(decode_mutf7(&encode_mutf7(s)), s, "roundtrip failed: {}", s);
+        }
+    }
+
+    #[test]
+    fn mutf7_invalid_segment_kept_verbatim() {
+        // 非法 base64 段不应被吞掉
+        assert_eq!(decode_mutf7("&!!!-x"), "&!!!-x");
+    }
 }

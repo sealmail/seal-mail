@@ -28,6 +28,8 @@ export default function App() {
   const [inboxMetas, setInboxMetas] = useState<EmailMeta[]>([]);
   const [selected, setSelected] = useState<EmailFull | null>(null);
   const [view, setView] = useState<"mail" | "keys">("mail");
+  // 验证面板默认折叠成图标条，用户主动展开后记住偏好
+  const [railOpen, setRailOpen] = useState(() => localStorage.getItem("sealmail.railOpen") === "1");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -170,6 +172,30 @@ export default function App() {
       body: `\n\n----- 原始邮件 -----\n${selected.bodyText}`,
     });
     setComposeOpen(true);
+  }
+
+  function handleReplyAll() {
+    if (!selected) return;
+    const own = (accounts.find((a) => a.id === selected.meta.accountId)?.email ?? "").toLowerCase();
+    const notSelf = (a: string) => a.trim() && a.trim().toLowerCase() !== own;
+    // 回复全部：To = 原发件人 + 原 To（去掉自己），Cc = 原 Cc（去掉自己）
+    const to = [selected.meta.fromAddr, ...selected.to.filter(notSelf)].filter(
+      (v, i, arr) => arr.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i
+    );
+    setComposePrefill({
+      to: to.join(", "),
+      cc: selected.cc.filter(notSelf).join(", "),
+      subject: selected.meta.subject.startsWith("Re:") ? selected.meta.subject : `Re: ${selected.meta.subject}`,
+      body: `\n\n----- 原始邮件 -----\n${selected.bodyText}`,
+    });
+    setComposeOpen(true);
+  }
+
+  function toggleRail() {
+    setRailOpen((o) => {
+      localStorage.setItem("sealmail.railOpen", o ? "0" : "1");
+      return !o;
+    });
   }
 
   function handleForward() {
@@ -327,6 +353,7 @@ export default function App() {
                 mail={selected}
                 folders={folders}
                 onReply={handleReply}
+                onReplyAll={handleReplyAll}
                 onForward={handleForward}
                 onMove={handleMove}
                 onDelete={handleDelete}
@@ -334,6 +361,8 @@ export default function App() {
               />
               <VerifyRail
                 mail={selected}
+                open={railOpen}
+                onToggle={toggleRail}
                 onOpenProfile={() => setProfileOpen(true)}
                 onTrustSender={handleTrustSender}
               />
