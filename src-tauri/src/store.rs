@@ -25,6 +25,8 @@ pub struct StoreData {
     pub local_assign: HashMap<String, String>,
     /// POP3 已读标记（key: account_id/uid）
     pub local_read: Vec<String>,
+    /// 自动收集的联系人（key: 小写邮箱）
+    pub contacts: HashMap<String, Contact>,
     /// 内存缓存：完整邮件，key = account/folder/uid
     pub mail_cache: HashMap<String, EmailFull>,
 }
@@ -53,6 +55,7 @@ impl StoreData {
             local_folders: read_json(&dir.join("local_folders.json")),
             local_assign: read_json(&dir.join("local_assign.json")),
             local_read: read_json(&dir.join("local_read.json")),
+            contacts: read_json(&dir.join("contacts.json")),
             identity_config: read_json(&dir.join("identity.json")),
             prefs: read_json(&dir.join("prefs.json")),
             mail_cache: HashMap::new(),
@@ -96,6 +99,33 @@ impl StoreData {
     pub fn save_trusted(&self) -> Result<(), String> {
         write_json(&self.dir.join("trusted.json"), &self.trusted)
     }
+    pub fn save_contacts(&self) -> Result<(), String> {
+        write_json(&self.dir.join("contacts.json"), &self.contacts)
+    }
+
+    /// 收/发邮件时静默收集联系人（自动补全用）。返回是否有变更（决定要不要落盘）。
+    pub fn upsert_contact(&mut self, name: &str, email: &str, ts: i64) -> bool {
+        let email = email.trim();
+        if email.is_empty() || !email.contains('@') {
+            return false;
+        }
+        let key = email.to_lowercase();
+        let entry = self.contacts.entry(key).or_insert_with(|| Contact {
+            name: String::new(),
+            email: email.to_string(),
+            last_seen: 0,
+            count: 0,
+        });
+        entry.count += 1;
+        if ts > entry.last_seen {
+            entry.last_seen = ts;
+        }
+        if !name.trim().is_empty() && name.trim() != entry.email {
+            entry.name = name.trim().to_string();
+        }
+        true
+    }
+
     pub fn save_local_folders(&self) -> Result<(), String> {
         write_json(&self.dir.join("local_folders.json"), &self.local_folders)?;
         write_json(&self.dir.join("local_assign.json"), &self.local_assign)?;

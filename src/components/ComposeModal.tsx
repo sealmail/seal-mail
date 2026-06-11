@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AddrInput } from "./AddrInput";
 import { Seal } from "./Seal";
 import { sendMail } from "../api";
 import { shortFpr } from "../trust";
@@ -151,8 +152,8 @@ export function ComposeModal(p: Props) {
                   </span>
                 )}
               </div>
-              <input className="input mono" placeholder="收件人地址（多个用逗号分隔）" value={to} onChange={(e) => setTo(e.target.value)} />
-              <input className="input mono" placeholder="抄送（可选）" value={cc} onChange={(e) => setCc(e.target.value)} />
+              <AddrInput placeholder="收件人地址（多个用逗号分隔）" value={to} onChange={setTo} />
+              <AddrInput placeholder="抄送（可选）" value={cc} onChange={setCc} />
               <input className="input" style={{ fontWeight: 500 }} placeholder="主题" value={subject} onChange={(e) => setSubject(e.target.value)} />
               <textarea className="textarea" style={{ minHeight: 180 }} placeholder="正文…" value={body} onChange={(e) => setBody(e.target.value)} />
               <label

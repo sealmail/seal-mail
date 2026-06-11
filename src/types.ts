@@ -138,6 +138,14 @@ export interface LedgerAccountRow {
   address: string;
 }
 
+/** 自动收集的联系人（写信补全用） */
+export interface Contact {
+  name: string;
+  email: string;
+  lastSeen: number;
+  count: number;
+}
+
 export interface FolderInfo {
   name: string;
   display: string;

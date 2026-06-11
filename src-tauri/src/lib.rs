@@ -318,9 +318,13 @@ async fn fetch_messages(
             let mut s = state.inner.lock().unwrap();
             for r in raws {
                 if let Ok(full) = mail::parse_email(&r.raw, r.uid, &account_id, &folder, r.unread, &trusted) {
+                    s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
                     metas.push(full.meta.clone());
                     s.mail_cache.insert(StoreData::cache_key(&account_id, &folder, r.uid), full);
                 }
+            }
+            if let Err(e) = s.save_contacts() {
+                eprintln!("[contacts] 保存失败: {}", e);
             }
             Ok(metas)
         }
@@ -342,9 +346,13 @@ async fn fetch_messages(
                 }
                 let unread = !s.local_read.contains(&key);
                 if let Ok(full) = mail::parse_email(&r.raw, r.seq, &account_id, &folder, unread, &trusted) {
+                    s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
                     metas.push(full.meta.clone());
                     s.mail_cache.insert(StoreData::cache_key(&account_id, &folder, r.seq), full);
                 }
+            }
+            if let Err(e) = s.save_contacts() {
+                eprintln!("[contacts] 保存失败: {}", e);
             }
             Ok(metas)
         }
@@ -562,7 +570,8 @@ async fn send_mail(
         )
     };
     let secret = fresh_secret(&state, &account_id).await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let rcpts: Vec<String> = to.iter().chain(cc.iter()).cloned().collect();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let identity = crypto::Identity {
             signing_key: ed25519_dalek::SigningKey::from_bytes(&key_bytes),
             created,
@@ -579,7 +588,33 @@ async fn send_mail(
         smtp_client::send_mail(&account, &secret, signer, to, cc, &subject, &body)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    // 发送成功：把收件人收进联系人（自动补全）
+    if result.is_ok() {
+        let now = chrono::Local::now().timestamp();
+        let mut s = state.inner.lock().unwrap();
+        for addr in rcpts {
+            s.upsert_contact("", &addr, now);
+        }
+        if let Err(e) = s.save_contacts() {
+            eprintln!("[contacts] 保存失败: {}", e);
+        }
+    }
+    result
+}
+
+/// 联系人查询（写信自动补全）：按往来次数+最近往来排序，最多 8 条
+#[tauri::command]
+fn list_contacts(state: State<'_, AppState>, query: Option<String>) -> Vec<Contact> {
+    let s = state.inner.lock().unwrap();
+    let q = query.unwrap_or_default().trim().to_lowercase();
+    let mut list: Vec<&Contact> = s
+        .contacts
+        .values()
+        .filter(|c| q.is_empty() || c.email.to_lowercase().contains(&q) || c.name.to_lowercase().contains(&q))
+        .collect();
+    list.sort_by(|a, b| b.count.cmp(&a.count).then(b.last_seen.cmp(&a.last_seen)));
+    list.into_iter().take(8).cloned().collect()
 }
 
 // ───────────────────────── filters ─────────────────────────
@@ -747,6 +782,7 @@ pub fn run() {
             mark_read,
             delete_message,
             send_mail,
+            list_contacts,
             save_filter,
             delete_filter,
             apply_filters,

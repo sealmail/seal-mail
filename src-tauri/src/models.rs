@@ -44,6 +44,18 @@ pub struct AccountSecret {
     pub oauth: Option<crate::oauth::OAuthTokens>,
 }
 
+/// 自动从收发记录里收集的联系人（写信时自动补全用；contacts.json）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Contact {
+    pub name: String,
+    pub email: String,
+    /// 最近一次往来（unix 秒）
+    pub last_seen: i64,
+    /// 往来次数（排序权重）
+    pub count: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrustedContact {

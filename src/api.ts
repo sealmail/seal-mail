@@ -4,6 +4,7 @@ import type {
   AccountSecret,
   AppStateView,
   ApplyResult,
+  Contact,
   DeviceFlowStart,
   DevicePoll,
   EmailFull,
@@ -112,6 +113,11 @@ export async function sendMail(
   sign: boolean
 ): Promise<SendResult> {
   return invoke("send_mail", { accountId, to, cc, subject, body, sign });
+}
+
+// ── 联系人（自动补全）──
+export async function listContacts(query?: string): Promise<Contact[]> {
+  return invoke("list_contacts", { query: query ?? null });
 }
 
 // ── 过滤规则 ──
