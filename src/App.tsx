@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import * as api from "./api";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
@@ -108,6 +109,16 @@ export default function App() {
   useEffect(() => {
     loadMessages();
   }, [loadMessages]);
+
+  // ── 新邮件推送（后端 IMAP IDLE / POP3 轮询发出 new-mail 事件）──
+  useEffect(() => {
+    const unlisten = listen<{ accountId: string }>("new-mail", (e) => {
+      if (e.payload.accountId === accountId) loadMessages();
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [accountId, loadMessages]);
 
   // ── 选中邮件 ──
   async function selectMail(m: EmailMeta) {

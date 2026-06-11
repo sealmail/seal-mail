@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v6：本人签名直接绿色 / macOS 关闭即隐藏）
+> 最后更新：2026-06-11（v7：IMAP IDLE 新邮件自动推送）
 
 ## 项目定位
 
@@ -99,6 +99,15 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
       RunEvent::Reopen（cfg macos）点程序坞图标恢复窗口；Cmd+Q 正常退出；
       get/set_close_behavior 命令 + KeysView「关于与更新」卡片里的下拉设置
 
+### v7（新邮件自动推送）
+- [x] watcher.rs：每账户一个后台线程——IMAP 常驻连接 + RFC 2177 IDLE
+      （EXAMINE INBOX → idle().wait_with_timeout(4min) × 6 轮/连接，之后重连顺带刷新 OAuth 令牌）；
+      POP3 无推送 → 每 2 分钟 STAT 轮询；exists 增加才 emit "new-mail"（删除邮件不触发）
+- [x] oauth.rs 增加 refresh_tokens_blocking（监听线程无 async 运行时；reqwest 加 blocking feature）
+- [x] 线程生命周期：RUNNING 集合去重；账户删除后线程下一轮自检退出；
+      出错 30s 退避重连；setup 与 add_account 后调用 ensure_watchers
+- [x] 前端 App.tsx listen("new-mail")：当前账户匹配则自动 loadMessages（未读数/列表即时更新）
+
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）
 - `TAURI_SIGNING_PRIVATE_KEY` = ~/.tauri/sealmail-updater.key 的内容（私钥，签 updater 工件）
@@ -110,7 +119,7 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 1. **Gmail OAuth2**（Microsoft 已完成；Gmail 需注册 Google Cloud OAuth 客户端，
    目前 Gmail 走应用专用密码仍可用）
 2. **本地邮件缓存**（SQLite）：目前每次刷新全量拉最近 30 封 BODY.PEEK[]，应增量缓存
-3. IMAP IDLE 实时推送 / 定时轮询
+3. 新邮件系统通知（tauri-plugin-notification，窗口隐藏在后台时弹横幅）
 4. 附件：下载保存、发送带附件
 5. HTML 正文安全渲染（目前只渲染纯文本部分；HTML 已解析但未展示）
 6. 多语言 UI（目前中文）

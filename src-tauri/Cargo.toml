@@ -17,7 +17,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 # 自动升级失败时回退 GitHub API 手动检测用
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "blocking"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

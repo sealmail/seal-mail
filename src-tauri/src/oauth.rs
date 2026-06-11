@@ -166,6 +166,29 @@ pub async fn refresh_tokens(old: &OAuthTokens) -> Result<OAuthTokens, String> {
     parse_tokens(&v, &old.client_id, Some(&old.refresh_token))
 }
 
+/// refresh_tokens 的阻塞版（后台监听线程用，那里没有 async 运行时）
+pub fn refresh_tokens_blocking(old: &OAuthTokens) -> Result<OAuthTokens, String> {
+    let v: serde_json::Value = reqwest::blocking::Client::new()
+        .post(TOKEN_URL)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", old.client_id.as_str()),
+            ("refresh_token", old.refresh_token.as_str()),
+            ("scope", SCOPES),
+        ])
+        .send()
+        .map_err(|e| format!("请求微软登录服务失败: {e}"))?
+        .json()
+        .map_err(|e| format!("解析微软登录响应失败: {e}"))?;
+    if v.get("error").is_some() {
+        return Err(format!(
+            "OAuth2 授权已失效，请在账户设置中重新授权: {}",
+            ms_error(&v)
+        ));
+    }
+    parse_tokens(&v, &old.client_id, Some(&old.refresh_token))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

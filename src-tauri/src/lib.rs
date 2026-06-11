@@ -9,6 +9,7 @@ pub mod pop3_client;
 pub mod smtp_client;
 pub mod store;
 pub mod updater;
+pub mod watcher;
 
 use models::*;
 use serde::Serialize;
@@ -183,6 +184,7 @@ async fn test_connection(account: Account, secret: AccountSecret) -> Result<(), 
 
 #[tauri::command]
 async fn add_account(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     mut account: Account,
     secret: AccountSecret,
@@ -200,12 +202,15 @@ async fn add_account(
     .await
     .map_err(|e| e.to_string())??;
 
-    let mut s = state.inner.lock().unwrap();
-    s.accounts.retain(|a| a.id != account.id);
-    s.accounts.push(account.clone());
-    s.secrets.insert(account.id.clone(), secret);
-    s.save_accounts()?;
-    s.save_secrets()?;
+    {
+        let mut s = state.inner.lock().unwrap();
+        s.accounts.retain(|a| a.id != account.id);
+        s.accounts.push(account.clone());
+        s.secrets.insert(account.id.clone(), secret);
+        s.save_accounts()?;
+        s.save_secrets()?;
+    }
+    watcher::ensure_watchers(&app);
     Ok(account)
 }
 
@@ -646,6 +651,8 @@ pub fn run() {
                 .expect("无法获取应用配置目录");
             let data = StoreData::load(dir).expect("初始化本地存储失败");
             app.manage(AppState { inner: std::sync::Mutex::new(data) });
+            // 启动新邮件监听（IMAP IDLE / POP3 轮询）
+            watcher::ensure_watchers(&app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
