@@ -123,18 +123,45 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = 空字符串（生成时未设密码）
 注意：发版时 package.json + tauri.conf.json + Cargo.toml 三处 version 要一起改，tag 用 v<version>。
 
-## 待办 / 路线图（按优先级）
+## 待办 / 路线图（2026-06-11 产品 review 后重排，定位「小而美」）
 
-1. **Gmail OAuth2**（Microsoft 已完成；Gmail 需注册 Google Cloud OAuth 客户端，
-   目前 Gmail 走应用专用密码仍可用）
-2. **本地邮件缓存**（SQLite）：目前每次刷新全量拉最近 30 封 BODY.PEEK[]，应增量缓存
-3. 新邮件系统通知（tauri-plugin-notification，窗口隐藏在后台时弹横幅）
-4. 附件：下载保存、发送带附件
-5. HTML 正文安全渲染（目前只渲染纯文本部分；HTML 已解析但未展示）
-6. 多语言 UI（目前中文）
-7. 删除确认 / 撤销；草稿箱
-8. macOS 公证（需 Apple Developer 证书，secrets 同 auto-desktop：
-   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID）
+### P0 — 没有就当不了主力客户端
+
+1. **SQLite 本地缓存 + 增量同步**（病根：目前每次全量拉最近 30 封 BODY.PEEK[]，
+   无本地存储 → 切目录等网络、只有 30 封、断网全瞎、搜索范围小。
+   方案：rusqlite mail.db；IMAP 按 UIDVALIDITY+UID 增量、近窗口同步 FLAGS、检测删除；
+   POP3 用 UIDL；列表秒出本地数据+后台刷新+加载更多）
+2. **删除安全**：删除 = 移入"已删除"目录（IMAP 找/建 Trash），永久删除仅限 Trash 内且弹确认
+   （现状是 \Deleted+EXPUNGE 直接物理删除，手抖即丢信）
+3. **HTML 正文安全渲染**：sanitize 后入 sandbox iframe，默认阻止远程图片（防追踪），
+   一键"加载图片"；链接跳系统浏览器（现状只渲染纯文本，现代邮件大半没法看）
+4. **附件**：下载保存收到的附件；写信可添加附件
+5. **联系人自动收集 + 收件人自动补全**：从收发历史静默建表（本地），To/Cc 输入下拉补全。
+   不做完整通讯录页面——"输两个字母就出来"才是刚需本体
+6. **草稿自动保存**：写一半关掉不丢；侧栏草稿入口可恢复
+
+### P1 — 好用与否的分水岭
+
+7. **撤销发送**：点发送后本地倒计时 10s 再真正走 SMTP，期间可一键撤销
+8. **键盘快捷键**：Cmd+/-/0 字号缩放（存偏好）、Cmd+N 写信、Cmd+R 回复、
+   ↑↓/j/k 切邮件、Delete 删除、Cmd+F 聚焦搜索
+9. **未读过滤 + 标为未读 / 全部已读**（列表头"全部/未读"切换）
+10. **MessageView 显示 To/Cc 收件人列表**（数据已有，未渲染；回复全部前应能看到都有谁）
+11. **新邮件系统通知**（tauri-plugin-notification，窗口隐藏/失焦时弹横幅，可在设置关闭）
+12. **星标/旗标**（IMAP \Flagged；POP3 本地记录）
+
+### P2 — 缓存落地后再做
+
+13. 会话线程视图（References/In-Reply-To 聚合）
+14. IMAP 服务器端搜索（本地缓存已覆盖大部分场景后补盲区）
+15. 自定义签名档文本、归档一键操作、统一收件箱
+16. Gmail OAuth2（需注册 Google Cloud 客户端；Gmail 应用专用密码目前仍可用）
+17. 多语言 UI；macOS 公证（APPLE_* secrets 同 auto-desktop）
+
+### 明确不做（守住小而美）
+
+富文本编辑器（坚持纯文本写信 + HTML 阅读）、日历、待办、RSS、AI 摘要、
+已读回执、邮件模板、定时发送。
 
 ## 关键架构决策（勿推翻）
 

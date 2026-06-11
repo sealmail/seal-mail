@@ -13,6 +13,7 @@ interface Props {
   onDelete: () => void;
   onShowRisk: () => void;
   onTrustSender: () => void;
+  onMarkUnread: () => void;
 }
 
 function fmtSize(n: number) {
@@ -91,12 +92,31 @@ export function MessageView(p: Props) {
                     </option>
                   ))}
                 </select>
+                <button className="btn-ghost" onClick={p.onMarkUnread} title="标为未读">
+                  标为未读
+                </button>
                 <button className="btn-ghost" onClick={p.onDelete} title="删除">
                   删除
                 </button>
               </div>
             </div>
           </div>
+          {(m.to.length > 0 || m.cc.length > 0) && (
+            <div className="msg-rcpts">
+              {m.to.length > 0 && (
+                <div className="rcpt-line">
+                  <span className="rcpt-label">收件人</span>
+                  <span className="rcpt-list">{m.to.join("、")}</span>
+                </div>
+              )}
+              {m.cc.length > 0 && (
+                <div className="rcpt-line">
+                  <span className="rcpt-label">抄送</span>
+                  <span className="rcpt-list">{m.cc.join("、")}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {trustConfirm && unknownFpr && (

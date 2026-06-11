@@ -8,6 +8,10 @@ interface Props {
   selectedUid: number | null;
   loading: boolean;
   error: string | null;
+  unreadOnly: boolean;
+  unreadCount: number;
+  onToggleUnreadOnly: () => void;
+  onMarkAllRead: () => void;
   onSelect: (m: EmailMeta) => void;
   onRefresh: () => void;
 }
@@ -27,10 +31,23 @@ export function MailList(p: Props) {
         <span className="title">{p.title}</span>
         <span className="meta">
           {p.messages.length} 封
+          {p.unreadCount > 0 && (
+            <button className="icon-btn" title="全部标为已读" onClick={p.onMarkAllRead}>
+              ✓✓
+            </button>
+          )}
           <button className="icon-btn" title="刷新" onClick={p.onRefresh}>
             ↻
           </button>
         </span>
+      </div>
+      <div className="list-filterbar">
+        <button className={`seg${p.unreadOnly ? "" : " on"}`} onClick={() => p.unreadOnly && p.onToggleUnreadOnly()}>
+          全部
+        </button>
+        <button className={`seg${p.unreadOnly ? " on" : ""}`} onClick={() => !p.unreadOnly && p.onToggleUnreadOnly()}>
+          未读{p.unreadCount > 0 ? ` ${p.unreadCount}` : ""}
+        </button>
       </div>
       <div className="list-scroll">
         {p.loading && <div className="empty-pane">正在拉取邮件…</div>}

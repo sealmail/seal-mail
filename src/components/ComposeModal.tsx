@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Seal } from "./Seal";
 import { sendMail } from "../api";
 import { shortFpr } from "../trust";
@@ -31,6 +31,8 @@ export function ComposeModal(p: Props) {
   const [body, setBody] = useState(p.prefill?.body ?? "");
   const [sign, setSign] = useState(true);
   const [step, setStep] = useState(0); // 0 写 1 签名发送中 2 完成
+  /** 撤销发送窗口：非 null 时正在倒计时，归零才真正发送 */
+  const [countdown, setCountdown] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SendResult | null>(null);
 
@@ -48,10 +50,9 @@ export function ComposeModal(p: Props) {
       .map((x) => x.trim())
       .filter(Boolean);
 
-  async function doSend() {
+  function startSend() {
     setError(null);
-    const toList = parseAddrs(to);
-    if (toList.length === 0) {
+    if (parseAddrs(to).length === 0) {
       setError("请填写收件人地址");
       return;
     }
@@ -59,9 +60,13 @@ export function ComposeModal(p: Props) {
       setError("请填写主题");
       return;
     }
+    setCountdown(10);
+  }
+
+  async function doSend() {
     setStep(1);
     try {
-      const r = await sendMail(account.id, toList, parseAddrs(cc), subject, body, sign);
+      const r = await sendMail(account.id, parseAddrs(to), parseAddrs(cc), subject, body, sign);
       setResult(r);
       setStep(2);
     } catch (e) {
@@ -70,14 +75,34 @@ export function ComposeModal(p: Props) {
     }
   }
 
+  // 倒计时归零才真正发送；期间可撤销
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      void doSend();
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
+
   const titles = ["写邮件 · 撰写", sign ? "写邮件 · 签名并发送" : "写邮件 · 发送中", "写邮件 · 完成"];
 
   return (
     <div className="overlay">
       <div className="modal" style={{ width: 640 }}>
         <div className="modal-head">
-          <span className="title">{titles[step]}</span>
-          <button className="modal-close" onClick={p.onClose}>
+          <span className="title">{countdown !== null ? `写邮件 · ${countdown} 秒后发送` : titles[step]}</span>
+          <button
+            className="modal-close"
+            onClick={() => {
+              // 倒计时中点 × 先撤销发送，不直接关窗，防止误操作
+              if (countdown !== null) setCountdown(null);
+              else p.onClose();
+            }}
+          >
             ×
           </button>
         </div>
@@ -219,11 +244,31 @@ export function ComposeModal(p: Props) {
         </div>
 
         <div className="modal-foot">
-          <span className="toolbar-note" />
-          {step === 0 && (
-            <button className="btn-primary" style={{ height: 40, padding: "0 22px" }} onClick={doSend}>
+          <span className="toolbar-note">
+            {countdown !== null && (
+              <span style={{ color: "#9A5B16", fontSize: 12, fontWeight: 600 }}>
+                ⏳ {countdown} 秒后发送，反悔还来得及
+              </span>
+            )}
+          </span>
+          {step === 0 && countdown === null && (
+            <button className="btn-primary" style={{ height: 40, padding: "0 22px" }} onClick={startSend}>
               {sign ? (isLedger ? "用 Ledger 签名并发送" : "签名并发送") : "发送"}
             </button>
+          )}
+          {step === 0 && countdown !== null && (
+            <div style={{ display: "flex", gap: 9 }}>
+              <button
+                className="btn-ghost"
+                style={{ height: 40, padding: "0 18px", borderColor: "#C99B4E", color: "#9A5B16", fontWeight: 700 }}
+                onClick={() => setCountdown(null)}
+              >
+                ↩ 撤销发送
+              </button>
+              <button className="btn-primary" style={{ height: 40, padding: "0 18px" }} onClick={() => setCountdown(0)}>
+                立即发送
+              </button>
+            </div>
           )}
           {step === 1 && (
             <button className="btn-ghost" style={{ height: 40 }} disabled>

@@ -434,6 +434,51 @@ async fn set_read(
     Ok(())
 }
 
+/// 批量标记已读/未读（「全部已读」一条连接完成）
+#[tauri::command]
+async fn mark_read(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uids: Vec<u32>,
+    read: bool,
+) -> Result<(), String> {
+    let account = {
+        let s = state.inner.lock().unwrap();
+        s.account(&account_id)?
+    };
+    let secret = fresh_secret(&state, &account_id).await?;
+    match account.protocol {
+        IncomingProtocol::Imap => {
+            let (f2, u2) = (folder.clone(), uids.clone());
+            tauri::async_runtime::spawn_blocking(move || {
+                imap_client::set_read_many(&account, &secret, &f2, &u2, read)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+        }
+        IncomingProtocol::Pop3 => {
+            let mut s = state.inner.lock().unwrap();
+            for uid in &uids {
+                let key = pop_key(&account_id, *uid);
+                if read && !s.local_read.contains(&key) {
+                    s.local_read.push(key);
+                } else if !read {
+                    s.local_read.retain(|k| k != &key);
+                }
+            }
+            s.save_local_folders()?;
+        }
+    }
+    let mut s = state.inner.lock().unwrap();
+    for uid in &uids {
+        if let Some(full) = s.mail_cache.get_mut(&StoreData::cache_key(&account_id, &folder, *uid)) {
+            full.meta.unread = !read;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn delete_message(
     state: State<'_, AppState>,
@@ -672,6 +717,7 @@ pub fn run() {
             get_message,
             move_message,
             set_read,
+            mark_read,
             delete_message,
             send_mail,
             save_filter,

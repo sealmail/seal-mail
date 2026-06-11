@@ -90,6 +90,10 @@ export async function setRead(accountId: string, folder: string, uid: number, re
   return invoke("set_read", { accountId, folder, uid, read });
 }
 
+export async function markRead(accountId: string, folder: string, uids: number[], read = true): Promise<void> {
+  return invoke("mark_read", { accountId, folder, uids, read });
+}
+
 export async function deleteMessage(accountId: string, folder: string, uid: number): Promise<void> {
   return invoke("delete_message", { accountId, folder, uid });
 }

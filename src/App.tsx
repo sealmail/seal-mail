@@ -32,8 +32,15 @@ export default function App() {
   // 验证面板默认折叠成图标条，用户主动展开后记住偏好
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem("sealmail.railOpen") === "1");
   const [search, setSearch] = useState("");
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  // 界面缩放（Cmd+/-/0），WebKit 支持非标准 zoom 属性
+  const [zoom, setZoom] = useState(() => {
+    const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
+    return Number.isFinite(z) && z >= 0.7 && z <= 1.6 ? z : 1;
+  });
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composePrefill, setComposePrefill] = useState<ComposePrefill | undefined>();
@@ -120,6 +127,12 @@ export default function App() {
     };
   }, [accountId, loadMessages]);
 
+  // ── 界面缩放（持久化）──
+  useEffect(() => {
+    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+    localStorage.setItem("sealmail.zoom", String(zoom));
+  }, [zoom]);
+
   // ── 选中邮件 ──
   async function selectMail(m: EmailMeta) {
     try {
@@ -136,22 +149,54 @@ export default function App() {
     }
   }
 
-  // ── 搜索（本地过滤：发件人/主题/摘要/地址）──
+  // ── 搜索（本地过滤：发件人/主题/摘要/地址）+ 未读过滤 ──
   const shownMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return messages;
-    return messages.filter(
+    let list = messages;
+    if (unreadOnly) list = list.filter((m) => m.unread);
+    if (!q) return list;
+    return list.filter(
       (m) =>
         m.fromName.toLowerCase().includes(q) ||
         m.fromAddr.toLowerCase().includes(q) ||
         m.subject.toLowerCase().includes(q) ||
         m.preview.toLowerCase().includes(q)
     );
-  }, [messages, search]);
+  }, [messages, search, unreadOnly]);
 
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
+  const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
   const folderTitle = folders.find((f) => f.name === folder)?.display ?? folder;
+
+  function markLocal(uids: number[], unread: boolean) {
+    const set = new Set(uids);
+    const patch = (ms: EmailMeta[]) => ms.map((x) => (set.has(x.uid) ? { ...x, unread } : x));
+    setMessages(patch);
+    setInboxMetas(patch);
+  }
+
+  async function handleMarkUnread() {
+    if (!selected) return;
+    try {
+      await api.setRead(selected.meta.accountId, selected.meta.folder, selected.meta.uid, false);
+      markLocal([selected.meta.uid], true);
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
+
+  async function handleMarkAllRead() {
+    const uids = messages.filter((m) => m.unread).map((m) => m.uid);
+    if (uids.length === 0) return;
+    const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+    try {
+      await api.markRead(accountId, realFolder, uids);
+      markLocal(uids, false);
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
 
   async function handleMove(target: string) {
     if (!selected) return;
@@ -208,6 +253,67 @@ export default function App() {
       return !o;
     });
   }
+
+  // ── 全局键盘快捷键 ──
+  const anyModalOpen = composeOpen || accountModal || filtersOpen || profileOpen || riskOpen || newFolderOpen;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      // 缩放任何时候都可用
+      if (meta && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        setZoom((z) => Math.min(1.6, Math.round((z + 0.1) * 10) / 10));
+        return;
+      }
+      if (meta && e.key === "-") {
+        e.preventDefault();
+        setZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10));
+        return;
+      }
+      if (meta && e.key === "0") {
+        e.preventDefault();
+        setZoom(1);
+        return;
+      }
+      if (anyModalOpen || !hasAccounts) return;
+      if (meta && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setComposePrefill(undefined);
+        setComposeOpen(true);
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "r" && selected) {
+        e.preventDefault();
+        if (e.shiftKey) handleReplyAll();
+        else handleReply();
+        return;
+      }
+      // 以下快捷键在输入框聚焦时不生效
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      if (view !== "mail") return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+        e.preventDefault();
+        handleDelete();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "j" || e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        const down = e.key === "ArrowDown" || e.key === "j";
+        if (shownMessages.length === 0) return;
+        const idx = selected ? shownMessages.findIndex((m) => m.uid === selected.meta.uid) : -1;
+        const next = idx < 0 ? 0 : Math.min(shownMessages.length - 1, Math.max(0, idx + (down ? 1 : -1)));
+        if (shownMessages[next] && shownMessages[next].uid !== selected?.meta.uid) selectMail(shownMessages[next]);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   function handleForward() {
     if (!selected) return;
@@ -277,7 +383,7 @@ export default function App() {
                 <circle cx="5.5" cy="5.5" r="4" stroke="#B3AEA2" strokeWidth="1.4" />
                 <path d="M8.5 8.5l3 3" stroke="#B3AEA2" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
-              <input placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input ref={searchRef} placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           )}
         </div>
@@ -357,6 +463,10 @@ export default function App() {
                 selectedUid={selected?.meta.uid ?? null}
                 loading={loading}
                 error={listError}
+                unreadOnly={unreadOnly}
+                unreadCount={listUnread}
+                onToggleUnreadOnly={() => setUnreadOnly((v) => !v)}
+                onMarkAllRead={handleMarkAllRead}
                 onSelect={selectMail}
                 onRefresh={loadMessages}
               />
@@ -370,6 +480,7 @@ export default function App() {
                 onDelete={handleDelete}
                 onShowRisk={() => setRiskOpen(true)}
                 onTrustSender={handleTrustSender}
+                onMarkUnread={handleMarkUnread}
               />
               <VerifyRail
                 mail={selected}

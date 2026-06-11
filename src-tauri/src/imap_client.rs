@@ -232,10 +232,25 @@ pub fn set_read(
     uid: u32,
     read: bool,
 ) -> Result<(), String> {
+    set_read_many(account, secret, folder, &[uid], read)
+}
+
+/// 单条连接批量改已读标记（「全部已读」用）
+pub fn set_read_many(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    uids: &[u32],
+    read: bool,
+) -> Result<(), String> {
+    if uids.is_empty() {
+        return Ok(());
+    }
     let mut sess = connect(account, secret)?;
     sess.select(folder).map_err(|e| e.to_string())?;
     let op = if read { "+FLAGS (\\Seen)" } else { "-FLAGS (\\Seen)" };
-    sess.uid_store(uid.to_string(), op).map_err(|e| e.to_string())?;
+    let uidset = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    sess.uid_store(uidset, op).map_err(|e| e.to_string())?;
     let _ = sess.logout();
     Ok(())
 }
