@@ -106,6 +106,24 @@ fn use_local_key(state: State<'_, AppState>) -> Result<IdentityInfo, String> {
     Ok(identity_info(&s))
 }
 
+// ───────────────────────── prefs ─────────────────────────
+
+#[tauri::command]
+fn get_close_behavior(state: State<'_, AppState>) -> String {
+    state.inner.lock().unwrap().prefs.close_behavior.clone()
+}
+
+#[tauri::command]
+fn set_close_behavior(state: State<'_, AppState>, behavior: String) -> Result<String, String> {
+    if behavior != "hide" && behavior != "quit" {
+        return Err(format!("无效的关闭行为: {}", behavior));
+    }
+    let mut s = state.inner.lock().unwrap();
+    s.prefs.close_behavior = behavior.clone();
+    s.save_prefs()?;
+    Ok(behavior)
+}
+
 // ───────────────────────── oauth2 (Microsoft 设备码) ─────────────────────────
 
 #[tauri::command]
@@ -263,7 +281,9 @@ async fn fetch_messages(
     let limit = limit.unwrap_or(30).min(100);
     let (account, trusted) = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.trusted.clone())
+        let account = s.account(&account_id)?;
+        let trusted = s.trusted_for_verify(&account);
+        (account, trusted)
     };
     let secret = fresh_secret(&state, &account_id).await?;
 
@@ -605,6 +625,20 @@ pub fn run() {
             .plugin(tauri_plugin_process::init());
     }
     builder
+        // 点关闭按钮：close_behavior = "hide" 时只隐藏窗口不退出（macOS 默认）
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let hide = window
+                    .app_handle()
+                    .try_state::<AppState>()
+                    .map(|st| st.inner.lock().unwrap().prefs.close_behavior == "hide")
+                    .unwrap_or(false);
+                if hide {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let dir = app
                 .path()
@@ -638,7 +672,20 @@ pub fn run() {
             apply_filters,
             trust_sender,
             remove_trusted,
+            get_close_behavior,
+            set_close_behavior,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // macOS：窗口隐藏后点程序坞图标重新打开
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                if let Some(window) = _app.webview_windows().values().next() {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }

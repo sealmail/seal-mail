@@ -14,6 +14,7 @@ pub struct StoreData {
     pub dir: PathBuf,
     pub identity: Identity,
     pub identity_config: IdentityConfig,
+    pub prefs: AppPrefs,
     pub accounts: Vec<Account>,
     pub secrets: HashMap<String, AccountSecret>,
     pub filters: Vec<FilterRule>,
@@ -53,6 +54,7 @@ impl StoreData {
             local_assign: read_json(&dir.join("local_assign.json")),
             local_read: read_json(&dir.join("local_read.json")),
             identity_config: read_json(&dir.join("identity.json")),
+            prefs: read_json(&dir.join("prefs.json")),
             mail_cache: HashMap::new(),
             identity,
             dir,
@@ -61,6 +63,10 @@ impl StoreData {
 
     pub fn save_identity_config(&self) -> Result<(), String> {
         write_json(&self.dir.join("identity.json"), &self.identity_config)
+    }
+
+    pub fn save_prefs(&self) -> Result<(), String> {
+        write_json(&self.dir.join("prefs.json"), &self.prefs)
     }
 
     /// 当前生效的签名身份标识（本地=Ed25519 指纹，Ledger=0x 地址）
@@ -94,6 +100,22 @@ impl StoreData {
         write_json(&self.dir.join("local_folders.json"), &self.local_folders)?;
         write_json(&self.dir.join("local_assign.json"), &self.local_assign)?;
         write_json(&self.dir.join("local_read.json"), &self.local_read)
+    }
+
+    /// 校验邮件用的可信列表：附加本机签名身份——
+    /// 自己（含自己的其他设备同私钥）签发的邮件直接显示绿色「已验证」，
+    /// 而不是黄色「签名有效·尚未列入可信」。
+    pub fn trusted_for_verify(&self, account: &Account) -> Vec<TrustedContact> {
+        let mut list = self.trusted.clone();
+        list.push(TrustedContact {
+            name: format!("{}（本人）", account.display_name),
+            email: account.email.clone(),
+            fingerprint: self.active_fingerprint(),
+            org: None,
+            since: self.identity.created.clone(),
+            verified_count: 0,
+        });
+        list
     }
 
     pub fn account(&self, id: &str) -> Result<Account, String> {

@@ -347,3 +347,46 @@ fn filter_rules_match() {
     rule.account_id = Some("acc1".into());
     assert!(rule_matches(&rule, &mail));
 }
+
+/// 自己（本机身份）签发的邮件，经 trusted_for_verify 注入本人身份后应直接「已验证」，
+/// 而不是黄色「签名有效·尚未列入可信」
+#[test]
+fn e2e_self_signed_mail_is_verified() {
+    let dir = std::env::temp_dir().join(format!("sealmail-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = sealmail_lib::store::StoreData::load(dir.clone()).unwrap();
+    let account = Account {
+        id: "a1".into(),
+        label: "Test".into(),
+        email: "me@example.com".into(),
+        display_name: "Molin".into(),
+        protocol: IncomingProtocol::Imap,
+        incoming_host: "x".into(),
+        incoming_port: 993,
+        smtp_host: "x".into(),
+        smtp_port: 587,
+        smtp_security: "starttls".into(),
+        username: "me@example.com".into(),
+        auth: "password".into(),
+    };
+
+    // 用本机身份给自己发信
+    let raw = build_raw("Molin", "me@example.com", "test", "self test\r\n", Some(&store.identity));
+
+    // 不注入本人身份：黄色 signedUnknown
+    let plain = parse_email(&raw, 1, "a1", "INBOX", false, &store.trusted).unwrap();
+    assert_eq!(plain.meta.trust, "signedUnknown");
+
+    // 注入本人身份：绿色 verified
+    let trusted = store.trusted_for_verify(&account);
+    let own = parse_email(&raw, 1, "a1", "INBOX", false, &trusted).unwrap();
+    assert_eq!(own.meta.trust, "verified");
+    match own.verify {
+        VerifyDetail::Verified { contact_name, fingerprint, .. } => {
+            assert_eq!(contact_name, "Molin（本人）");
+            assert_eq!(fingerprint, store.identity.fingerprint());
+        }
+        other => panic!("expected Verified, got {:?}", other),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

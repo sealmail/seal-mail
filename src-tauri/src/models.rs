@@ -173,6 +173,28 @@ pub struct EmailFull {
     pub verify: VerifyDetail,
 }
 
+/// 应用偏好（prefs.json）。close_behavior: "hide" | "quit"——
+/// macOS 默认点关闭按钮隐藏窗口（从程序坞重新打开），其他平台默认退出。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AppPrefs {
+    pub close_behavior: String,
+}
+
+fn default_close_behavior() -> String {
+    if cfg!(target_os = "macos") {
+        "hide".into()
+    } else {
+        "quit".into()
+    }
+}
+
+impl Default for AppPrefs {
+    fn default() -> Self {
+        AppPrefs { close_behavior: default_close_behavior() }
+    }
+}
+
 /// 签名身份配置（identity.json）：本地 Ed25519 密钥或 Ledger 硬件密钥
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

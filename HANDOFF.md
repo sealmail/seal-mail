@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v5：回复全部 / mUTF-7 目录名 / 验证面板折叠）
+> 最后更新：2026-06-11（v6：本人签名直接绿色 / macOS 关闭即隐藏）
 
 ## 项目定位
 
@@ -89,6 +89,15 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
       display 解码显示，与服务器交互仍用原始名；create_folder 创建中文目录时编码
 - [x] 验证面板太显眼：默认折叠成 54px 窄条（小封印 + 竖排状态字），点击展开完整面板，
       展开后右上角 » 收起；偏好存 localStorage("sealmail.railOpen")
+
+### v6（自己签名显示绿色 + macOS 关闭即隐藏）
+- [x] 自己签的邮件直接绿色「已验证」：store.rs::trusted_for_verify() 在校验用可信列表里
+      附加本机身份（名字「{显示名}（本人）」+ active_fingerprint），fetch_messages 使用；
+      其他人冒用该密钥地址/换密钥仍会触发 impersonation；新增 e2e 测试（先验证不注入时是黄色）
+- [x] 关闭按钮行为（参考 auto-desktop）：AppPrefs{close_behavior} 存 prefs.json，
+      macOS 默认 "hide"（其他平台 "quit"）；on_window_event 拦 CloseRequested → prevent_close + hide；
+      RunEvent::Reopen（cfg macos）点程序坞图标恢复窗口；Cmd+Q 正常退出；
+      get/set_close_behavior 命令 + KeysView「关于与更新」卡片里的下拉设置
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）

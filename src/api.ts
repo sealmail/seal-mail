@@ -33,6 +33,15 @@ export async function useLocalKey(): Promise<IdentityInfo> {
   return invoke("use_local_key");
 }
 
+// ── 偏好 ──
+export async function getCloseBehavior(): Promise<"hide" | "quit"> {
+  return invoke("get_close_behavior");
+}
+
+export async function setCloseBehavior(behavior: "hide" | "quit"): Promise<"hide" | "quit"> {
+  return invoke("set_close_behavior", { behavior });
+}
+
 // ── OAuth2（Microsoft 设备码授权）──
 export async function oauthBeginDevice(clientId?: string): Promise<DeviceFlowStart> {
   return invoke("oauth_begin_device", { clientId: clientId ?? null });

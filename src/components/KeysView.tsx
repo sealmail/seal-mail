@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Seal } from "./Seal";
-import { useLocalKey } from "../api";
+import { getCloseBehavior, setCloseBehavior, useLocalKey } from "../api";
 import { LedgerBindModal } from "./LedgerBindModal";
 import { shortFpr } from "../trust";
 import {
@@ -30,6 +30,22 @@ export function KeysView(p: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isLedger = p.identity?.mode === "ledger";
+
+  // ── 关闭按钮行为（macOS 默认隐藏窗口）──
+  const [closeBehavior, setCloseBehaviorState] = useState<"hide" | "quit" | null>(null);
+  useEffect(() => {
+    getCloseBehavior()
+      .then(setCloseBehaviorState)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  async function handleCloseBehavior(next: "hide" | "quit") {
+    try {
+      setCloseBehaviorState(await setCloseBehavior(next));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   // ── 软件更新（UX 参考 auto-desktop）──
   const [updated, setUpdated] = useState(false);
@@ -314,6 +330,30 @@ export function KeysView(p: Props) {
               {updateMsg.text}
             </div>
           )}
+
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 14, marginTop: 16,
+              paddingTop: 16, borderTop: "1px solid #ECE8DC",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#2A2E36" }}>点击关闭按钮时</div>
+              <div style={{ fontSize: 11.5, color: "#8A8576", marginTop: 2, lineHeight: 1.5 }}>
+                隐藏窗口后应用继续在后台运行，点击程序坞图标重新打开（macOS 常规行为）
+              </div>
+            </div>
+            <select
+              className="select"
+              style={{ width: 130 }}
+              value={closeBehavior ?? "hide"}
+              disabled={closeBehavior === null}
+              onChange={(e) => void handleCloseBehavior(e.target.value as "hide" | "quit")}
+            >
+              <option value="hide">隐藏窗口</option>
+              <option value="quit">退出应用</option>
+            </select>
+          </div>
         </div>
       </div>
 
