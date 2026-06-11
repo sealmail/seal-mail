@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
 import { riskBanner } from "../trust";
 import type { EmailFull, FolderInfo } from "../types";
@@ -26,10 +27,13 @@ export function MessageView(p: Props) {
   // 一键信任确认卡：换邮件时收起
   const [trustConfirm, setTrustConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** 正文视图：null=自动（未签名邮件优先 HTML；签名邮件显示被签名的纯文本） */
+  const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
   const uid = p.mail?.meta.uid;
   useEffect(() => {
     setTrustConfirm(false);
     setCopied(false);
+    setHtmlMode(null);
   }, [uid]);
 
   if (!p.mail) {
@@ -172,7 +176,30 @@ export function MessageView(p: Props) {
           </div>
         )}
 
-        <div className="msg-body">{m.bodyText || "(无正文)"}</div>
+        {(() => {
+          const hasHtml = !!m.bodyHtml;
+          const signed = m.verify.status !== "unsigned";
+          const showHtml = hasHtml && (htmlMode ?? !signed);
+          return (
+            <>
+              {hasHtml && (
+                <div className="body-toolbar">
+                  {signed && showHtml && (
+                    <span className="body-note">⚠ 签名校验针对纯文本正文，HTML 版式仅供参考</span>
+                  )}
+                  <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setHtmlMode(!showHtml)}>
+                    {showHtml ? "查看纯文本" : "查看 HTML 版式"}
+                  </button>
+                </div>
+              )}
+              {showHtml ? (
+                <HtmlBody html={m.bodyHtml as string} />
+              ) : (
+                <div className="msg-body">{m.bodyText || "(无正文)"}</div>
+              )}
+            </>
+          );
+        })()}
 
         {m.attachments.length > 0 && (
           <div className="attach-row">
