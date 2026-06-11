@@ -54,6 +54,23 @@
       - `ci.yml`：push/PR 跑 cargo test + tsc + vite build
 - [x] 测试补充：eth-personal 验证往返（k256 本地模拟 Ledger 签名 → ecrecover 验证）
 
+### v3（自动升级，UX 参考 auto-desktop）
+- [x] tauri-plugin-updater + tauri-plugin-process（desktop only）；bundle.createUpdaterArtifacts
+- [x] 升级 UX（src/updater.ts + KeysView「关于与更新」区块）：
+      检查更新 → 发现新版本 → 安装更新（下载进度条/安装中）→ 自动重启；
+      插件不可用时回退后端 check_for_update（GitHub API）→「打开下载页面」手动升级
+- [x] updater.rs：版本比较 + GitHub Releases 回退检测（带单测）
+- [x] release.yml：mac --bundles app,dmg 产出 .app.tar.gz(+.sig)、win NSIS(+.sig)，
+      每平台 latest-<platform>.json → release job 合并 latest.json 一起发布
+- [x] 公私钥都不入库：tauri.conf.json pubkey 留空占位，CI 构建时用 --config 注入
+- [x] __APP_VERSION__ 由 vite define 注入（package.json version 为准）
+
+**GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
+- `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）
+- `TAURI_SIGNING_PRIVATE_KEY` = ~/.tauri/sealmail-updater.key 的内容（私钥，签 updater 工件）
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = 空字符串（生成时未设密码）
+注意：发版时 package.json + tauri.conf.json + Cargo.toml 三处 version 要一起改，tag 用 v<version>。
+
 ## 待办 / 路线图（按优先级）
 
 1. **OAuth2 / XOAUTH2**（Exchange Online、Gmail 个人账户基础认证均被淘汰，应用密码是过渡方案）

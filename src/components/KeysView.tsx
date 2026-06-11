@@ -1,8 +1,16 @@
 import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Seal } from "./Seal";
 import { useLocalKey } from "../api";
 import { LedgerBindModal } from "./LedgerBindModal";
 import { shortFpr } from "../trust";
+import {
+  checkForUpdate,
+  installUpdate,
+  updateBarState,
+  type UpdateInfo,
+  type UpdateProgress,
+} from "../updater";
 import type { IdentityInfo, TrustedContact } from "../types";
 
 interface Props {
@@ -22,6 +30,89 @@ export function KeysView(p: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isLedger = p.identity?.mode === "ledger";
+
+  // ── 软件更新（UX 参考 auto-desktop）──
+  const [updated, setUpdated] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+  const [updateMsg, setUpdateMsg] = useState<{ text: string; warn?: boolean } | null>(null);
+
+  const updateButtonLabel = checkingUpdate
+    ? updateInfo?.available
+      ? "正在安装…"
+      : "正在检查…"
+    : updateInfo?.available
+      ? "安装更新"
+      : "检查更新";
+
+  async function handleCheckUpdates() {
+    if (updateInfo?.available && !updateInfo.manual) {
+      await handleInstallUpdate();
+      return;
+    }
+    setCheckingUpdate(true);
+    setUpdated(false);
+    setUpdateProgress(null);
+    setUpdateMsg(null);
+    try {
+      const info = await checkForUpdate();
+      setUpdateInfo(info);
+      if (!info.available) {
+        setUpdated(true);
+        setUpdateMsg({ text: "已是最新版本" });
+        return;
+      }
+      if (info.manual) {
+        setUpdateMsg({
+          text: `自动升级不可用（${info.autoError || "未知错误"}），请打开下载页手动升级`,
+          warn: true,
+        });
+        return;
+      }
+      setUpdateMsg({ text: `发现新版本 v${info.latestVersion}，点击「安装更新」升级` });
+    } catch (e) {
+      setUpdateMsg({ text: `检查更新失败：${String(e)}`, warn: true });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!updateInfo?.available) return;
+    setCheckingUpdate(true);
+    setUpdateProgress({ phase: "downloading", downloaded: 0 });
+    setUpdateMsg(null);
+    try {
+      const info = await installUpdate({ ...updateInfo, manual: false }, setUpdateProgress);
+      setUpdateInfo(info);
+      if (!info.available) {
+        setUpdated(true);
+        setUpdateMsg({ text: "已是最新版本" });
+        return;
+      }
+      if (info.manual) {
+        setUpdateMsg({
+          text: `自动升级失败（${info.autoError || "未知错误"}），请打开下载页手动升级`,
+          warn: true,
+        });
+        return;
+      }
+      setUpdateMsg({ text: `已安装 v${info.latestVersion}，应用即将重启` });
+    } catch (e) {
+      setUpdateMsg({ text: `升级失败：${String(e)}`, warn: true });
+    } finally {
+      setCheckingUpdate(false);
+      setUpdateProgress(null);
+    }
+  }
+
+  async function handleManualDownload() {
+    if (!updateInfo?.available) return;
+    await openUrl(updateInfo.downloadUrl || updateInfo.releaseUrl);
+  }
+
+  const updateBar = updateProgress ? updateBarState(updateProgress) : null;
 
   async function switchToLocal() {
     setBusy(true);
@@ -156,6 +247,74 @@ export function KeysView(p: Props) {
             ))}
           </div>
         )}
+        <div className="section-label" style={{ marginTop: 30 }}>
+          关于与更新
+        </div>
+        <div className="card-list" style={{ padding: "16px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div
+              style={{
+                width: 36, height: 36, borderRadius: 9, flexShrink: 0,
+                background: "radial-gradient(circle at 36% 30%, #4ca67e, #1b5840)",
+                boxShadow: "0 0 0 1.5px #C99B4E",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "var(--serif)", fontSize: 19, color: "rgba(255,255,255,.92)",
+              }}
+            >
+              印
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#2A2E36" }}>SealMail 信印</div>
+              {updated ? (
+                <div style={{ fontSize: 11.5, color: "#1E6B49", marginTop: 2 }}>✓ 已是最新版本</div>
+              ) : updateInfo?.available ? (
+                <div style={{ fontSize: 11.5, color: "#9A5B16", marginTop: 2 }}>
+                  ↓ 新版本 v{updateInfo.latestVersion} 可用
+                </div>
+              ) : (
+                <div style={{ fontSize: 11.5, color: "#8A8576", marginTop: 2, fontFamily: "var(--mono)" }}>
+                  版本 {__APP_VERSION__}
+                </div>
+              )}
+            </div>
+            {updateInfo?.available && updateInfo.manual ? (
+              <button className="btn-ghost" onClick={handleManualDownload}>
+                打开下载页面
+              </button>
+            ) : (
+              <button className="btn-ghost" disabled={checkingUpdate} onClick={() => void handleCheckUpdates()}>
+                {updateButtonLabel}
+              </button>
+            )}
+          </div>
+
+          {updateProgress && updateBar && (
+            <div className="update-progress">
+              <div className="update-progress-meta">
+                <span>{updateProgress.phase === "installing" ? "正在安装…" : "正在下载更新…"}</span>
+                {!updateBar.indeterminate && <span>{updateBar.percent}%</span>}
+              </div>
+              <div
+                className="update-progress-track"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={updateBar.percent ?? undefined}
+              >
+                <div
+                  className={updateBar.indeterminate ? "update-progress-fill indeterminate" : "update-progress-fill"}
+                  style={updateBar.indeterminate ? undefined : { width: `${updateBar.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {updateMsg && (
+            <div className={updateMsg.warn ? "form-error" : "form-ok"} style={{ marginTop: 12 }}>
+              {updateMsg.text}
+            </div>
+          )}
+        </div>
       </div>
 
       {ledgerModal && (

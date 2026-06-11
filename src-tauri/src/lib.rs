@@ -7,6 +7,7 @@ pub mod models;
 pub mod pop3_client;
 pub mod smtp_client;
 pub mod store;
+pub mod updater;
 
 use models::*;
 use serde::Serialize;
@@ -540,12 +541,26 @@ fn remove_trusted(state: State<'_, AppState>, email: String) -> Result<Vec<Trust
     Ok(s.trusted.clone())
 }
 
+// ───────────────────────── update ─────────────────────────
+
+/// 签名自动升级不可用时的回退：直接查 GitHub Releases，引导手动下载
+#[tauri::command]
+async fn check_for_update() -> Result<updater::UpdateInfo, String> {
+    updater::check_for_update().await
+}
+
 // ───────────────────────── entry ─────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
+    builder
         .setup(|app| {
             let dir = app
                 .path()
@@ -557,6 +572,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
+            check_for_update,
             ledger_get_addresses,
             bind_ledger,
             use_local_key,
