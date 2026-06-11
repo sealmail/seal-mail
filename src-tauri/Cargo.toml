@@ -1,0 +1,39 @@
+[package]
+name = "sealmail"
+version = "0.1.0"
+description = "SealMail 信印 — 可信邮件客户端"
+authors = ["SealMail"]
+edition = "2021"
+
+[lib]
+name = "sealmail_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# mail protocols
+imap = "2.4"
+native-tls = "0.2"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "native-tls", "pool", "hostname"] }
+mail-parser = "0.11"
+mail-builder = "0.4"
+
+# crypto / signing
+ed25519-dalek = "2"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+getrandom = "0.2"
+
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+ed25519-dalek = "2"
+mail-builder = "0.4"

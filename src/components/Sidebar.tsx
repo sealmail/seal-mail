@@ -1,0 +1,114 @@
+import { shortFpr } from "../trust";
+import type { Account, FolderInfo, IdentityInfo } from "../types";
+
+export const RISK_FOLDER = "__risk__";
+
+const FOLDER_ICONS: Record<string, string> = {
+  INBOX: "▤",
+  [RISK_FOLDER]: "◈",
+};
+
+function folderIcon(name: string, display: string) {
+  if (FOLDER_ICONS[name]) return FOLDER_ICONS[name];
+  const d = display.toLowerCase();
+  if (d.includes("sent") || display.includes("已发送") || display.includes("发件")) return "↗";
+  if (d.includes("draft") || display.includes("草稿")) return "✎";
+  if (d.includes("junk") || d.includes("spam") || display.includes("垃圾")) return "⊘";
+  if (d.includes("trash") || d.includes("deleted") || display.includes("已删除")) return "□";
+  if (d.includes("archive") || display.includes("归档")) return "▣";
+  return "▢";
+}
+
+interface Props {
+  identity: IdentityInfo | null;
+  accounts: Account[];
+  currentAccountId: string;
+  folders: FolderInfo[];
+  currentFolder: string;
+  riskCount: number;
+  inboxUnread: number;
+  view: "mail" | "keys";
+  demoMode: boolean;
+  onSelectAccount: (id: string) => void;
+  onSelectFolder: (name: string) => void;
+  onOpenKeys: () => void;
+  onAddAccount: () => void;
+  onNewFolder: () => void;
+  onOpenFilters: () => void;
+}
+
+export function Sidebar(p: Props) {
+  return (
+    <div className="sidebar">
+      <button className="identity-chip" onClick={p.onOpenKeys}>
+        <div className="row">
+          <div className="id-seal">印</div>
+          <div style={{ minWidth: 0 }}>
+            <div className="name">我的签名身份</div>
+            <div className="status">● 本地密钥已就绪</div>
+          </div>
+        </div>
+        <div className="fpr">{p.identity ? shortFpr(p.identity.fingerprint) : "…"}</div>
+      </button>
+
+      <div style={{ height: 6 }} />
+      <div className="side-label">邮箱</div>
+      {p.folders.map((f) => {
+        const active = p.view === "mail" && p.currentFolder === f.name;
+        const isInbox = f.name === "INBOX";
+        const isRisk = f.name === RISK_FOLDER;
+        const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : 0;
+        return (
+          <button
+            key={f.name}
+            className={`side-item${active ? " active" : ""}`}
+            onClick={() => p.onSelectFolder(f.name)}
+          >
+            <span className="icon">{folderIcon(f.name, f.display)}</span>
+            <span className="label">{f.display}</span>
+            {count > 0 && <span className={`count${isRisk ? " red" : ""}`}>{count}</span>}
+          </button>
+        );
+      })}
+      <button className="side-add" onClick={p.onNewFolder}>
+        + 新建目录
+      </button>
+
+      <div style={{ height: 10 }} />
+      <div className="side-label">整理</div>
+      <button className="side-item" onClick={p.onOpenFilters}>
+        <span className="icon">⧉</span>
+        <span className="label">过滤规则</span>
+      </button>
+
+      <div style={{ height: 10 }} />
+      <div className="side-label">已连接账户</div>
+      {p.accounts.map((a) => (
+        <div
+          key={a.id}
+          className={`account-row${a.id === p.currentAccountId ? " active" : ""}`}
+          onClick={() => p.onSelectAccount(a.id)}
+        >
+          <div className="dot" style={{ background: a.id === p.currentAccountId ? "#2C7B58" : "#C7C1B2" }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="addr">{a.email}</div>
+            <div className="sys">
+              {p.demoMode && a.id === "__demo__"
+                ? "演示数据"
+                : `${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}
+            </div>
+          </div>
+        </div>
+      ))}
+      <button className="side-add" onClick={p.onAddAccount}>
+        + 添加账户
+      </button>
+
+      <div style={{ flex: 1 }} />
+      <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
+        <span className="icon">⊟</span>
+        <span className="label">身份与密钥</span>
+      </button>
+    </div>
+  );
+}
