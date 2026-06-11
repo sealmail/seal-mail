@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v7：IMAP IDLE 新邮件自动推送）
+> 最后更新：2026-06-11（v8：阅读窗一键信任发件人）
 
 ## 项目定位
 
@@ -107,6 +107,15 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] 线程生命周期：RUNNING 集合去重；账户删除后线程下一轮自检退出；
       出错 30s 退避重连；setup 与 add_account 后调用 ensure_watchers
 - [x] 前端 App.tsx listen("new-mail")：当前账户匹配则自动 loadMessages（未读数/列表即时更新）
+
+### v8（阅读窗一键信任发件人）
+- [x] 信任模型说明（用户问"怎么知道密钥就是对方本人"）：签名只证明密钥一致性 + 内容完整，
+      密钥↔人 的绑定靠 TOFU（首次信任）+ 持续性监测（换密钥即标红 impersonation），
+      与 SSH known_hosts / Signal 安全码同模型；真正核实只能走带外渠道（电话/微信对指纹）
+- [x] MessageView：signedUnknown 时发件人地址下方出现金色「✓ 信任此发件人」chip
+      （不再必须展开验证面板）→ 点击展开轻量确认卡：地址 + 指纹（可复制）+
+      带外核实建议 + 「确认信任」/「取消」；确认走原 trust_sender 流程，封印即刻变绿
+- [x] 换邮件自动收起确认卡（useEffect on uid）；styles.css 新增 .trust-chip / .trust-confirm
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）

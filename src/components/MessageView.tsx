@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Seal } from "./Seal";
 import { riskBanner } from "../trust";
 import type { EmailFull, FolderInfo } from "../types";
@@ -11,6 +12,7 @@ interface Props {
   onMove: (target: string) => void;
   onDelete: () => void;
   onShowRisk: () => void;
+  onTrustSender: () => void;
 }
 
 function fmtSize(n: number) {
@@ -20,6 +22,15 @@ function fmtSize(n: number) {
 }
 
 export function MessageView(p: Props) {
+  // 一键信任确认卡：换邮件时收起
+  const [trustConfirm, setTrustConfirm] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const uid = p.mail?.meta.uid;
+  useEffect(() => {
+    setTrustConfirm(false);
+    setCopied(false);
+  }, [uid]);
+
   if (!p.mail) {
     return (
       <div className="msg-pane">
@@ -31,6 +42,7 @@ export function MessageView(p: Props) {
     );
   }
   const m = p.mail;
+  const unknownFpr = m.verify.status === "signedUnknown" ? m.verify.fingerprint : null;
   const banner = riskBanner(m);
   const moveTargets = p.folders.filter((f) => f.name !== m.meta.folder && f.name !== "__risk__");
 
@@ -47,6 +59,11 @@ export function MessageView(p: Props) {
               <div style={{ minWidth: 0 }}>
                 <div className="msg-fromname">{m.meta.fromName}</div>
                 <div className="msg-addr">{m.meta.fromAddr}</div>
+                {m.verify.status === "signedUnknown" && !trustConfirm && (
+                  <button className="trust-chip" onClick={() => setTrustConfirm(true)}>
+                    ✓ 信任此发件人
+                  </button>
+                )}
               </div>
             </div>
             <div className="msg-side">
@@ -81,6 +98,44 @@ export function MessageView(p: Props) {
             </div>
           </div>
         </div>
+
+        {trustConfirm && unknownFpr && (
+          <div className="trust-confirm">
+            <div className="title">
+              将 {m.meta.fromName} 加入可信联系人？
+            </div>
+            <div className="row">
+              <span className="mono">{m.meta.fromAddr}</span>
+            </div>
+            <div className="row">
+              <span className="mono">指纹 {unknownFpr}</span>
+              <button
+                className="btn-ghost"
+                style={{ height: 24, padding: "0 8px", fontSize: 11 }}
+                onClick={() => {
+                  navigator.clipboard.writeText(unknownFpr);
+                  setCopied(true);
+                }}
+              >
+                {copied ? "已复制" : "复制指纹"}
+              </button>
+            </div>
+            <div className="msg">
+              签名只能证明「这封信出自这把密钥、内容未被改动」，并不能证明密钥背后就是 TA
+              本人。建议先通过微信、电话等<b>邮件以外的渠道</b>与对方核对一遍指纹再确认。
+              确认后，今后凡是这把密钥签名的邮件都会直接显示绿色「已验证本人」；若有人换用别的密钥冒充这个地址，SealMail
+              会立即标红警告。
+            </div>
+            <div className="actions">
+              <button className="btn-solid" style={{ background: "#1E6B49" }} onClick={p.onTrustSender}>
+                ✓ 确认信任
+              </button>
+              <button className="btn-ghost" onClick={() => setTrustConfirm(false)}>
+                取消
+              </button>
+            </div>
+          </div>
+        )}
 
         {banner && (
           <div className={`risk-banner ${banner.cls}`}>

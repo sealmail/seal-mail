@@ -369,6 +369,7 @@ export default function App() {
                 onMove={handleMove}
                 onDelete={handleDelete}
                 onShowRisk={() => setRiskOpen(true)}
+                onTrustSender={handleTrustSender}
               />
               <VerifyRail
                 mail={selected}
