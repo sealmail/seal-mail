@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import * as demo from "./demo";
 import type {
   Account,
   AccountSecret,
@@ -9,16 +8,30 @@ import type {
   EmailMeta,
   FilterRule,
   FolderInfo,
+  IdentityInfo,
+  LedgerAccountRow,
   SendResult,
   TrustedContact,
 } from "./types";
-
-export const isDemo = (accountId: string) => accountId === demo.DEMO_ACCOUNT_ID;
 
 export async function getState(): Promise<AppStateView> {
   return invoke<AppStateView>("get_state");
 }
 
+// ── 身份 / Ledger ──
+export async function ledgerGetAddresses(count = 5): Promise<LedgerAccountRow[]> {
+  return invoke("ledger_get_addresses", { count });
+}
+
+export async function bindLedger(path: string, address: string): Promise<IdentityInfo> {
+  return invoke("bind_ledger", { path, address });
+}
+
+export async function useLocalKey(): Promise<IdentityInfo> {
+  return invoke("use_local_key");
+}
+
+// ── 账户 ──
 export async function testConnection(account: Account, secret: AccountSecret): Promise<void> {
   return invoke("test_connection", { account, secret });
 }
@@ -31,42 +44,33 @@ export async function removeAccount(accountId: string): Promise<void> {
   return invoke("remove_account", { accountId });
 }
 
+// ── 目录 ──
 export async function listFolders(accountId: string): Promise<FolderInfo[]> {
-  if (isDemo(accountId)) return demo.demoFolders();
   return invoke("list_folders", { accountId });
 }
 
 export async function createFolder(accountId: string, name: string): Promise<void> {
-  if (isDemo(accountId)) return demo.demoCreateFolder(name);
   return invoke("create_folder", { accountId, name });
 }
 
+// ── 邮件 ──
 export async function fetchMessages(accountId: string, folder: string, limit = 30): Promise<EmailMeta[]> {
-  if (isDemo(accountId)) return demo.demoFetch(folder).map((f) => f.meta);
   return invoke("fetch_messages", { accountId, folder, limit });
 }
 
 export async function getMessage(accountId: string, folder: string, uid: number): Promise<EmailFull> {
-  if (isDemo(accountId)) {
-    const m = demo.demoGet(uid);
-    if (!m) throw new Error("演示邮件不存在");
-    return m;
-  }
   return invoke("get_message", { accountId, folder, uid });
 }
 
 export async function moveMessage(accountId: string, folder: string, uid: number, target: string): Promise<void> {
-  if (isDemo(accountId)) return demo.demoMove(uid, target);
   return invoke("move_message", { accountId, folder, uid, target });
 }
 
 export async function setRead(accountId: string, folder: string, uid: number, read: boolean): Promise<void> {
-  if (isDemo(accountId)) return demo.demoSetRead(uid, read);
   return invoke("set_read", { accountId, folder, uid, read });
 }
 
 export async function deleteMessage(accountId: string, folder: string, uid: number): Promise<void> {
-  if (isDemo(accountId)) return demo.demoMove(uid, "__deleted__");
   return invoke("delete_message", { accountId, folder, uid });
 }
 
@@ -78,18 +82,10 @@ export async function sendMail(
   body: string,
   sign: boolean
 ): Promise<SendResult> {
-  if (isDemo(accountId)) {
-    await new Promise((r) => setTimeout(r, 600));
-    return {
-      signed: sign,
-      fingerprint: "演示模式 · 未真正发送",
-      shortFingerprint: "DEMO…MODE",
-      sentAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-    };
-  }
   return invoke("send_mail", { accountId, to, cc, subject, body, sign });
 }
 
+// ── 过滤规则 ──
 export async function saveFilter(rule: FilterRule): Promise<FilterRule[]> {
   return invoke("save_filter", { rule });
 }
@@ -99,10 +95,10 @@ export async function deleteFilter(id: string): Promise<FilterRule[]> {
 }
 
 export async function applyFilters(accountId: string): Promise<ApplyResult> {
-  if (isDemo(accountId)) return { moved: 0, details: ["演示模式下过滤规则不执行"] };
   return invoke("apply_filters", { accountId });
 }
 
+// ── 可信联系人 ──
 export async function trustSender(
   name: string,
   email: string,

@@ -16,7 +16,7 @@ The UI is implemented from a Claude Design mockup (`SealMail.dc.html`): a wax-se
 - **Filter rules**: match on from/to/subject/body × contains/equals/starts-with/ends-with → auto-move into a folder (optionally mark read), with one-click "organize inbox now"
 
 ### Trust layer (the signature feature)
-- A locally generated Ed25519 identity key (`identity.key`, mode 0600; the private key never leaves your machine)
+- Two signing identities to choose from: a locally generated Ed25519 key (`identity.key`, mode 0600), or a **Ledger hardware key** (secp256k1, EIP-191 `personal_sign` over USB-HID — every signature is confirmed on the device and the private key never leaves it)
 - Optional signing on send: signature data lives in `X-SealMail-*` mail headers and is **invisible to ordinary recipients**; the body only gains one low-key line in the standard `-- ` signature-block format, so it never disrupts reading in a regular mailbox
 - Local verification on receive, with five states (wax-seal semantics):
   - 🟢 **Intact seal** — verified sender (valid signature + fingerprint matches your trusted record)
@@ -25,7 +25,14 @@ The UI is implemented from a Claude Design mockup (`SealMail.dc.html`): a wax-se
   - 🔴 **Cracked seal** — content tampered (body hash doesn't match the signature)
   - 🔴 **Forged seal** — impersonating a known contact (same display name, wrong key/domain)
 - High-risk warnings: heuristic detection for payments (funds + urgency wording), account security (requests for seed phrases / passwords), and contracts (clauses + deadlines); the risk modal requires checking "independently verified" before proceeding
-- When no account is configured, the six demo emails from the design mockup are shown (covering every trust state)
+- First-run onboarding: with no account configured the app guides you through connecting a mailbox and setting up your signing identity (no demo data)
+
+## Releases
+
+Push a `v*` tag to trigger the GitHub Actions release workflow: it builds macOS dmgs
+(Apple Silicon + Intel) and a Windows zip + NSIS installer, then publishes them to the
+GitHub Release. Apple signing/notarization activates automatically when the
+`APPLE_*` repo secrets are configured. CI (tests + type check) runs on every push/PR.
 
 ## Getting started
 
@@ -60,15 +67,15 @@ src-tauri/src/
   imap_client.rs  IMAP (connect/folders/fetch/move/read/delete; falls back to COPY+DELETE when MOVE is unsupported)
   pop3_client.rs  Minimal POP3 over TLS (local virtual-folder filing)
   smtp_client.rs  SMTP sending (lettre) + MIME building (mail-builder) + signed headers
+  ledger.rs       Ledger over USB-HID (HID framing + Ethereum-app APDUs)
   filters.rs      Filter-rule matching engine
   store.rs        Local persistence (accounts / secrets(0600) / filters / trusted / local folders)
 src/
   App.tsx         Main shell (three panes + verification rail + overlays)
   trust.ts        Trust-state copy / check rows / risk-banner mapping
-  demo.ts         The six demo emails from the design mockup
   components/     Seal (wax-seal renderer), Sidebar, MailList, MessageView, VerifyRail,
                   ComposeModal, AccountModal, FiltersModal, KeysView,
-                  ProfileSlideOver, RiskModal
+                  Onboarding, LedgerBindModal, ProfileSlideOver, RiskModal
 ```
 
 ## Security notes
@@ -81,6 +88,6 @@ src/
 
 - IMAP IDLE push, local mail cache (SQLite)
 - OAuth2 / XOAUTH2 (Exchange Online, Gmail)
-- Hardware-key signing (Ledger / YubiKey)
+- YubiKey support
 - Attachment download/upload, safe HTML body rendering
 - Native EWS / Microsoft Graph for Exchange

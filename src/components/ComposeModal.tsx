@@ -15,8 +15,11 @@ interface Props {
   currentAccountId: string;
   identity: IdentityInfo | null;
   prefill?: ComposePrefill;
-  demoMode: boolean;
   onClose: () => void;
+}
+
+function shortAddr(addr: string) {
+  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
 
 export function ComposeModal(p: Props) {
@@ -31,7 +34,12 @@ export function ComposeModal(p: Props) {
   const [result, setResult] = useState<SendResult | null>(null);
 
   const account = p.accounts.find((a) => a.id === accountId) ?? p.accounts[0];
-  const fpr = p.identity ? shortFpr(p.identity.fingerprint) : "…";
+  const isLedger = p.identity?.mode === "ledger";
+  const idShort = isLedger
+    ? shortAddr(p.identity?.ledgerAddress ?? "")
+    : p.identity
+      ? shortFpr(p.identity.fingerprint)
+      : "…";
 
   const parseAddrs = (s: string) =>
     s
@@ -61,7 +69,7 @@ export function ComposeModal(p: Props) {
     }
   }
 
-  const titles = ["写邮件 · 撰写", "写邮件 · 签名并发送", "写邮件 · 完成"];
+  const titles = ["写邮件 · 撰写", sign ? "写邮件 · 签名并发送" : "写邮件 · 发送中", "写邮件 · 完成"];
 
   return (
     <div className="overlay">
@@ -113,7 +121,7 @@ export function ComposeModal(p: Props) {
                 )}
                 {sign && (
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "#1E6B49", fontWeight: 600, whiteSpace: "nowrap" }}>
-                    ● 将签名
+                    ● {isLedger ? "Ledger 签名" : "本地密钥签名"}
                   </span>
                 )}
               </div>
@@ -138,7 +146,15 @@ export function ComposeModal(p: Props) {
                 <input type="checkbox" checked={sign} onChange={(e) => setSign(e.target.checked)} style={{ accentColor: "#1E6B49" }} />
                 <span style={{ fontSize: 15 }}>🔒</span>
                 <span>
-                  用本机 <b style={{ color: "#1E6B49" }}>SealMail 密钥（Ed25519 · {fpr}）</b>签名。
+                  {isLedger ? (
+                    <>
+                      用 <b style={{ color: "#1E6B49" }}>Ledger 硬件密钥（{idShort}）</b>签名，发送时需在设备上确认。
+                    </>
+                  ) : (
+                    <>
+                      用本机 <b style={{ color: "#1E6B49" }}>SealMail 密钥（Ed25519 · {idShort}）</b>签名。
+                    </>
+                  )}
                   装有 SealMail 的收件人会看到完整封印；普通邮箱收件人只会在结尾看到一行低调的签名说明，不影响阅读。
                 </span>
               </label>
@@ -150,19 +166,25 @@ export function ComposeModal(p: Props) {
               <div className="device">
                 <div className="screen">
                   <span>
-                    Sign message?
+                    {sign ? "Sign message?" : "Sending…"}
                     <br />
-                    {fpr}
+                    {idShort}
                   </span>
                 </div>
                 <div className="btn" />
               </div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#23272F", marginTop: 22 }}>正在签名并发送</div>
-              <div style={{ fontSize: 12.5, color: "#8A8576", marginTop: 6, maxWidth: 340, lineHeight: 1.6 }}>
-                正文哈希已计算，正用你的本地密钥盖印，随后通过 SMTP 投递。私钥不会离开本机。
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#23272F", marginTop: 22 }}>
+                {sign && isLedger ? "在你的 Ledger 上确认签名" : sign ? "正在签名并发送" : "正在发送"}
+              </div>
+              <div style={{ fontSize: 12.5, color: "#8A8576", marginTop: 6, maxWidth: 360, lineHeight: 1.6 }}>
+                {sign && isLedger
+                  ? "核对设备屏幕上的内容摘要，按下两侧按钮确认。私钥永不离开硬件。"
+                  : sign
+                    ? "正文哈希已计算，正用你的本地密钥盖印，随后通过 SMTP 投递。私钥不会离开本机。"
+                    : "正在通过 SMTP 投递。"}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18, color: "#9A958A", fontSize: 12 }}>
-                <span className="pulse-dot" /> 正在投递…
+                <span className="pulse-dot" /> {sign && isLedger ? "等待硬件确认…" : "正在投递…"}
               </div>
             </div>
           )}
@@ -189,19 +211,17 @@ export function ComposeModal(p: Props) {
                   padding: "10px 14px",
                 }}
               >
-                {result.signed ? `sig ${result.shortFingerprint} · Ed25519 · ${result.sentAt}` : `sent · ${result.sentAt}`}
+                {result.signed ? `sig ${result.shortFingerprint} · ${result.method} · ${result.sentAt}` : `sent · ${result.sentAt}`}
               </div>
             </div>
           )}
         </div>
 
         <div className="modal-foot">
-          <span className="toolbar-note">
-            {p.demoMode && step === 0 ? "演示模式：不会真正发送，请先添加账户" : ""}
-          </span>
+          <span className="toolbar-note" />
           {step === 0 && (
             <button className="btn-primary" style={{ height: 40, padding: "0 22px" }} onClick={doSend}>
-              {sign ? "签名并发送" : "发送"}
+              {sign ? (isLedger ? "用 Ledger 签名并发送" : "签名并发送") : "发送"}
             </button>
           )}
           {step === 1 && (

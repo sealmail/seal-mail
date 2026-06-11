@@ -94,9 +94,14 @@ pub fn verify_message(
         .find(|t| !t.name.is_empty() && t.name.eq_ignore_ascii_case(from_name));
 
     let sig = header_text(msg, crypto::H_SIGNATURE);
-    let pubkey = header_text(msg, crypto::H_PUBKEY);
+    let method = header_text(msg, crypto::H_METHOD).unwrap_or_else(|| "ed25519".into());
+    let id_source = if method == "eth-personal" {
+        header_text(msg, crypto::H_ADDRESS)
+    } else {
+        header_text(msg, crypto::H_PUBKEY)
+    };
 
-    let (sig, pubkey) = match (sig, pubkey) {
+    let (sig, id_source) = match (sig, id_source) {
         (Some(s), Some(p)) => (s, p),
         _ => {
             // 未签名：如果显示名与某个可信联系人一致但地址不同 → 疑似冒充
@@ -115,27 +120,49 @@ pub fn verify_message(
         }
     };
 
-    let h = crypto::SealHeaders {
-        pubkey,
-        signature: sig,
-        from: header_text(msg, crypto::H_FROM).unwrap_or_else(|| from_addr.to_lowercase()),
-        date: header_text(msg, crypto::H_DATE).unwrap_or_default(),
-        body_hash: header_text(msg, crypto::H_BODY_HASH).unwrap_or_default(),
-    };
+    let signed_from = header_text(msg, crypto::H_FROM).unwrap_or_else(|| from_addr.to_lowercase());
+    let signed_date = header_text(msg, crypto::H_DATE).unwrap_or_default();
+    let signed_body_hash = header_text(msg, crypto::H_BODY_HASH).unwrap_or_default();
 
     // 签名头声明的发件人必须与实际 From 一致，否则是头部重放/冒充
-    if !h.from.eq_ignore_ascii_case(from_addr) {
+    if !signed_from.eq_ignore_ascii_case(from_addr) {
         return VerifyDetail::Impersonation {
-            claimed: h.from.clone(),
+            claimed: signed_from.clone(),
             got_fingerprint: None,
             real_fingerprint: by_name.map(|t| t.fingerprint.clone()).unwrap_or_default(),
             got_domain: domain_of(from_addr),
-            real_domain: domain_of(&h.from),
+            real_domain: domain_of(&signed_from),
         };
     }
 
-    let method = "SealMail · Ed25519".to_string();
-    match crypto::verify_headers(&h, body_text) {
+    // 按签名方案校验，统一产出 (指纹/地址, 正文是否一致, 签名时哈希, 收到时哈希)
+    let (method, outcome): (String, Result<(String, bool, String, String), String>) =
+        if method == "eth-personal" {
+            let res = (|| {
+                let sig_bytes = hex::decode(sig.trim()).map_err(|_| "签名格式错误".to_string())?;
+                let rsv: [u8; 65] = sig_bytes.try_into().map_err(|_| "签名长度错误".to_string())?;
+                let canon = crypto::canon_string(&signed_from, &signed_date, &signed_body_hash);
+                let recovered = crypto::eth_personal_recover(canon.as_bytes(), &rsv)?;
+                if !recovered.eq_ignore_ascii_case(&id_source) {
+                    return Err("签名与声明地址不符".to_string());
+                }
+                let got = crypto::body_hash_hex(body_text);
+                let ok = got == signed_body_hash.trim().to_lowercase();
+                Ok((recovered, ok, signed_body_hash.clone(), got))
+            })();
+            ("Ledger · secp256k1".to_string(), res)
+        } else {
+            let h = crypto::SealHeaders {
+                pubkey: id_source.clone(),
+                signature: sig.clone(),
+                from: signed_from.clone(),
+                date: signed_date.clone(),
+                body_hash: signed_body_hash.clone(),
+            };
+            ("SealMail · Ed25519".to_string(), crypto::verify_headers(&h, body_text))
+        };
+
+    match outcome {
         Ok((fingerprint, body_ok, signed_hash, got_hash)) => {
             if !body_ok {
                 return VerifyDetail::Tampered {
@@ -146,7 +173,7 @@ pub fn verify_message(
                 };
             }
             if let Some(t) = by_addr {
-                if t.fingerprint == fingerprint {
+                if t.fingerprint.eq_ignore_ascii_case(&fingerprint) {
                     return VerifyDetail::Verified {
                         fingerprint,
                         method,
@@ -166,7 +193,7 @@ pub fn verify_message(
             }
             if let Some(t) = by_name {
                 // 显示名匹配可信联系人、地址不同、密钥不同 → 冒充
-                if t.fingerprint != fingerprint {
+                if !t.fingerprint.eq_ignore_ascii_case(&fingerprint) {
                     return VerifyDetail::Impersonation {
                         claimed: t.name.clone(),
                         got_fingerprint: Some(fingerprint),

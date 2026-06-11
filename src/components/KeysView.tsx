@@ -1,15 +1,41 @@
+import { useState } from "react";
 import { Seal } from "./Seal";
+import { useLocalKey } from "../api";
+import { LedgerBindModal } from "./LedgerBindModal";
+import { shortFpr } from "../trust";
 import type { IdentityInfo, TrustedContact } from "../types";
 
 interface Props {
   identity: IdentityInfo | null;
   trusted: TrustedContact[];
-  demoMode: boolean;
   onBack: () => void;
   onRemoveTrusted: (email: string) => void;
+  onIdentityChanged: (info: IdentityInfo) => void;
+}
+
+function shortAddr(addr: string) {
+  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
 
 export function KeysView(p: Props) {
+  const [ledgerModal, setLedgerModal] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isLedger = p.identity?.mode === "ledger";
+
+  async function switchToLocal() {
+    setBusy(true);
+    setError(null);
+    try {
+      const info = await useLocalKey();
+      p.onIdentityChanged(info);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="keys-page">
       <div className="keys-inner">
@@ -26,26 +52,23 @@ export function KeysView(p: Props) {
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#23272F" }}>我的签名身份</div>
             <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "#1E6B49", marginTop: 3 }}>
-              Ed25519 · 本地生成 · {p.identity ? p.identity.created.slice(0, 10) : "…"}
+              {isLedger
+                ? `Ledger · secp256k1 · ${p.identity?.ledgerPath ?? ""}`
+                : `Ed25519 · 本地生成 · ${p.identity ? p.identity.created.slice(0, 10) : "…"}`}
             </div>
             <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 5, wordBreak: "break-all" }}>
-              指纹 {p.identity?.fingerprint ?? "…"}
+              {isLedger ? `地址 ${p.identity?.ledgerAddress ?? ""}` : `指纹 ${p.identity?.fingerprint ?? "…"}`}
             </div>
           </div>
         </div>
 
-        <div className="section-label">签名密钥</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 30 }}>
+        <div className="section-label">签名密钥（发送签名邮件时使用其中一个）</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
           <div className="card-row" style={{ border: "1px solid #E8E3D8", borderRadius: 12, background: "#fff" }}>
             <div
               style={{
-                width: 44,
-                height: 30,
-                borderRadius: 6,
-                background: "#23272F",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                width: 44, height: 30, borderRadius: 6, background: "#23272F",
+                display: "flex", alignItems: "center", justifyContent: "center",
               }}
             >
               <div style={{ width: 20, height: 14, borderRadius: 2, background: "#0E1217", boxShadow: "inset 0 0 0 1px #3A3E46" }} />
@@ -53,17 +76,55 @@ export function KeysView(p: Props) {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "#2A2E36" }}>SealMail 本地密钥</div>
               <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2 }}>
-                Ed25519 · 私钥仅保存在本机
+                Ed25519 · 私钥仅保存在本机 · 无需额外硬件
               </div>
             </div>
-            <span className="pill jade">使用中</span>
+            {isLedger ? (
+              <button className="btn-ghost" disabled={busy} onClick={switchToLocal}>
+                改用本地密钥
+              </button>
+            ) : (
+              <span className="pill jade">使用中</span>
+            )}
           </div>
-          <button className="dashed-add" title="硬件密钥支持在规划中">
-            + 绑定硬件密钥（Ledger / YubiKey）— 规划中
-          </button>
-        </div>
 
-        <div className="section-label">可信联系人（已记录密钥指纹）</div>
+          <div className="card-row" style={{ border: "1px solid #E8E3D8", borderRadius: 12, background: "#fff" }}>
+            <div
+              style={{
+                width: 44, height: 30, borderRadius: 6, background: "#23272F", position: "relative",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <div style={{ width: 20, height: 14, borderRadius: 2, background: "#0E1217", boxShadow: "inset 0 0 0 1px #3A3E46" }} />
+              <div style={{ position: "absolute", right: -4, top: "50%", transform: "translateY(-50%)", width: 7, height: 7, borderRadius: "50%", background: "#3A3E46" }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#2A2E36" }}>Ledger 硬件密钥</div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2 }}>
+                {isLedger
+                  ? `secp256k1 · ${shortAddr(p.identity?.ledgerAddress ?? "")} · 每次签名需设备确认`
+                  : "secp256k1 · EIP-191 · 私钥永不离开硬件"}
+              </div>
+            </div>
+            {isLedger ? (
+              <span className="pill jade">使用中</span>
+            ) : (
+              <button className="btn-ghost" onClick={() => setLedgerModal(true)}>
+                绑定 Ledger
+              </button>
+            )}
+          </div>
+        </div>
+        {isLedger && (
+          <div style={{ fontSize: 11.5, color: "#9A5B16", background: "#FBEFD9", border: "1px solid #F0DBB0", borderRadius: 9, padding: "10px 14px", marginBottom: 16, lineHeight: 1.6 }}>
+            使用 Ledger 时，每封签名邮件发送前需要：连接设备 → 解锁 → 打开 Ethereum app → 在设备上确认。
+          </div>
+        )}
+        {error && <div className="form-error" style={{ marginBottom: 16 }}>{error}</div>}
+
+        <div className="section-label" style={{ marginTop: 16 }}>
+          可信联系人（已记录密钥指纹 / 地址）
+        </div>
         {p.trusted.length === 0 ? (
           <div className="card-list" style={{ padding: "22px 18px", fontSize: 12.5, color: "#8A8576", lineHeight: 1.6 }}>
             还没有可信联系人。当你收到签名有效的邮件时，可在右侧验证面板将对方加入可信——之后任何冒充该联系人的邮件都会被标红。
@@ -80,24 +141,32 @@ export function KeysView(p: Props) {
                     {t.name}
                     {t.org ? <span style={{ fontWeight: 400, color: "#A39E91" }}> · {t.org}</span> : null}
                   </div>
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2 }}>
-                    {t.email} · {t.fingerprint}
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2, wordBreak: "break-all" }}>
+                    {t.email} · {t.fingerprint.startsWith("0x") ? shortAddr(t.fingerprint) : shortFpr(t.fingerprint)}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 11.5, color: "#3A3E46", fontWeight: 500 }}>自 {t.since}</div>
                   <div style={{ fontSize: 10.5, color: "#A39E91" }}>{t.verifiedCount} 封已验证</div>
                 </div>
-                {!p.demoMode && (
-                  <button className="icon-btn" title="移除可信" onClick={() => p.onRemoveTrusted(t.email)}>
-                    ×
-                  </button>
-                )}
+                <button className="icon-btn" title="移除可信" onClick={() => p.onRemoveTrusted(t.email)}>
+                  ×
+                </button>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {ledgerModal && (
+        <LedgerBindModal
+          onClose={() => setLedgerModal(false)}
+          onBound={(info) => {
+            setLedgerModal(false);
+            p.onIdentityChanged(info);
+          }}
+        />
+      )}
     </div>
   );
 }

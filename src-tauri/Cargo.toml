@@ -31,6 +31,12 @@ sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
 getrandom = "0.2"
+# Ledger (secp256k1 EIP-191 personal_sign) 验证侧：ecrecover + keccak256
+k256 = { version = "0.13", features = ["ecdsa"] }
+sha3 = "0.10"
+# Ledger 硬件通信走 USB-HID（WKWebView 无 WebHID，只能从 Rust 侧直连设备）。
+# 默认特性在 macOS 用 IOKit 构建内置 C hidapi，无需系统库。
+hidapi = "2"
 
 chrono = { version = "0.4", features = ["serde"] }
 

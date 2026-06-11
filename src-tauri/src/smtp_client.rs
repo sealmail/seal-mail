@@ -11,9 +11,25 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct SendResult {
     pub signed: bool,
+    pub method: String,
     pub fingerprint: String,
     pub short_fingerprint: String,
     pub sent_at: String,
+}
+
+/// 发送时使用的签名方式
+pub enum Signer<'a> {
+    None,
+    Local(&'a Identity),
+    Ledger { path: String, address: String },
+}
+
+fn short_addr(addr: &str) -> String {
+    if addr.len() > 12 {
+        format!("{}…{}", &addr[..6], &addr[addr.len() - 4..])
+    } else {
+        addr.to_string()
+    }
 }
 
 fn transport(account: &Account, secret: &AccountSecret) -> Result<SmtpTransport, String> {
@@ -36,20 +52,29 @@ fn transport(account: &Account, secret: &AccountSecret) -> Result<SmtpTransport,
 pub fn send_mail(
     account: &Account,
     secret: &AccountSecret,
-    identity: &Identity,
+    signer: Signer<'_>,
     to: Vec<String>,
     cc: Vec<String>,
     subject: &str,
     body: &str,
-    sign: bool,
 ) -> Result<SendResult, String> {
-    let fingerprint = identity.fingerprint();
-    let short = crypto::short_fpr(&fingerprint);
+    let (signed, method, fingerprint, short) = match &signer {
+        Signer::None => (false, "无".to_string(), String::new(), String::new()),
+        Signer::Local(id) => {
+            let f = id.fingerprint();
+            let s = crypto::short_fpr(&f);
+            (true, "SealMail · Ed25519".to_string(), f, s)
+        }
+        Signer::Ledger { address, .. } => {
+            let s = short_addr(address);
+            (true, "Ledger · secp256k1".to_string(), address.clone(), s)
+        }
+    };
 
     // 签名时附加一行低调的签名说明：用标准 "-- " 分隔符，普通客户端会按签名档弱化显示
-    let final_body = if sign {
+    let final_body = if signed {
         format!(
-            "{}\n\n-- \n{} · 已用 SealMail 数字签名（指纹 {}）\n",
+            "{}\n\n-- \n{} · 已用 SealMail 数字签名（{}）\n",
             body.trim_end(),
             account.display_name,
             short
@@ -73,10 +98,21 @@ pub fn send_mail(
             .collect::<Vec<(&str, &str)>>());
     }
 
-    if sign {
-        let signed = crypto::sign_email(identity, &account.email, &final_body);
-        for (name, value) in signed.headers {
-            builder = builder.header(name, Raw::new(value));
+    match &signer {
+        Signer::None => {}
+        Signer::Local(id) => {
+            for (name, value) in crypto::sign_email(id, &account.email, &final_body).headers {
+                builder = builder.header(name, Raw::new(value));
+            }
+        }
+        Signer::Ledger { path, address } => {
+            // 这里会阻塞等待用户在 Ledger 设备上确认
+            let headers = crypto::sign_email_eth(address, &account.email, &final_body, |msg| {
+                crate::ledger::sign_personal_message(path, msg)
+            })?;
+            for (name, value) in headers.headers {
+                builder = builder.header(name, Raw::new(value));
+            }
         }
     }
 
@@ -100,7 +136,8 @@ pub fn send_mail(
         .map_err(|e| format!("发送失败: {}", e))?;
 
     Ok(SendResult {
-        signed: sign,
+        signed,
+        method,
         fingerprint,
         short_fingerprint: short,
         sent_at: chrono::Local::now().format("%H:%M").to_string(),

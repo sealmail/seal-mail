@@ -6,7 +6,6 @@ interface Props {
   mail: EmailFull | null;
   onOpenProfile: () => void;
   onTrustSender: () => void;
-  demoMode: boolean;
 }
 
 export function VerifyRail(p: Props) {
@@ -19,7 +18,7 @@ export function VerifyRail(p: Props) {
   }
   const st = statusText(p.mail.verify);
   const checks = buildChecks(p.mail);
-  const canTrust = p.mail.verify.status === "signedUnknown" && !p.demoMode;
+  const canTrust = p.mail.verify.status === "signedUnknown";
 
   return (
     <div className="rail" style={{ background: st.railBg }}>

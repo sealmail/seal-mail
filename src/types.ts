@@ -102,6 +102,16 @@ export interface IdentityInfo {
   fingerprint: string;
   publicKey: string;
   created: string;
+  /** local | ledger */
+  mode: string;
+  ledgerPath?: string | null;
+  ledgerAddress?: string | null;
+}
+
+export interface LedgerAccountRow {
+  index: number;
+  path: string;
+  address: string;
 }
 
 export interface FolderInfo {
@@ -119,6 +129,7 @@ export interface AppStateView {
 
 export interface SendResult {
   signed: boolean;
+  method: string;
   fingerprint: string;
   shortFingerprint: string;
   sentAt: string;

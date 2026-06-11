@@ -184,6 +184,106 @@ fn e2e_unsigned_mail() {
     assert_eq!(mail.meta.lang, "JA");
 }
 
+/// 用 k256 软件密钥模拟 Ledger（同为 EIP-191 personal_sign），构造带
+/// eth-personal 签名头的邮件
+fn build_raw_eth(
+    from_name: &str,
+    from_addr: &str,
+    subject: &str,
+    body: &str,
+    secret: &[u8; 32],
+    address: &str,
+) -> Vec<u8> {
+    let signed = crypto::sign_email_eth(address, from_addr, body, |msg| {
+        crypto::eth_personal_sign_with_key(secret, msg)
+    })
+    .unwrap();
+    let mut b = MessageBuilder::new()
+        .from((from_name, from_addr))
+        .to(vec![("", "aria@example.com")])
+        .subject(subject)
+        .text_body(body);
+    for (name, value) in signed.headers {
+        b = b.header(name, Raw::new(value));
+    }
+    b.write_to_vec().unwrap()
+}
+
+fn eth_address_of(secret: &[u8; 32]) -> String {
+    // 通过一次签名 + 恢复拿到地址（与验证路径同一套实现）
+    let sig = crypto::eth_personal_sign_with_key(secret, b"probe").unwrap();
+    crypto::eth_personal_recover(b"probe", &sig).unwrap()
+}
+
+#[test]
+fn eth_personal_sign_recover_roundtrip() {
+    let secret = [3u8; 32];
+    let msg = b"sealmail-v1|a@b.c|2026-06-11T00:00:00Z|deadbeef";
+    let sig = crypto::eth_personal_sign_with_key(&secret, msg).unwrap();
+    let addr = crypto::eth_personal_recover(msg, &sig).unwrap();
+    assert!(addr.starts_with("0x") && addr.len() == 42);
+    // 同一密钥对另一条消息恢复出同一地址
+    let sig2 = crypto::eth_personal_sign_with_key(&secret, b"other message").unwrap();
+    assert_eq!(crypto::eth_personal_recover(b"other message", &sig2).unwrap(), addr);
+    // 消息被篡改 → 恢复出的地址不同
+    let addr_tampered = crypto::eth_personal_recover(b"tampered!", &sig).unwrap();
+    assert_ne!(addr_tampered, addr);
+}
+
+#[test]
+fn e2e_eth_verified_mail() {
+    let secret = [5u8; 32];
+    let address = eth_address_of(&secret);
+    let body = "Payload hash attached for co-signing.";
+    let raw = build_raw_eth("Mara Castellanos", "mara@aragon.eth", "Rotation", body, &secret, &address);
+
+    // 可信记录里登记的是 0x 地址
+    let trusted = vec![TrustedContact {
+        name: "Mara Castellanos".into(),
+        email: "mara@aragon.eth".into(),
+        fingerprint: address.clone(),
+        org: None,
+        since: "2025-01-01".into(),
+        verified_count: 7,
+    }];
+    let mail = parse_email(&raw, 10, "acc1", "INBOX", true, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "verified");
+    match mail.verify {
+        VerifyDetail::Verified { method, fingerprint, .. } => {
+            assert_eq!(method, "Ledger · secp256k1");
+            assert!(fingerprint.eq_ignore_ascii_case(&address));
+        }
+        other => panic!("应为 Verified，实际 {:?}", other),
+    }
+
+    // 无可信记录 → signedUnknown
+    let mail2 = parse_email(&raw, 11, "acc1", "INBOX", true, &[]).unwrap();
+    assert_eq!(mail2.meta.trust, "signedUnknown");
+}
+
+#[test]
+fn e2e_eth_tampered_mail() {
+    let secret = [5u8; 32];
+    let address = eth_address_of(&secret);
+    let body = "Wire 100 USD to account A.";
+    let raw = build_raw_eth("Mara", "mara@aragon.eth", "Wire", body, &secret, &address);
+    let tampered = String::from_utf8(raw)
+        .unwrap()
+        .replace("Wire 100 USD to account A.", "Wire 999 USD to account B.");
+    let mail = parse_email(tampered.as_bytes(), 12, "acc1", "INBOX", true, &[]).unwrap();
+    assert_eq!(mail.meta.trust, "tampered");
+}
+
+#[test]
+fn eth_sign_rejects_wrong_address_binding() {
+    // 设备返回的签名恢复出的地址与绑定地址不一致时必须报错（自检）
+    let secret = [5u8; 32];
+    let err = crypto::sign_email_eth("0x0000000000000000000000000000000000000001", "a@b.c", "hi", |msg| {
+        crypto::eth_personal_sign_with_key(&secret, msg)
+    });
+    assert!(err.is_err());
+}
+
 #[test]
 fn risk_detection() {
     // 资金 + 紧急 → fund

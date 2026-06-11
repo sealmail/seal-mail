@@ -1,32 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api";
-import { DEMO_ACCOUNT_ID, demoTrusted } from "./demo";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
 import { FiltersModal } from "./components/FiltersModal";
 import { KeysView } from "./components/KeysView";
 import { MailList } from "./components/MailList";
 import { MessageView } from "./components/MessageView";
+import { Onboarding } from "./components/Onboarding";
 import { ProfileSlideOver } from "./components/ProfileSlideOver";
 import { RiskModal } from "./components/RiskModal";
 import { RISK_FOLDER, Sidebar } from "./components/Sidebar";
 import { VerifyRail } from "./components/VerifyRail";
-import type { Account, AppStateView, EmailFull, EmailMeta, FilterRule, FolderInfo } from "./types";
+import type { AppStateView, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
-
-const DEMO_ACCOUNT: Account = {
-  id: DEMO_ACCOUNT_ID,
-  label: "演示",
-  email: "demo@sealmail.app",
-  displayName: "SealMail Demo",
-  protocol: "imap",
-  incomingHost: "",
-  incomingPort: 993,
-  smtpHost: "",
-  smtpPort: 465,
-  smtpSecurity: "ssl",
-  username: "",
-};
 
 function isRisky(m: EmailMeta) {
   return !!m.risk || m.trust === "tampered" || m.trust === "impersonation";
@@ -34,6 +20,7 @@ function isRisky(m: EmailMeta) {
 
 export default function App() {
   const [state, setState] = useState<AppStateView | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState("");
   const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [folder, setFolder] = useState("INBOX");
@@ -57,9 +44,9 @@ export default function App() {
 
   const fetchSeq = useRef(0);
 
-  const demoMode = (state?.accounts.length ?? 0) === 0;
-  const accounts = demoMode ? [DEMO_ACCOUNT] : state?.accounts ?? [];
-  const trusted = demoMode ? demoTrusted : state?.trusted ?? [];
+  const accounts = state?.accounts ?? [];
+  const trusted = state?.trusted ?? [];
+  const hasAccounts = accounts.length > 0;
 
   // ── 初始化 ──
   useEffect(() => {
@@ -67,19 +54,9 @@ export default function App() {
       .getState()
       .then((s) => {
         setState(s);
-        setAccountId(s.accounts[0]?.id ?? DEMO_ACCOUNT_ID);
+        setAccountId(s.accounts[0]?.id ?? "");
       })
-      .catch(() => {
-        // 非 Tauri 环境（纯浏览器调试）退化为演示模式
-        setState({
-          accounts: [],
-          identity: { fingerprint: "0000 0000 0000 0000", publicKey: "", created: new Date().toISOString() },
-          trusted: [],
-          filters: [],
-          localFolders: [],
-        });
-        setAccountId(DEMO_ACCOUNT_ID);
-      });
+      .catch((e) => setBootError(String(e)));
   }, []);
 
   const refreshFolders = useCallback(async (accId: string) => {
@@ -97,6 +74,7 @@ export default function App() {
     if (!accountId) return;
     setFolder("INBOX");
     setSelected(null);
+    setListError(null);
     refreshFolders(accountId).catch((e) => setListError(String(e)));
   }, [accountId, refreshFolders]);
 
@@ -224,6 +202,10 @@ export default function App() {
     setState((s) => (s ? { ...s, trusted: list } : s));
   }
 
+  function handleIdentityChanged(info: IdentityInfo) {
+    setState((s) => (s ? { ...s, identity: info } : s));
+  }
+
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (!name) {
@@ -241,111 +223,131 @@ export default function App() {
     }
   }
 
+  const ledgerMode = state?.identity.mode === "ledger";
+
   return (
     <div className="app">
       <div className="titlebar" data-tauri-drag-region>
         <div className="brand" data-tauri-drag-region>
-          <div className="brand-seal">印</div>
-          <span className="brand-name">SealMail</span>
-          <span className="brand-cn">信印</span>
+          <div className="brand-seal" data-tauri-drag-region>印</div>
+          <span className="brand-name" data-tauri-drag-region>SealMail</span>
+          <span className="brand-cn" data-tauri-drag-region>信印</span>
         </div>
         <div className="search-wrap" data-tauri-drag-region>
-          <div className="search">
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <circle cx="5.5" cy="5.5" r="4" stroke="#B3AEA2" strokeWidth="1.4" />
-              <path d="M8.5 8.5l3 3" stroke="#B3AEA2" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
-            <input placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
+          {hasAccounts && (
+            <div className="search">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <circle cx="5.5" cy="5.5" r="4" stroke="#B3AEA2" strokeWidth="1.4" />
+                <path d="M8.5 8.5l3 3" stroke="#B3AEA2" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+              <input placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+          )}
         </div>
-        <button
-          className="btn-primary"
-          onClick={() => {
-            setComposePrefill(undefined);
-            setComposeOpen(true);
-          }}
-        >
-          <span style={{ fontSize: 15, lineHeight: 1, marginTop: -1 }}>✎</span> 写邮件
-        </button>
-      </div>
-
-      {demoMode && state && (
-        <div className="demo-banner">
-          当前展示演示数据（设计稿中的 6 封示例邮件）。
-          <button onClick={() => setAccountModal(true)}>添加真实邮箱账户</button> 后即可收发真实邮件。
-        </div>
-      )}
-
-      <div className="main">
-        <Sidebar
-          identity={state?.identity ?? null}
-          accounts={accounts}
-          currentAccountId={accountId}
-          folders={folders}
-          currentFolder={folder}
-          riskCount={riskCount}
-          inboxUnread={inboxUnread}
-          view={view}
-          demoMode={demoMode}
-          onSelectAccount={(id) => {
-            setAccountId(id);
-            setView("mail");
-          }}
-          onSelectFolder={(f) => {
-            setFolder(f);
-            setView("mail");
-          }}
-          onOpenKeys={() => setView("keys")}
-          onAddAccount={() => setAccountModal(true)}
-          onNewFolder={() => setNewFolderOpen(true)}
-          onOpenFilters={() => setFiltersOpen(true)}
-        />
-
-        {view === "keys" ? (
-          <KeysView
-            identity={state?.identity ?? null}
-            trusted={trusted}
-            demoMode={demoMode}
-            onBack={() => setView("mail")}
-            onRemoveTrusted={handleRemoveTrusted}
-          />
-        ) : (
-          <>
-            <MailList
-              title={folderTitle}
-              messages={shownMessages}
-              selectedUid={selected?.meta.uid ?? null}
-              loading={loading}
-              error={listError}
-              onSelect={selectMail}
-              onRefresh={loadMessages}
-            />
-            <MessageView
-              mail={selected}
-              folders={folders}
-              onReply={handleReply}
-              onForward={handleForward}
-              onMove={handleMove}
-              onDelete={handleDelete}
-              onShowRisk={() => setRiskOpen(true)}
-            />
-            <VerifyRail
-              mail={selected}
-              demoMode={demoMode}
-              onOpenProfile={() => setProfileOpen(true)}
-              onTrustSender={handleTrustSender}
-            />
-          </>
+        {hasAccounts && (
+          <button
+            className="btn-primary"
+            onClick={() => {
+              setComposePrefill(undefined);
+              setComposeOpen(true);
+            }}
+          >
+            <span style={{ fontSize: 15, lineHeight: 1, marginTop: -1 }}>✎</span> 写邮件
+          </button>
         )}
       </div>
 
-      {composeOpen && (
+      {bootError && <div className="demo-banner">初始化失败：{bootError}</div>}
+
+      {!hasAccounts ? (
+        // ── 首次使用引导 ──
+        view === "keys" && state ? (
+          <div className="main">
+            <KeysView
+              identity={state.identity}
+              trusted={trusted}
+              onBack={() => setView("mail")}
+              onRemoveTrusted={handleRemoveTrusted}
+              onIdentityChanged={handleIdentityChanged}
+            />
+          </div>
+        ) : (
+          <Onboarding
+            identity={state?.identity ?? null}
+            onAddAccount={() => setAccountModal(true)}
+            onOpenKeys={() => setView("keys")}
+          />
+        )
+      ) : (
+        <div className="main">
+          <Sidebar
+            identity={state?.identity ?? null}
+            accounts={accounts}
+            currentAccountId={accountId}
+            folders={folders}
+            currentFolder={folder}
+            riskCount={riskCount}
+            inboxUnread={inboxUnread}
+            view={view}
+            ledgerMode={ledgerMode}
+            onSelectAccount={(id) => {
+              setAccountId(id);
+              setView("mail");
+            }}
+            onSelectFolder={(f) => {
+              setFolder(f);
+              setView("mail");
+            }}
+            onOpenKeys={() => setView("keys")}
+            onAddAccount={() => setAccountModal(true)}
+            onNewFolder={() => setNewFolderOpen(true)}
+            onOpenFilters={() => setFiltersOpen(true)}
+          />
+
+          {view === "keys" ? (
+            <KeysView
+              identity={state?.identity ?? null}
+              trusted={trusted}
+              onBack={() => setView("mail")}
+              onRemoveTrusted={handleRemoveTrusted}
+              onIdentityChanged={handleIdentityChanged}
+            />
+          ) : (
+            <>
+              <MailList
+                title={folderTitle}
+                messages={shownMessages}
+                selectedUid={selected?.meta.uid ?? null}
+                loading={loading}
+                error={listError}
+                onSelect={selectMail}
+                onRefresh={loadMessages}
+              />
+              <MessageView
+                mail={selected}
+                folders={folders}
+                onReply={handleReply}
+                onForward={handleForward}
+                onMove={handleMove}
+                onDelete={handleDelete}
+                onShowRisk={() => setRiskOpen(true)}
+              />
+              <VerifyRail
+                mail={selected}
+                onOpenProfile={() => setProfileOpen(true)}
+                onTrustSender={handleTrustSender}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {composeOpen && hasAccounts && (
         <ComposeModal
           accounts={accounts}
           currentAccountId={accountId}
           identity={state?.identity ?? null}
           prefill={composePrefill}
-          demoMode={demoMode}
           onClose={() => setComposeOpen(false)}
         />
       )}
@@ -358,6 +360,7 @@ export default function App() {
             const s = await api.getState();
             setState(s);
             setAccountId(acc.id);
+            setView("mail");
           }}
         />
       )}
@@ -368,7 +371,6 @@ export default function App() {
           folders={folders}
           accounts={accounts}
           currentAccountId={accountId}
-          demoMode={demoMode}
           onClose={() => setFiltersOpen(false)}
           onChanged={(rules: FilterRule[]) => setState((s) => (s ? { ...s, filters: rules } : s))}
           onApplied={loadMessages}

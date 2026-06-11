@@ -160,12 +160,38 @@ pub struct EmailFull {
     pub verify: VerifyDetail,
 }
 
+/// 签名身份配置（identity.json）：本地 Ed25519 密钥或 Ledger 硬件密钥
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentityConfig {
+    /// "local" | "ledger"
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub ledger_path: Option<String>,
+    #[serde(default)]
+    pub ledger_address: Option<String>,
+}
+
+fn default_mode() -> String {
+    "local".into()
+}
+
+impl Default for IdentityConfig {
+    fn default() -> Self {
+        IdentityConfig { mode: default_mode(), ledger_path: None, ledger_address: None }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityInfo {
     pub fingerprint: String,
     pub public_key: String,
     pub created: String,
+    pub mode: String,
+    pub ledger_path: Option<String>,
+    pub ledger_address: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

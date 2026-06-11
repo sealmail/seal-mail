@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod filters;
 pub mod imap_client;
+pub mod ledger;
 pub mod mail;
 pub mod models;
 pub mod pop3_client;
@@ -34,20 +35,73 @@ fn gen_id() -> String {
 
 // ───────────────────────── state / accounts ─────────────────────────
 
+fn identity_info(s: &store::StoreData) -> IdentityInfo {
+    IdentityInfo {
+        fingerprint: s.active_fingerprint(),
+        public_key: s.identity.public_key_b64(),
+        created: s.identity.created.clone(),
+        mode: s.identity_config.mode.clone(),
+        ledger_path: s.identity_config.ledger_path.clone(),
+        ledger_address: s.identity_config.ledger_address.clone(),
+    }
+}
+
 #[tauri::command]
 fn get_state(state: State<'_, AppState>) -> Result<AppStateView, String> {
     let s = state.inner.lock().unwrap();
     Ok(AppStateView {
         accounts: s.accounts.clone(),
-        identity: IdentityInfo {
-            fingerprint: s.identity.fingerprint(),
-            public_key: s.identity.public_key_b64(),
-            created: s.identity.created.clone(),
-        },
+        identity: identity_info(&s),
         trusted: s.trusted.clone(),
         filters: s.filters.clone(),
         local_folders: s.local_folders.clone(),
     })
+}
+
+// ───────────────────────── identity / ledger ─────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LedgerAccountRow {
+    index: u32,
+    path: String,
+    address: String,
+}
+
+/// 一次设备会话取前 `count` 个 Ledger Live 地址（绑定时选择）。
+#[tauri::command]
+async fn ledger_get_addresses(count: Option<u32>) -> Result<Vec<LedgerAccountRow>, String> {
+    let n = count.unwrap_or(5).min(10);
+    tauri::async_runtime::spawn_blocking(move || {
+        let indices: Vec<u32> = (0..n).collect();
+        ledger::get_addresses(&indices).map(|rows| {
+            rows.into_iter()
+                .map(|(index, path, address)| LedgerAccountRow { index, path, address })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn bind_ledger(state: State<'_, AppState>, path: String, address: String) -> Result<IdentityInfo, String> {
+    let mut s = state.inner.lock().unwrap();
+    s.identity_config = IdentityConfig {
+        mode: "ledger".into(),
+        ledger_path: Some(path),
+        ledger_address: Some(address.to_lowercase()),
+    };
+    s.save_identity_config()?;
+    Ok(identity_info(&s))
+}
+
+#[tauri::command]
+fn use_local_key(state: State<'_, AppState>) -> Result<IdentityInfo, String> {
+    let mut s = state.inner.lock().unwrap();
+    s.identity_config = IdentityConfig::default();
+    s.save_identity_config()?;
+    Ok(identity_info(&s))
 }
 
 #[tauri::command]
@@ -356,13 +410,14 @@ async fn send_mail(
     body: String,
     sign: bool,
 ) -> Result<smtp_client::SendResult, String> {
-    let (account, secret, key_bytes, created) = {
+    let (account, secret, key_bytes, created, id_cfg) = {
         let s = state.inner.lock().unwrap();
         (
             s.account(&account_id)?,
             s.secret(&account_id)?,
             s.identity.signing_key.to_bytes(),
             s.identity.created.clone(),
+            s.identity_config.clone(),
         )
     };
     tauri::async_runtime::spawn_blocking(move || {
@@ -370,7 +425,16 @@ async fn send_mail(
             signing_key: ed25519_dalek::SigningKey::from_bytes(&key_bytes),
             created,
         };
-        smtp_client::send_mail(&account, &secret, &identity, to, cc, &subject, &body, sign)
+        let signer = if !sign {
+            smtp_client::Signer::None
+        } else if id_cfg.mode == "ledger" {
+            let path = id_cfg.ledger_path.ok_or("Ledger 未绑定派生路径，请在「身份与密钥」重新绑定")?;
+            let address = id_cfg.ledger_address.ok_or("Ledger 未绑定地址，请在「身份与密钥」重新绑定")?;
+            smtp_client::Signer::Ledger { path, address }
+        } else {
+            smtp_client::Signer::Local(&identity)
+        };
+        smtp_client::send_mail(&account, &secret, signer, to, cc, &subject, &body)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -493,6 +557,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
+            ledger_get_addresses,
+            bind_ledger,
+            use_local_key,
             test_connection,
             add_account,
             remove_account,

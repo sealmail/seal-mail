@@ -7,7 +7,6 @@ interface Props {
   folders: FolderInfo[];
   accounts: Account[];
   currentAccountId: string;
-  demoMode: boolean;
   onClose: () => void;
   onChanged: (rules: FilterRule[]) => void;
   onApplied: () => void;
@@ -127,8 +126,8 @@ export function FiltersModal(p: Props) {
                   </button>
                 </div>
               ))}
-              <button className="dashed-add" onClick={() => setEditing(emptyRule())} disabled={p.demoMode}>
-                + 新建规则{p.demoMode ? "（演示模式不可用）" : ""}
+              <button className="dashed-add" onClick={() => setEditing(emptyRule())}>
+                + 新建规则
               </button>
               {applyMsg && <div className="form-ok" style={{ whiteSpace: "pre-wrap" }}>{applyMsg}</div>}
               {error && <div className="form-error">{error}</div>}
@@ -205,8 +204,7 @@ export function FiltersModal(p: Props) {
                   >
                     <option value="">全部账户</option>
                     {p.accounts
-                      .filter((a) => a.id !== "__demo__")
-                      .map((a) => (
+                                            .map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.email}
                         </option>
@@ -231,7 +229,7 @@ export function FiltersModal(p: Props) {
           {!editing ? (
             <>
               <span className="toolbar-note">{p.filters.length} 条规则</span>
-              <button className="btn-primary" style={{ height: 40 }} disabled={busy || p.demoMode || p.filters.length === 0} onClick={doApply}>
+              <button className="btn-primary" style={{ height: 40 }} disabled={busy || p.filters.length === 0} onClick={doApply}>
                 {busy ? "整理中…" : "立即整理收件箱"}
               </button>
             </>

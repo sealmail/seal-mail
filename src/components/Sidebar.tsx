@@ -28,7 +28,7 @@ interface Props {
   riskCount: number;
   inboxUnread: number;
   view: "mail" | "keys";
-  demoMode: boolean;
+  ledgerMode: boolean;
   onSelectAccount: (id: string) => void;
   onSelectFolder: (name: string) => void;
   onOpenKeys: () => void;
@@ -45,7 +45,7 @@ export function Sidebar(p: Props) {
           <div className="id-seal">印</div>
           <div style={{ minWidth: 0 }}>
             <div className="name">我的签名身份</div>
-            <div className="status">● 本地密钥已就绪</div>
+            <div className="status">● {p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"}</div>
           </div>
         </div>
         <div className="fpr">{p.identity ? shortFpr(p.identity.fingerprint) : "…"}</div>
@@ -92,11 +92,7 @@ export function Sidebar(p: Props) {
           <div className="dot" style={{ background: a.id === p.currentAccountId ? "#2C7B58" : "#C7C1B2" }} />
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="addr">{a.email}</div>
-            <div className="sys">
-              {p.demoMode && a.id === "__demo__"
-                ? "演示数据"
-                : `${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}
-            </div>
+            <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>
           </div>
         </div>
       ))}

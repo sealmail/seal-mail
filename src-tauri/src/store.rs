@@ -13,6 +13,7 @@ pub struct AppState {
 pub struct StoreData {
     pub dir: PathBuf,
     pub identity: Identity,
+    pub identity_config: IdentityConfig,
     pub accounts: Vec<Account>,
     pub secrets: HashMap<String, AccountSecret>,
     pub filters: Vec<FilterRule>,
@@ -51,10 +52,27 @@ impl StoreData {
             local_folders: read_json(&dir.join("local_folders.json")),
             local_assign: read_json(&dir.join("local_assign.json")),
             local_read: read_json(&dir.join("local_read.json")),
+            identity_config: read_json(&dir.join("identity.json")),
             mail_cache: HashMap::new(),
             identity,
             dir,
         })
+    }
+
+    pub fn save_identity_config(&self) -> Result<(), String> {
+        write_json(&self.dir.join("identity.json"), &self.identity_config)
+    }
+
+    /// 当前生效的签名身份标识（本地=Ed25519 指纹，Ledger=0x 地址）
+    pub fn active_fingerprint(&self) -> String {
+        if self.identity_config.mode == "ledger" {
+            self.identity_config
+                .ledger_address
+                .clone()
+                .unwrap_or_else(|| self.identity.fingerprint())
+        } else {
+            self.identity.fingerprint()
+        }
     }
 
     pub fn save_accounts(&self) -> Result<(), String> {
