@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
+import { saveAttachment } from "../api";
 import { riskBanner } from "../trust";
 import type { EmailFull, FolderInfo } from "../types";
 
@@ -29,12 +31,28 @@ export function MessageView(p: Props) {
   const [copied, setCopied] = useState(false);
   /** 正文视图：null=自动（未签名邮件优先 HTML；签名邮件显示被签名的纯文本） */
   const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
+  /** 附件下载状态：index → 状态文案 */
+  const [attachState, setAttachState] = useState<Record<number, string>>({});
   const uid = p.mail?.meta.uid;
   useEffect(() => {
     setTrustConfirm(false);
     setCopied(false);
     setHtmlMode(null);
+    setAttachState({});
   }, [uid]);
+
+  async function downloadAttachment(i: number, name: string) {
+    if (!p.mail) return;
+    const path = await saveFileDialog({ defaultPath: name, title: "保存附件" });
+    if (!path) return;
+    setAttachState((s) => ({ ...s, [i]: "保存中…" }));
+    try {
+      await saveAttachment(p.mail.meta.accountId, p.mail.meta.folder, p.mail.meta.uid, i, path);
+      setAttachState((s) => ({ ...s, [i]: "已保存 ✓" }));
+    } catch (e) {
+      setAttachState((s) => ({ ...s, [i]: `失败：${e}` }));
+    }
+  }
 
   if (!p.mail) {
     return (
@@ -210,8 +228,16 @@ export function MessageView(p: Props) {
                   <div className="name">{a.name}</div>
                   <div className="info">
                     {fmtSize(a.size)} · {a.mime}
+                    {attachState[i] && <span style={{ marginLeft: 6 }}>{attachState[i]}</span>}
                   </div>
                 </div>
+                <button
+                  className="btn-ghost"
+                  style={{ height: 26, padding: "0 10px", fontSize: 11 }}
+                  onClick={() => downloadAttachment(i, a.name)}
+                >
+                  保存
+                </button>
               </div>
             ))}
           </div>

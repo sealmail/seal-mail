@@ -111,9 +111,20 @@ export async function sendMail(
   cc: string[],
   subject: string,
   body: string,
-  sign: boolean
+  sign: boolean,
+  attachments: string[] = []
 ): Promise<SendResult> {
-  return invoke("send_mail", { accountId, to, cc, subject, body, sign });
+  return invoke("send_mail", { accountId, to, cc, subject, body, sign, attachments });
+}
+
+export async function saveAttachment(
+  accountId: string,
+  folder: string,
+  uid: number,
+  index: number,
+  path: string
+): Promise<void> {
+  return invoke("save_attachment", { accountId, folder, uid, index, path });
 }
 
 // ── 联系人（自动补全）──

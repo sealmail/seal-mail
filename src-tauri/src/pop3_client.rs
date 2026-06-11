@@ -138,6 +138,14 @@ pub fn fetch_window(
     Ok(out)
 }
 
+/// 拉取单封邮件原文（附件下载用）
+pub fn fetch_raw(account: &Account, secret: &AccountSecret, seq: u32) -> Result<Vec<u8>, String> {
+    let mut c = Pop3Client::connect(account, secret)?;
+    let raw = c.retrieve(seq)?;
+    c.quit();
+    Ok(raw)
+}
+
 pub fn delete_message(account: &Account, secret: &AccountSecret, seq: u32) -> Result<(), String> {
     let mut c = Pop3Client::connect(account, secret)?;
     c.delete(seq)?;

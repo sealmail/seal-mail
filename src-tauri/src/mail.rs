@@ -232,6 +232,19 @@ pub fn format_date(ts: i64) -> String {
     }
 }
 
+/// 从原始邮件中取出第 index 个附件（名字, 内容）
+pub fn extract_attachment(raw: &[u8], index: usize) -> Result<(String, Vec<u8>), String> {
+    let msg = MessageParser::default().parse(raw).ok_or("无法解析邮件内容")?;
+    let part = msg
+        .attachments()
+        .nth(index)
+        .ok_or("附件不存在（邮件可能已变化，请刷新后重试）")?;
+    Ok((
+        part.attachment_name().unwrap_or("attachment").to_string(),
+        part.contents().to_vec(),
+    ))
+}
+
 /// 解析原始邮件 → EmailFull（含验证、风险、语言识别）
 pub fn parse_email(
     raw: &[u8],

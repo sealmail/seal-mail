@@ -548,6 +548,31 @@ async fn delete_message(
     Ok(())
 }
 
+/// 下载附件：重新拉取该邮件原文并写入用户选择的路径
+#[tauri::command]
+async fn save_attachment(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uid: u32,
+    index: usize,
+    path: String,
+) -> Result<(), String> {
+    let account = {
+        let s = state.inner.lock().unwrap();
+        s.account(&account_id)?
+    };
+    let secret = fresh_secret(&state, &account_id).await?;
+    let raw = tauri::async_runtime::spawn_blocking(move || match account.protocol {
+        IncomingProtocol::Imap => imap_client::fetch_raw(&account, &secret, &folder, uid),
+        IncomingProtocol::Pop3 => pop3_client::fetch_raw(&account, &secret, uid),
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let (_, contents) = mail::extract_attachment(&raw, index)?;
+    std::fs::write(&path, contents).map_err(|e| format!("写入文件失败: {}", e))
+}
+
 // ───────────────────────── send ─────────────────────────
 
 #[tauri::command]
@@ -559,7 +584,19 @@ async fn send_mail(
     subject: String,
     body: String,
     sign: bool,
+    attachments: Option<Vec<String>>,
 ) -> Result<smtp_client::SendResult, String> {
+    // 在主线程先读附件，路径无效时尽早报错
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    for path in attachments.unwrap_or_default() {
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| format!("附件路径无效: {}", path))?
+            .to_string();
+        let data = std::fs::read(&path).map_err(|e| format!("读取附件 {} 失败: {}", name, e))?;
+        files.push((name, data));
+    }
     let (account, key_bytes, created, id_cfg) = {
         let s = state.inner.lock().unwrap();
         (
@@ -585,7 +622,7 @@ async fn send_mail(
         } else {
             smtp_client::Signer::Local(&identity)
         };
-        smtp_client::send_mail(&account, &secret, signer, to, cc, &subject, &body)
+        smtp_client::send_mail(&account, &secret, signer, to, cc, &subject, &body, files)
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -758,7 +795,9 @@ async fn check_for_update() -> Result<updater::UpdateInfo, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init());
     #[cfg(desktop)]
     {
         builder = builder
@@ -811,6 +850,7 @@ pub fn run() {
             mark_read,
             delete_message,
             send_mail,
+            save_attachment,
             list_contacts,
             list_drafts,
             save_draft,

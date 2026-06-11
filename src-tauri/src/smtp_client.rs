@@ -56,6 +56,35 @@ fn transport(account: &Account, secret: &AccountSecret) -> Result<SmtpTransport,
         .build())
 }
 
+/// 按扩展名猜常见 MIME 类型（附件用；未知类型回退 octet-stream）
+fn guess_mime(name: &str) -> &'static str {
+    match name.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "txt" | "log" | "md" => "text/plain",
+        "html" | "htm" => "text/html",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "zip" => "application/zip",
+        "gz" | "tgz" => "application/gzip",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "mp3" => "audio/mpeg",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        _ => "application/octet-stream",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn send_mail(
     account: &Account,
     secret: &AccountSecret,
@@ -64,6 +93,7 @@ pub fn send_mail(
     cc: Vec<String>,
     subject: &str,
     body: &str,
+    attachments: Vec<(String, Vec<u8>)>,
 ) -> Result<SendResult, String> {
     let (signed, method, fingerprint, short) = match &signer {
         Signer::None => (false, "无".to_string(), String::new(), String::new()),
@@ -103,6 +133,10 @@ pub fn send_mail(
             .iter()
             .map(|a| ("", a.as_str()))
             .collect::<Vec<(&str, &str)>>());
+    }
+    // 附件（注意：签名 canon 只覆盖纯文本正文，附件不在签名范围内）
+    for (name, data) in &attachments {
+        builder = builder.attachment(guess_mime(name), name.as_str(), &data[..]);
     }
 
     match &signer {

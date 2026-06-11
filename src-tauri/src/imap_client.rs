@@ -228,6 +228,27 @@ pub fn fetch_window(
     Ok(out)
 }
 
+/// 拉取单封邮件原文（附件下载用）
+pub fn fetch_raw(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    uid: u32,
+) -> Result<Vec<u8>, String> {
+    let mut sess = connect(account, secret)?;
+    sess.select(folder).map_err(|e| e.to_string())?;
+    let fetches = sess
+        .uid_fetch(uid.to_string(), "BODY.PEEK[]")
+        .map_err(|e| format!("拉取邮件失败: {}", e))?;
+    let raw = fetches
+        .iter()
+        .next()
+        .and_then(|f| f.body().map(|b| b.to_vec()))
+        .ok_or("邮件不存在（可能已被移动或删除）")?;
+    let _ = sess.logout();
+    Ok(raw)
+}
+
 pub fn create_folder(account: &Account, secret: &AccountSecret, name: &str) -> Result<(), String> {
     let mut sess = connect(account, secret)?;
     sess.create(encode_mutf7(name))

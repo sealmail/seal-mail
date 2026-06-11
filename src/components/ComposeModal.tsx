@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { AddrInput } from "./AddrInput";
 import { Seal } from "./Seal";
 import { deleteDraft, saveDraft, sendMail } from "../api";
@@ -33,7 +34,16 @@ export function ComposeModal(p: Props) {
   const [subject, setSubject] = useState(p.draft?.subject ?? p.prefill?.subject ?? "");
   const [body, setBody] = useState(p.draft?.body ?? p.prefill?.body ?? "");
   const [sign, setSign] = useState(p.draft?.sign ?? true);
+  /** 附件：本地文件绝对路径（发送时后端读取） */
+  const [attachPaths, setAttachPaths] = useState<string[]>([]);
   const draftIdRef = useRef(p.draft?.id ?? "");
+
+  async function pickAttachments() {
+    const picked = await openFileDialog({ multiple: true, title: "选择附件" });
+    if (!picked) return;
+    const list = Array.isArray(picked) ? picked : [picked];
+    setAttachPaths((prev) => [...prev, ...list.filter((x) => !prev.includes(x))]);
+  }
   const [step, setStep] = useState(0); // 0 写 1 签名发送中 2 完成
   /** 撤销发送窗口：非 null 时正在倒计时，归零才真正发送 */
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -70,7 +80,7 @@ export function ComposeModal(p: Props) {
   async function doSend() {
     setStep(1);
     try {
-      const r = await sendMail(account.id, parseAddrs(to), parseAddrs(cc), subject, body, sign);
+      const r = await sendMail(account.id, parseAddrs(to), parseAddrs(cc), subject, body, sign, attachPaths);
       setResult(r);
       setStep(2);
       // 发送成功，草稿使命完成
@@ -190,6 +200,17 @@ export function ComposeModal(p: Props) {
               <AddrInput placeholder="抄送（可选）" value={cc} onChange={setCc} />
               <input className="input" style={{ fontWeight: 500 }} placeholder="主题" value={subject} onChange={(e) => setSubject(e.target.value)} />
               <textarea className="textarea" style={{ minHeight: 180 }} placeholder="正文…" value={body} onChange={(e) => setBody(e.target.value)} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <button className="btn-ghost" style={{ height: 30 }} onClick={pickAttachments}>
+                  📎 添加附件
+                </button>
+                {attachPaths.map((path) => (
+                  <span key={path} className="attach-chip" title={path}>
+                    {path.split("/").pop()}
+                    <button onClick={() => setAttachPaths((prev) => prev.filter((x) => x !== path))}>×</button>
+                  </span>
+                ))}
+              </div>
               <label
                 style={{
                   display: "flex",
