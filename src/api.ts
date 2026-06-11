@@ -5,6 +5,7 @@ import type {
   AppStateView,
   ApplyResult,
   Contact,
+  Draft,
   DeviceFlowStart,
   DevicePoll,
   EmailFull,
@@ -118,6 +119,19 @@ export async function sendMail(
 // ── 联系人（自动补全）──
 export async function listContacts(query?: string): Promise<Contact[]> {
   return invoke("list_contacts", { query: query ?? null });
+}
+
+// ── 草稿 ──
+export async function listDrafts(): Promise<Draft[]> {
+  return invoke("list_drafts");
+}
+
+export async function saveDraft(draft: Draft): Promise<Draft> {
+  return invoke("save_draft", { draft });
+}
+
+export async function deleteDraft(id: string): Promise<void> {
+  return invoke("delete_draft", { id });
 }
 
 // ── 过滤规则 ──

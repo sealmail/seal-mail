@@ -44,6 +44,21 @@ pub struct AccountSecret {
     pub oauth: Option<crate::oauth::OAuthTokens>,
 }
 
+/// 草稿（drafts.json，本地）。写信时自动保存，发送成功后删除。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Draft {
+    pub id: String,
+    pub account_id: String,
+    pub to: String,
+    pub cc: String,
+    pub subject: String,
+    pub body: String,
+    pub sign: bool,
+    /// unix 秒
+    pub updated_at: i64,
+}
+
 /// 自动从收发记录里收集的联系人（写信时自动补全用；contacts.json）
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

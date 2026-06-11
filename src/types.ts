@@ -138,6 +138,18 @@ export interface LedgerAccountRow {
   address: string;
 }
 
+/** 写信草稿（本地保存，发送成功后删除） */
+export interface Draft {
+  id: string;
+  accountId: string;
+  to: string;
+  cc: string;
+  subject: string;
+  body: string;
+  sign: boolean;
+  updatedAt: number;
+}
+
 /** 自动收集的联系人（写信补全用） */
 export interface Contact {
   name: string;

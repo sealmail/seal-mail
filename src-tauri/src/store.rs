@@ -27,6 +27,8 @@ pub struct StoreData {
     pub local_read: Vec<String>,
     /// 自动收集的联系人（key: 小写邮箱）
     pub contacts: HashMap<String, Contact>,
+    /// 写信草稿（本地）
+    pub drafts: Vec<Draft>,
     /// 内存缓存：完整邮件，key = account/folder/uid
     pub mail_cache: HashMap<String, EmailFull>,
 }
@@ -56,6 +58,7 @@ impl StoreData {
             local_assign: read_json(&dir.join("local_assign.json")),
             local_read: read_json(&dir.join("local_read.json")),
             contacts: read_json(&dir.join("contacts.json")),
+            drafts: read_json(&dir.join("drafts.json")),
             identity_config: read_json(&dir.join("identity.json")),
             prefs: read_json(&dir.join("prefs.json")),
             mail_cache: HashMap::new(),
@@ -101,6 +104,10 @@ impl StoreData {
     }
     pub fn save_contacts(&self) -> Result<(), String> {
         write_json(&self.dir.join("contacts.json"), &self.contacts)
+    }
+
+    pub fn save_drafts(&self) -> Result<(), String> {
+        write_json(&self.dir.join("drafts.json"), &self.drafts)
     }
 
     /// 收/发邮件时静默收集联系人（自动补全用）。返回是否有变更（决定要不要落盘）。

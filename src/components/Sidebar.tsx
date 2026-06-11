@@ -2,10 +2,12 @@ import { shortFpr } from "../trust";
 import type { Account, FolderInfo, IdentityInfo } from "../types";
 
 export const RISK_FOLDER = "__risk__";
+export const DRAFTS_FOLDER = "__drafts__";
 
 const FOLDER_ICONS: Record<string, string> = {
   INBOX: "▤",
   [RISK_FOLDER]: "◈",
+  [DRAFTS_FOLDER]: "✎",
 };
 
 function folderIcon(name: string, display: string) {
@@ -27,6 +29,7 @@ interface Props {
   currentFolder: string;
   riskCount: number;
   inboxUnread: number;
+  draftCount: number;
   view: "mail" | "keys";
   ledgerMode: boolean;
   onSelectAccount: (id: string) => void;
@@ -57,7 +60,7 @@ export function Sidebar(p: Props) {
         const active = p.view === "mail" && p.currentFolder === f.name;
         const isInbox = f.name === "INBOX";
         const isRisk = f.name === RISK_FOLDER;
-        const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : 0;
+        const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : f.name === DRAFTS_FOLDER ? p.draftCount : 0;
         return (
           <button
             key={f.name}

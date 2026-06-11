@@ -617,6 +617,35 @@ fn list_contacts(state: State<'_, AppState>, query: Option<String>) -> Vec<Conta
     list.into_iter().take(8).cloned().collect()
 }
 
+// ───────────────────────── drafts ─────────────────────────
+
+#[tauri::command]
+fn list_drafts(state: State<'_, AppState>) -> Vec<Draft> {
+    let mut list = state.inner.lock().unwrap().drafts.clone();
+    list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    list
+}
+
+#[tauri::command]
+fn save_draft(state: State<'_, AppState>, mut draft: Draft) -> Result<Draft, String> {
+    if draft.id.is_empty() {
+        draft.id = gen_id();
+    }
+    draft.updated_at = chrono::Local::now().timestamp();
+    let mut s = state.inner.lock().unwrap();
+    s.drafts.retain(|d| d.id != draft.id);
+    s.drafts.push(draft.clone());
+    s.save_drafts()?;
+    Ok(draft)
+}
+
+#[tauri::command]
+fn delete_draft(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let mut s = state.inner.lock().unwrap();
+    s.drafts.retain(|d| d.id != id);
+    s.save_drafts()
+}
+
 // ───────────────────────── filters ─────────────────────────
 
 #[tauri::command]
@@ -783,6 +812,9 @@ pub fn run() {
             delete_message,
             send_mail,
             list_contacts,
+            list_drafts,
+            save_draft,
+            delete_draft,
             save_filter,
             delete_filter,
             apply_filters,

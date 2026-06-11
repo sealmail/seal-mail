@@ -10,9 +10,10 @@ import { MessageView } from "./components/MessageView";
 import { Onboarding } from "./components/Onboarding";
 import { ProfileSlideOver } from "./components/ProfileSlideOver";
 import { RiskModal } from "./components/RiskModal";
-import { RISK_FOLDER, Sidebar } from "./components/Sidebar";
+import { DraftsPane } from "./components/DraftsPane";
+import { DRAFTS_FOLDER, RISK_FOLDER, Sidebar } from "./components/Sidebar";
 import { VerifyRail } from "./components/VerifyRail";
-import type { AppStateView, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
+import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
 
 function isRisky(m: EmailMeta) {
@@ -44,6 +45,8 @@ export default function App() {
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composePrefill, setComposePrefill] = useState<ComposePrefill | undefined>();
+  const [composeDraft, setComposeDraft] = useState<Draft | undefined>();
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const [accountModal, setAccountModal] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -75,10 +78,17 @@ export default function App() {
     const withRisk: FolderInfo[] = [
       ...fs.filter((f) => f.name === "INBOX").map((f) => ({ ...f, display: "收件箱" })),
       { name: RISK_FOLDER, display: "高风险" },
+      { name: DRAFTS_FOLDER, display: "草稿" },
       ...fs.filter((f) => f.name !== "INBOX"),
     ];
     setFolders(withRisk);
   }, []);
+
+  const loadDrafts = useCallback(() => {
+    api.listDrafts().then(setDrafts).catch((e) => console.error("读取草稿失败", e));
+  }, []);
+
+  useEffect(loadDrafts, [loadDrafts]);
 
   // ── 切账户：拉目录 ──
   useEffect(() => {
@@ -92,6 +102,7 @@ export default function App() {
   // ── 拉邮件 ──
   const loadMessages = useCallback(async () => {
     if (!accountId) return;
+    if (folder === DRAFTS_FOLDER) return; // 草稿是本地数据，不走邮件拉取
     const seq = ++fetchSeq.current;
     setLoading(true);
     setListError(null);
@@ -296,6 +307,7 @@ export default function App() {
       if (meta && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setComposePrefill(undefined);
+        setComposeDraft(undefined);
         setComposeOpen(true);
         return;
       }
@@ -409,6 +421,7 @@ export default function App() {
             className="btn-primary"
             onClick={() => {
               setComposePrefill(undefined);
+              setComposeDraft(undefined);
               setComposeOpen(true);
             }}
           >
@@ -448,6 +461,7 @@ export default function App() {
             currentFolder={folder}
             riskCount={riskCount}
             inboxUnread={inboxUnread}
+            draftCount={drafts.filter((d) => d.accountId === accountId).length}
             view={view}
             ledgerMode={ledgerMode}
             onSelectAccount={(id) => {
@@ -471,6 +485,23 @@ export default function App() {
               onBack={() => setView("mail")}
               onRemoveTrusted={handleRemoveTrusted}
               onIdentityChanged={handleIdentityChanged}
+            />
+          ) : folder === DRAFTS_FOLDER ? (
+            <DraftsPane
+              drafts={drafts.filter((d) => d.accountId === accountId)}
+              onOpen={(d) => {
+                setComposeDraft(d);
+                setComposePrefill(undefined);
+                setComposeOpen(true);
+              }}
+              onDelete={async (d) => {
+                try {
+                  await api.deleteDraft(d.id);
+                  loadDrafts();
+                } catch (e) {
+                  setListError(String(e));
+                }
+              }}
             />
           ) : (
             <>
@@ -517,7 +548,12 @@ export default function App() {
           currentAccountId={accountId}
           identity={state?.identity ?? null}
           prefill={composePrefill}
-          onClose={() => setComposeOpen(false)}
+          draft={composeDraft}
+          onClose={() => {
+            setComposeOpen(false);
+            setComposeDraft(undefined);
+            loadDrafts();
+          }}
         />
       )}
 

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AddrInput } from "./AddrInput";
 import { Seal } from "./Seal";
-import { sendMail } from "../api";
+import { deleteDraft, saveDraft, sendMail } from "../api";
 import { shortFpr } from "../trust";
-import type { Account, IdentityInfo, SendResult } from "../types";
+import type { Account, Draft, IdentityInfo, SendResult } from "../types";
 
 export interface ComposePrefill {
   to?: string;
@@ -17,6 +17,8 @@ interface Props {
   currentAccountId: string;
   identity: IdentityInfo | null;
   prefill?: ComposePrefill;
+  /** 从草稿箱打开时传入 */
+  draft?: Draft;
   onClose: () => void;
 }
 
@@ -25,12 +27,13 @@ function shortAddr(addr: string) {
 }
 
 export function ComposeModal(p: Props) {
-  const [accountId, setAccountId] = useState(p.currentAccountId);
-  const [to, setTo] = useState(p.prefill?.to ?? "");
-  const [cc, setCc] = useState(p.prefill?.cc ?? "");
-  const [subject, setSubject] = useState(p.prefill?.subject ?? "");
-  const [body, setBody] = useState(p.prefill?.body ?? "");
-  const [sign, setSign] = useState(true);
+  const [accountId, setAccountId] = useState(p.draft?.accountId || p.currentAccountId);
+  const [to, setTo] = useState(p.draft?.to ?? p.prefill?.to ?? "");
+  const [cc, setCc] = useState(p.draft?.cc ?? p.prefill?.cc ?? "");
+  const [subject, setSubject] = useState(p.draft?.subject ?? p.prefill?.subject ?? "");
+  const [body, setBody] = useState(p.draft?.body ?? p.prefill?.body ?? "");
+  const [sign, setSign] = useState(p.draft?.sign ?? true);
+  const draftIdRef = useRef(p.draft?.id ?? "");
   const [step, setStep] = useState(0); // 0 写 1 签名发送中 2 完成
   /** 撤销发送窗口：非 null 时正在倒计时，归零才真正发送 */
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -70,10 +73,41 @@ export function ComposeModal(p: Props) {
       const r = await sendMail(account.id, parseAddrs(to), parseAddrs(cc), subject, body, sign);
       setResult(r);
       setStep(2);
+      // 发送成功，草稿使命完成
+      if (draftIdRef.current) {
+        deleteDraft(draftIdRef.current).catch((e) => console.error("删除草稿失败", e));
+        draftIdRef.current = "";
+      }
     } catch (e) {
       setError(String(e));
       setStep(0);
     }
+  }
+
+  const hasContent = !!(to.trim() || cc.trim() || subject.trim() || body.trim());
+
+  // 草稿自动保存（防抖 800ms；仅撰写阶段）
+  useEffect(() => {
+    if (step !== 0 || countdown !== null || !hasContent) return;
+    const t = setTimeout(() => {
+      saveDraft({ id: draftIdRef.current, accountId: account.id, to, cc, subject, body, sign, updatedAt: 0 })
+        .then((d) => {
+          draftIdRef.current = d.id;
+        })
+        .catch((e) => console.error("草稿保存失败", e));
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [to, cc, subject, body, sign, step, countdown]);
+
+  function handleClose() {
+    // 关闭前最后存一次，防抖窗口里的输入不丢
+    if (step === 0 && hasContent) {
+      saveDraft({ id: draftIdRef.current, accountId: account.id, to, cc, subject, body, sign, updatedAt: 0 }).catch(
+        (e) => console.error("草稿保存失败", e)
+      );
+    }
+    p.onClose();
   }
 
   // 倒计时归零才真正发送；期间可撤销
@@ -101,7 +135,7 @@ export function ComposeModal(p: Props) {
             onClick={() => {
               // 倒计时中点 × 先撤销发送，不直接关窗，防止误操作
               if (countdown !== null) setCountdown(null);
-              else p.onClose();
+              else handleClose();
             }}
           >
             ×
