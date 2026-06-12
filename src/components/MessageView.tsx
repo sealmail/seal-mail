@@ -32,6 +32,10 @@ function fmtSize(n: number) {
   return `${n} B`;
 }
 
+function defaultShowHtml(bodyHtml: string | null | undefined) {
+  return !!bodyHtml?.trim();
+}
+
 export function MessageView(p: Props) {
   // 一键信任确认卡：换邮件时收起
   const [trustConfirm, setTrustConfirm] = useState(false);
@@ -298,7 +302,7 @@ export function MessageView(p: Props) {
         {(() => {
           const hasHtml = !!m.bodyHtml;
           const signed = m.verify.status !== "unsigned";
-          const showHtml = hasHtml && (htmlMode ?? !signed);
+          const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(m.bodyHtml));
           return (
             <>
               {hasHtml && (

@@ -33,8 +33,62 @@ function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.uid}`;
 }
 
+function defaultShowHtml(bodyHtml: string | null | undefined) {
+  return !!bodyHtml?.trim();
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
+}
+
+function zoomDeltaForKey(e: KeyboardEvent) {
+  const meta = e.metaKey || e.ctrlKey;
+  if (!meta || e.altKey) return null;
+  if (e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd") return 0.1;
+  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return -0.1;
+  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return 0;
+  return null;
+}
+
+function useZoomShortcuts() {
+  const [zoom, setZoom] = useState(() => {
+    const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
+    return Number.isFinite(z) && z >= 0.7 && z <= 1.6 ? z : 1;
+  });
+
+  useEffect(() => {
+    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+    localStorage.setItem("sealmail.zoom", String(zoom));
+  }, [zoom]);
+
+  useEffect(() => {
+    function applyZoomDelta(delta: number) {
+      if (delta === 0) setZoom(1);
+      else setZoom((z) => clamp(Math.round((z + delta) * 10) / 10, 0.7, 1.6));
+    }
+
+    function onKey(e: KeyboardEvent) {
+      const delta = zoomDeltaForKey(e);
+      if (delta === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      applyZoomDelta(delta);
+    }
+
+    function onFrameShortcut(e: Event) {
+      const delta = (e as CustomEvent<number>).detail;
+      if (typeof delta === "number") applyZoomDelta(delta);
+    }
+
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("sealmail-zoom-delta", onFrameShortcut as EventListener);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("sealmail-zoom-delta", onFrameShortcut as EventListener);
+    };
+  }, []);
+
+  return { zoom, setZoom };
 }
 
 function PaneResizer({
@@ -69,6 +123,7 @@ function PaneResizer({
 }
 
 function PopoutApp({ storageKey }: { storageKey: string }) {
+  useZoomShortcuts();
   const [mail] = useState<EmailFull | null>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -89,7 +144,7 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
 
   const hasHtml = !!mail.bodyHtml;
   const signed = mail.verify.status !== "unsigned";
-  const showHtml = hasHtml && (htmlMode ?? !signed);
+  const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(mail.bodyHtml));
 
   return (
     <div className="popout-shell">
@@ -142,10 +197,7 @@ function MailApp() {
   const [total, setTotal] = useState(0);
   const [syncing, setSyncing] = useState(false);
   // 界面缩放（Cmd+/-/0），WebKit 支持非标准 zoom 属性
-  const [zoom, setZoom] = useState(() => {
-    const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
-    return Number.isFinite(z) && z >= 0.7 && z <= 1.6 ? z : 1;
-  });
+  useZoomShortcuts();
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const n = Number(localStorage.getItem("sealmail.sidebarWidth") ?? 228);
     return Number.isFinite(n) ? clamp(n, 176, 280) : 228;
@@ -372,12 +424,6 @@ function MailApp() {
     };
   }, [accountId, folder, loadMessages]);
 
-  // ── 界面缩放（持久化）──
-  useEffect(() => {
-    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
-    localStorage.setItem("sealmail.zoom", String(zoom));
-  }, [zoom]);
-
   useEffect(() => localStorage.setItem("sealmail.sidebarWidth", String(sidebarWidth)), [sidebarWidth]);
   useEffect(() => localStorage.setItem("sealmail.listWidth", String(listWidth)), [listWidth]);
 
@@ -389,14 +435,17 @@ function MailApp() {
     setSelected(null);
     setThread([]);
     setView("mail");
-    if (opts.markRead !== false && m.unread) {
+    const shouldMarkRead = opts.markRead !== false && m.unread;
+    if (shouldMarkRead) {
       api.setRead(m.accountId, m.folder, m.uid, true).catch(() => {});
       setMessages((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
       setInboxMetas((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
     }
     try {
       const full = await api.getMessage(m.accountId, m.folder, m.uid);
-      if (seq === selectSeq.current) setSelected(full);
+      if (seq === selectSeq.current) {
+        setSelected(shouldMarkRead ? { ...full, meta: { ...full.meta, unread: false } } : full);
+      }
     } catch (e) {
       if (seq === selectSeq.current) setListError(String(e));
     }
@@ -446,7 +495,7 @@ function MailApp() {
   const shownMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = messages;
-    if (filterMode === "unread") list = list.filter((m) => m.unread);
+    if (filterMode === "unread") list = list.filter((m) => m.unread || (selectedKey !== null && mailKey(m) === selectedKey));
     if (filterMode === "flagged") list = list.filter((m) => m.flagged);
     if (!q) return list;
     return list.filter(
@@ -456,12 +505,11 @@ function MailApp() {
         m.subject.toLowerCase().includes(q) ||
         m.preview.toLowerCase().includes(q)
     );
-  }, [messages, search, filterMode]);
+  }, [messages, search, filterMode, selectedKey]);
 
   useEffect(() => {
     if (view !== "mail" || folder === DRAFTS_FOLDER || loading || shownMessages.length === 0) return;
-    const selectedVisible = selectedKey && shownMessages.some((m) => mailKey(m) === selectedKey);
-    if (!selectedVisible) selectMail(shownMessages[0], { markRead: false });
+    if (!selectedKey) selectMail(shownMessages[0], { markRead: false });
   }, [folder, loading, selectedKey, shownMessages, view]);
 
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
@@ -605,19 +653,9 @@ function MailApp() {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
       // 缩放任何时候都可用
-      if (meta && (e.key === "=" || e.key === "+")) {
+      const zoomDelta = zoomDeltaForKey(e);
+      if (zoomDelta !== null) {
         e.preventDefault();
-        setZoom((z) => Math.min(1.6, Math.round((z + 0.1) * 10) / 10));
-        return;
-      }
-      if (meta && e.key === "-") {
-        e.preventDefault();
-        setZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10));
-        return;
-      }
-      if (meta && e.key === "0") {
-        e.preventDefault();
-        setZoom(1);
         return;
       }
       if (anyModalOpen || !hasAccounts) return;

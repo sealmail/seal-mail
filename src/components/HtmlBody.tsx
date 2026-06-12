@@ -69,6 +69,15 @@ interface Props {
   html: string;
 }
 
+function zoomDeltaForKey(e: KeyboardEvent) {
+  const meta = e.metaKey || e.ctrlKey;
+  if (!meta || e.altKey) return null;
+  if (e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd") return 0.1;
+  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return -0.1;
+  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return 0;
+  return null;
+}
+
 /** 沙箱 iframe 渲染（无脚本执行；同源仅用于父页面接管链接点击和自适应高度） */
 export function HtmlBody(p: Props) {
   const [allowRemote, setAllowRemote] = useState(false);
@@ -93,6 +102,16 @@ export function HtmlBody(p: Props) {
         ev.preventDefault();
         const href = a.getAttribute("href");
         if (href && /^https?:/i.test(href)) void openUrl(href);
+      },
+      true
+    );
+    d.addEventListener(
+      "keydown",
+      (ev) => {
+        const delta = zoomDeltaForKey(ev);
+        if (delta === null) return;
+        ev.preventDefault();
+        window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
       },
       true
     );
