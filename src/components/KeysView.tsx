@@ -173,13 +173,13 @@ export function KeysView(p: Props) {
         <div className="keys-hero">
           <div className="seal-lg">印</div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#23272F" }}>我的签名身份</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)" }}>我的签名身份</div>
             <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "#1E6B49", marginTop: 3 }}>
               {isLedger
                 ? `Ledger · secp256k1 · ${p.identity?.ledgerPath ?? ""}`
                 : `Ed25519 · 本地生成 · ${p.identity ? p.identity.created.slice(0, 10) : "…"}`}
             </div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 5, wordBreak: "break-all" }}>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mut)", marginTop: 5, wordBreak: "break-all" }}>
               {isLedger ? `地址 ${p.identity?.ledgerAddress ?? ""}` : `指纹 ${p.identity?.fingerprint ?? "…"}`}
             </div>
           </div>
@@ -187,18 +187,18 @@ export function KeysView(p: Props) {
 
         <div className="section-label">签名密钥（发送签名邮件时使用其中一个）</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-          <div className="card-row" style={{ border: "1px solid #E8E3D8", borderRadius: 12, background: "#fff" }}>
+          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "#fff" }}>
             <div
               style={{
-                width: 44, height: 30, borderRadius: 6, background: "#23272F",
+                width: 44, height: 30, borderRadius: 6, background: "var(--ink)",
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}
             >
-              <div style={{ width: 20, height: 14, borderRadius: 2, background: "#0E1217", boxShadow: "inset 0 0 0 1px #3A3E46" }} />
+              <div style={{ width: 20, height: 14, borderRadius: 2, background: "#0e1217", boxShadow: "inset 0 0 0 1px var(--ink-3)" }} />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#2A2E36" }}>SealMail 本地密钥</div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-2)" }}>SealMail 本地密钥</div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                 Ed25519 · 私钥仅保存在本机 · 无需额外硬件
               </div>
             </div>
@@ -211,19 +211,19 @@ export function KeysView(p: Props) {
             )}
           </div>
 
-          <div className="card-row" style={{ border: "1px solid #E8E3D8", borderRadius: 12, background: "#fff" }}>
+          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "#fff" }}>
             <div
               style={{
-                width: 44, height: 30, borderRadius: 6, background: "#23272F", position: "relative",
+                width: 44, height: 30, borderRadius: 6, background: "var(--ink)", position: "relative",
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}
             >
-              <div style={{ width: 20, height: 14, borderRadius: 2, background: "#0E1217", boxShadow: "inset 0 0 0 1px #3A3E46" }} />
-              <div style={{ position: "absolute", right: -4, top: "50%", transform: "translateY(-50%)", width: 7, height: 7, borderRadius: "50%", background: "#3A3E46" }} />
+              <div style={{ width: 20, height: 14, borderRadius: 2, background: "#0e1217", boxShadow: "inset 0 0 0 1px var(--ink-3)" }} />
+              <div style={{ position: "absolute", right: -4, top: "50%", transform: "translateY(-50%)", width: 7, height: 7, borderRadius: "50%", background: "var(--ink-3)" }} />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#2A2E36" }}>Ledger 硬件密钥</div>
-              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-2)" }}>Ledger 硬件密钥</div>
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                 {isLedger
                   ? `secp256k1 · ${shortAddr(p.identity?.ledgerAddress ?? "")} · 每次签名需设备确认`
                   : "secp256k1 · EIP-191 · 私钥永不离开硬件"}
@@ -239,7 +239,7 @@ export function KeysView(p: Props) {
           </div>
         </div>
         {isLedger && (
-          <div style={{ fontSize: 11.5, color: "#9A5B16", background: "#FBEFD9", border: "1px solid #F0DBB0", borderRadius: 9, padding: "10px 14px", marginBottom: 16, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 11.5, color: "var(--amber)", background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 9, padding: "10px 14px", marginBottom: 16, lineHeight: 1.6 }}>
             使用 Ledger 时，每封签名邮件发送前需要：连接设备 → 解锁 → 打开 Ethereum app → 在设备上确认。
           </div>
         )}
@@ -249,7 +249,7 @@ export function KeysView(p: Props) {
           可信联系人（已记录密钥指纹 / 地址）
         </div>
         {p.trusted.length === 0 ? (
-          <div className="card-list" style={{ padding: "22px 18px", fontSize: 12.5, color: "#8A8576", lineHeight: 1.6 }}>
+          <div className="card-list" style={{ padding: "22px 18px", fontSize: 12.5, color: "var(--mut)", lineHeight: 1.6 }}>
             还没有可信联系人。当你收到签名有效的邮件时，可在右侧验证面板将对方加入可信——之后任何冒充该联系人的邮件都会被标红。
           </div>
         ) : (
@@ -260,17 +260,17 @@ export function KeysView(p: Props) {
                   <Seal trust="verified" size={26} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#2A2E36" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>
                     {t.name}
-                    {t.org ? <span style={{ fontWeight: 400, color: "#A39E91" }}> · {t.org}</span> : null}
+                    {t.org ? <span style={{ fontWeight: 400, color: "var(--mut-3)" }}> · {t.org}</span> : null}
                   </div>
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", marginTop: 2, wordBreak: "break-all" }}>
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mut)", marginTop: 2, wordBreak: "break-all" }}>
                     {t.email} · {t.fingerprint.startsWith("0x") ? shortAddr(t.fingerprint) : shortFpr(t.fingerprint)}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11.5, color: "#3A3E46", fontWeight: 500 }}>自 {t.since}</div>
-                  <div style={{ fontSize: 10.5, color: "#A39E91" }}>{t.verifiedCount} 封已验证</div>
+                  <div style={{ fontSize: 11.5, color: "var(--ink-3)", fontWeight: 500 }}>自 {t.since}</div>
+                  <div style={{ fontSize: 10.5, color: "var(--mut-3)" }}>{t.verifiedCount} 封已验证</div>
                 </div>
                 <button className="icon-btn" title="移除可信" onClick={() => p.onRemoveTrusted(t.email)}>
                   ×
@@ -288,7 +288,7 @@ export function KeysView(p: Props) {
               style={{
                 width: 36, height: 36, borderRadius: 9, flexShrink: 0,
                 background: "radial-gradient(circle at 36% 30%, #4ca67e, #1b5840)",
-                boxShadow: "0 0 0 1.5px #C99B4E",
+                boxShadow: "0 0 0 1.5px var(--gold)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontFamily: "var(--serif)", fontSize: 19, color: "rgba(255,255,255,.92)",
               }}
@@ -296,15 +296,15 @@ export function KeysView(p: Props) {
               印
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#2A2E36" }}>SealMail 信印</div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-2)" }}>SealMail 信印</div>
               {updated ? (
                 <div style={{ fontSize: 11.5, color: "#1E6B49", marginTop: 2 }}>✓ 已是最新版本</div>
               ) : updateInfo?.available ? (
-                <div style={{ fontSize: 11.5, color: "#9A5B16", marginTop: 2 }}>
+                <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: 2 }}>
                   ↓ 新版本 v{updateInfo.latestVersion} 可用
                 </div>
               ) : (
-                <div style={{ fontSize: 11.5, color: "#8A8576", marginTop: 2, fontFamily: "var(--mono)" }}>
+                <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, fontFamily: "var(--mono)" }}>
                   版本 {__APP_VERSION__}
                 </div>
               )}
@@ -350,12 +350,12 @@ export function KeysView(p: Props) {
           <div
             style={{
               display: "flex", alignItems: "center", gap: 14, marginTop: 16,
-              paddingTop: 16, borderTop: "1px solid #ECE8DC",
+              paddingTop: 16, borderTop: "1px solid var(--border-soft)",
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#2A2E36" }}>点击关闭按钮时</div>
-              <div style={{ fontSize: 11.5, color: "#8A8576", marginTop: 2, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>点击关闭按钮时</div>
+              <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, lineHeight: 1.5 }}>
                 隐藏窗口后应用继续在后台运行，点击程序坞图标重新打开（macOS 常规行为）
               </div>
             </div>
@@ -374,12 +374,12 @@ export function KeysView(p: Props) {
           <div
             style={{
               display: "flex", alignItems: "center", gap: 14, marginTop: 16,
-              paddingTop: 16, borderTop: "1px solid #ECE8DC",
+              paddingTop: 16, borderTop: "1px solid var(--border-soft)",
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#2A2E36" }}>新邮件系统通知</div>
-              <div style={{ fontSize: 11.5, color: "#8A8576", marginTop: 2, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>新邮件系统通知</div>
+              <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, lineHeight: 1.5 }}>
                 窗口在后台或隐藏时，收到新邮件弹系统横幅
               </div>
             </div>

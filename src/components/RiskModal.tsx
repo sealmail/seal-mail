@@ -65,16 +65,16 @@ export function RiskModal(p: Props) {
                 >
                   !
                 </div>
-                <div style={{ fontSize: 12.5, color: "#2A2E36", lineHeight: 1.55 }}>{r}</div>
+                <div style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}>{r}</div>
               </div>
             ))}
             {reasons.length === 0 && (
-              <div style={{ fontSize: 12.5, color: "#2A2E36" }}>验证未通过：请通过其他渠道与发件人核实。</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-2)" }}>验证未通过：请通过其他渠道与发件人核实。</div>
             )}
           </div>
           <div className={`ack-row${ack ? " on" : ""}`} onClick={() => setAck(!ack)}>
             <div className="ack-box">{ack ? "✓" : ""}</div>
-            <span style={{ fontSize: 12.5, color: "#3A3E46" }}>{ackText}</span>
+            <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{ackText}</span>
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button className="btn-ghost" style={{ flex: 1, height: 42, borderRadius: 9 }} onClick={p.onClose}>

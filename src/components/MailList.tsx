@@ -5,7 +5,8 @@ import type { EmailMeta } from "../types";
 interface Props {
   title: string;
   messages: EmailMeta[];
-  selectedUid: number | null;
+  selectedKey: string | null;
+  accountLabels?: Record<string, string>;
   loading: boolean;
   syncing: boolean;
   error: string | null;
@@ -21,11 +22,11 @@ interface Props {
 }
 
 const BAR_COLOR: Record<string, string> = {
-  verified: "#1E6B49",
-  signedUnknown: "#C99B4E",
-  unsigned: "#C7C1B2",
-  tampered: "#9A2C1D",
-  impersonation: "#9A2C1D",
+  verified: "#087443",
+  signedUnknown: "#a7853a",
+  unsigned: "#adb2aa",
+  tampered: "#9f2f24",
+  impersonation: "#9f2f24",
 };
 
 export function MailList(p: Props) {
@@ -70,13 +71,13 @@ export function MailList(p: Props) {
         )}
         {!p.loading && !p.error && p.messages.length === 0 && (
           <div className="empty-pane">
-            <div style={{ fontSize: 22, color: "#C7C1B2" }}>▤</div>
+            <div style={{ fontSize: 22, color: "var(--mut-4)" }}>▤</div>
             此目录暂无邮件
           </div>
         )}
         {!p.loading &&
           p.messages.map((m) => {
-            const selected = m.uid === p.selectedUid;
+            const selected = `${m.accountId}/${m.folder}/${m.uid}` === p.selectedKey;
             return (
               <div
                 key={`${m.accountId}/${m.folder}/${m.uid}`}
@@ -107,6 +108,7 @@ export function MailList(p: Props) {
                   <div className="preview">{m.preview || " "}</div>
                   <div className="tags">
                     <span className={`tag ${m.trust}`}>{TRUST_LABEL[m.trust]}</span>
+                    {p.accountLabels?.[m.accountId] && <span className="tag lang">{p.accountLabels[m.accountId]}</span>}
                     {m.risk && <span className="tag risk">⚠ 高风险</span>}
                     <span className="tag lang">{m.lang}</span>
                     {m.hasAttach && <span className="tag lang">📎</span>}

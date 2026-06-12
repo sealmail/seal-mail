@@ -99,6 +99,8 @@ export interface EmailMeta {
   uid: number;
   accountId: string;
   folder: string;
+  messageId?: string | null;
+  threadId: string;
   fromName: string;
   fromAddr: string;
   subject: string;

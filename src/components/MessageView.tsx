@@ -4,15 +4,20 @@ import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
 import { saveAttachment } from "../api";
 import { riskBanner } from "../trust";
-import type { EmailFull, FolderInfo } from "../types";
+import type { EmailFull, EmailMeta, FolderInfo } from "../types";
 
 interface Props {
   mail: EmailFull | null;
+  thread: EmailMeta[];
   folders: FolderInfo[];
+  onOpenThreadMail: (mail: EmailMeta) => void;
   onReply: () => void;
   onReplyAll: () => void;
   onForward: () => void;
   onMove: (target: string) => void;
+  canMove: boolean;
+  canArchive: boolean;
+  onArchive: () => void;
   onDelete: () => void;
   onShowRisk: () => void;
   onTrustSender: () => void;
@@ -59,7 +64,7 @@ export function MessageView(p: Props) {
     return (
       <div className="msg-pane">
         <div className="empty-pane">
-          <div style={{ fontSize: 26, color: "#C7C1B2" }}>印</div>
+          <div style={{ fontSize: 26, color: "var(--mut-4)" }}>印</div>
           选择一封邮件查看内容与验证结果
         </div>
       </div>
@@ -102,19 +107,26 @@ export function MessageView(p: Props) {
                 <button className="btn-ghost" onClick={p.onForward}>
                   转发
                 </button>
-                <select
-                  className="btn-ghost"
-                  style={{ paddingRight: 6, maxWidth: 104 }}
-                  value=""
-                  onChange={(e) => e.target.value && p.onMove(e.target.value)}
-                >
-                  <option value="">移动到…</option>
-                  {moveTargets.map((f) => (
-                    <option key={f.name} value={f.name}>
-                      {f.display}
-                    </option>
-                  ))}
-                </select>
+                {p.canMove && (
+                  <select
+                    className="btn-ghost"
+                    style={{ paddingRight: 6, maxWidth: 104 }}
+                    value=""
+                    onChange={(e) => e.target.value && p.onMove(e.target.value)}
+                  >
+                    <option value="">移动到…</option>
+                    {moveTargets.map((f) => (
+                      <option key={f.name} value={f.name}>
+                        {f.display}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {p.canArchive && (
+                  <button className="btn-ghost" onClick={p.onArchive} title="归档">
+                    归档
+                  </button>
+                )}
                 <button className="btn-ghost" onClick={p.onToggleFlag} title={m.meta.flagged ? "取消星标" : "加星标"}>
                   {m.meta.flagged ? "★ 已星标" : "☆ 星标"}
                 </button>
@@ -145,6 +157,35 @@ export function MessageView(p: Props) {
           )}
         </div>
 
+        {p.thread.length > 1 && (
+          <div className="thread-strip" aria-label="会话线程">
+            <div className="thread-title">
+              <span>会话</span>
+              <span>{p.thread.length} 封</span>
+            </div>
+            <div className="thread-list">
+              {p.thread.map((item) => {
+                const current = item.uid === m.meta.uid && item.folder === m.meta.folder;
+                return (
+                  <button
+                    key={`${item.accountId}/${item.folder}/${item.uid}`}
+                    className={`thread-item${current ? " current" : ""}${item.unread ? " unread" : ""}`}
+                    onClick={() => !current && p.onOpenThreadMail(item)}
+                    disabled={current}
+                  >
+                    <span className="thread-dot" />
+                    <span className="thread-main">
+                      <span className="thread-from">{item.fromName}</span>
+                      <span className="thread-preview">{item.preview || item.subject}</span>
+                    </span>
+                    <span className="thread-time">{item.dateDisplay}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {trustConfirm && unknownFpr && (
           <div className="trust-confirm">
             <div className="title">
@@ -173,7 +214,7 @@ export function MessageView(p: Props) {
               会立即标红警告。
             </div>
             <div className="actions">
-              <button className="btn-solid" style={{ background: "#1E6B49" }} onClick={p.onTrustSender}>
+              <button className="btn-solid" style={{ background: "var(--jade)" }} onClick={p.onTrustSender}>
                 ✓ 确认信任
               </button>
               <button className="btn-ghost" onClick={() => setTrustConfirm(false)}>

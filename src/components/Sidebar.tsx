@@ -3,8 +3,10 @@ import type { Account, FolderInfo, IdentityInfo } from "../types";
 
 export const RISK_FOLDER = "__risk__";
 export const DRAFTS_FOLDER = "__drafts__";
+export const UNIFIED_FOLDER = "__unified__";
 
 const FOLDER_ICONS: Record<string, string> = {
+  [UNIFIED_FOLDER]: "▦",
   INBOX: "▤",
   [RISK_FOLDER]: "◈",
   [DRAFTS_FOLDER]: "✎",
@@ -92,7 +94,7 @@ export function Sidebar(p: Props) {
           className={`account-row${a.id === p.currentAccountId ? " active" : ""}`}
           onClick={() => p.onSelectAccount(a.id)}
         >
-          <div className="dot" style={{ background: a.id === p.currentAccountId ? "#2C7B58" : "#C7C1B2" }} />
+          <div className="dot" style={{ background: a.id === p.currentAccountId ? "var(--jade)" : "var(--mut-4)" }} />
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="addr">{a.email}</div>
             <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>

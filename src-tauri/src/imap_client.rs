@@ -131,6 +131,7 @@ pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession,
 
 /// 回收站目录的常见名字（去层级后的末段，小写比较）
 const TRASH_NAMES: &[&str] = &["trash", "deleted items", "deleted messages", "已删除", "已删除邮件", "垃圾箱", "废件箱"];
+const ARCHIVE_NAMES: &[&str] = &["archive", "archives", "all mail", "all mails", "归档", "所有邮件"];
 
 fn name_is_trash(n: &imap::types::Name) -> bool {
     // RFC 6154 special-use（Gmail 等在 LIST 中直接返回 \Trash）
@@ -145,6 +146,18 @@ fn name_is_trash(n: &imap::types::Name) -> bool {
     TRASH_NAMES.contains(&decode_mutf7(last).to_lowercase().as_str())
 }
 
+fn name_is_archive(n: &imap::types::Name) -> bool {
+    if n.attributes()
+        .iter()
+        .any(|a| matches!(a, imap::types::NameAttribute::Custom(c) if c.eq_ignore_ascii_case("\\Archive")))
+    {
+        return true;
+    }
+    let name = n.name();
+    let last = name.rsplit(n.delimiter().unwrap_or("/")).next().unwrap_or(name);
+    ARCHIVE_NAMES.contains(&decode_mutf7(last).to_lowercase().as_str())
+}
+
 /// 找到服务器上的回收站目录；不存在则创建 "Trash"
 fn find_or_create_trash(sess: &mut ImapSession) -> Result<String, String> {
     let names = sess
@@ -156,6 +169,19 @@ fn find_or_create_trash(sess: &mut ImapSession) -> Result<String, String> {
     sess.create("Trash")
         .map_err(|e| format!("创建回收站目录失败: {}", e))?;
     Ok("Trash".into())
+}
+
+/// 找到服务器上的归档目录；不存在则创建 "Archive"
+fn find_or_create_archive(sess: &mut ImapSession) -> Result<String, String> {
+    let names = sess
+        .list(None, Some("*"))
+        .map_err(|e| format!("获取目录失败: {}", e))?;
+    if let Some(n) = names.iter().find(|n| name_is_archive(n)) {
+        return Ok(n.name().to_string());
+    }
+    sess.create("Archive")
+        .map_err(|e| format!("创建归档目录失败: {}", e))?;
+    Ok("Archive".into())
 }
 
 pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<FolderInfo>, String> {
@@ -174,7 +200,13 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
                 .unwrap_or(&name);
             FolderInfo {
                 display: decode_mutf7(last),
-                role: if name_is_trash(n) { Some("trash".into()) } else { None },
+                role: if name_is_trash(n) {
+                    Some("trash".into())
+                } else if name_is_archive(n) {
+                    Some("archive".into())
+                } else {
+                    None
+                },
                 name,
             }
         })
@@ -343,6 +375,31 @@ pub fn move_message(
     }
     let _ = sess.logout();
     Ok(())
+}
+
+pub fn archive_message(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    uid: u32,
+) -> Result<String, String> {
+    let mut sess = connect(account, secret)?;
+    let archive = find_or_create_archive(&mut sess)?;
+    if archive.eq_ignore_ascii_case(folder) {
+        let _ = sess.logout();
+        return Ok(archive);
+    }
+    sess.select(folder).map_err(|e| e.to_string())?;
+    let uidset = uid.to_string();
+    if sess.uid_mv(&uidset, &archive).is_err() {
+        sess.uid_copy(&uidset, &archive)
+            .map_err(|e| format!("归档失败: {}", e))?;
+        sess.uid_store(&uidset, "+FLAGS (\\Deleted)")
+            .map_err(|e| e.to_string())?;
+        sess.expunge().map_err(|e| e.to_string())?;
+    }
+    let _ = sess.logout();
+    Ok(archive)
 }
 
 pub fn set_read(

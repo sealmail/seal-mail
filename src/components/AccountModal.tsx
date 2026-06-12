@@ -165,7 +165,7 @@ export function AccountModal(p: Props) {
               ))}
             </select>
             {preset.note && (
-              <div style={{ fontSize: 11, color: "#9A5B16", lineHeight: 1.5 }}>ⓘ {preset.note}</div>
+              <div style={{ fontSize: 11, color: "var(--amber)", lineHeight: 1.5 }}>ⓘ {preset.note}</div>
             )}
           </div>
 
@@ -202,7 +202,7 @@ export function AccountModal(p: Props) {
           {authMode === "oauth2" ? (
             <div
               className="field"
-              style={{ border: "1px solid #E4DFD3", borderRadius: 10, padding: 14, gap: 10, display: "flex", flexDirection: "column" }}
+              style={{ border: "1px solid var(--border-3)", borderRadius: 10, padding: 14, gap: 10, display: "flex", flexDirection: "column" }}
             >
               {tokens ? (
                 <>
@@ -237,7 +237,7 @@ export function AccountModal(p: Props) {
                   <button className="btn-primary" style={{ height: 40 }} onClick={startDeviceFlow}>
                     用 Microsoft 账户授权
                   </button>
-                  <div style={{ fontSize: 11, color: "#A39E91", lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.5 }}>
                     将打开浏览器，在 microsoft.com/devicelogin 输入代码完成登录。组织若禁止第三方应用，可在下方填入自己注册的
                     Azure 应用 Client ID。
                   </div>
@@ -305,7 +305,7 @@ export function AccountModal(p: Props) {
           {error && <div className="form-error">{error}</div>}
           {ok && <div className="form-ok">{ok}</div>}
 
-          <div style={{ fontSize: 11, color: "#A39E91", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.6 }}>
             密码与 OAuth 令牌只保存在本机（应用配置目录，权限 600），不会上传。Exchange Online / Outlook.com
             已被微软强制使用 OAuth2，请选择「用 Microsoft 账户授权」。
           </div>

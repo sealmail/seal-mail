@@ -10,8 +10,10 @@ The UI is implemented from a Claude Design mockup (`SealMail.dc.html`): a wax-se
 
 ### General mail client (the foundation comes first)
 - **Multiple accounts**: IMAP / POP3 for incoming + SMTP for outgoing (SSL / STARTTLS)
-- **Provider presets**: Exchange Online (Office 365), on-prem Exchange Server, Gmail, iCloud, QQ Mail, NetEase 163, plus custom IMAP/POP3
-- Inbox / server folder browsing, read/unread, reply / forward / move / delete, local search
+- **Provider presets**: Exchange Online (Office 365) with Microsoft OAuth2 device-code login, on-prem Exchange Server, Gmail, iCloud, QQ Mail, NetEase 163, plus custom IMAP/POP3
+- Inbox / unified inbox / server folder browsing, read/unread, stars, one-click archive, safe delete-to-trash, reply / reply-all / forward / move / delete, local search, and cached conversation threads
+- SQLite local cache with incremental sync, offline reading, pagination, IMAP IDLE / POP3 polling notifications, and load-more history
+- Safe HTML reading with remote images blocked by default, attachment download/upload, local drafts, undo send, recipient autocomplete, and keyboard shortcuts
 - **Custom folders**: real server-side folders for IMAP accounts; local virtual folders for POP3
 - **Filter rules**: match on from/to/subject/body × contains/equals/starts-with/ends-with → auto-move into a folder (optionally mark read), with one-click "organize inbox now"
 
@@ -52,8 +54,7 @@ bunx tsc --noEmit            # frontend type check
 ## Exchange notes
 
 - **Exchange Online / Office 365**: preset uses `outlook.office365.com:993` (IMAP) + `smtp.office365.com:587` (STARTTLS).
-  Microsoft has retired basic auth — an admin must enable IMAP + SMTP AUTH; personal accounts should use an app password.
-  An OAuth2 (XOAUTH2) device-code flow is on the roadmap.
+  Microsoft has retired basic auth; SealMail uses OAuth2/XOAUTH2 device-code login. Admins still need IMAP and SMTP AUTH enabled for the tenant/mailbox.
 - **On-prem Exchange Server**: once an admin enables the IMAP/POP3 services, just enter your company server address. Native EWS/Graph protocols are on the roadmap.
 
 ## Architecture
@@ -63,6 +64,7 @@ src-tauri/src/
   lib.rs          Tauri command layer (accounts/folders/messages/send/filters/trusted contacts)
   models.rs       Data models (Account, EmailMeta/Full, VerifyDetail, FilterRule…)
   crypto.rs       Ed25519 sign/verify, fingerprints, body canonicalization, X-SealMail-* headers
+  db.rs           SQLite mail cache (offline reading, incremental sync, pagination)
   mail.rs         MIME parsing (mail-parser), trust evaluation, risk/language detection
   imap_client.rs  IMAP (connect/folders/fetch/move/read/delete; falls back to COPY+DELETE when MOVE is unsupported)
   pop3_client.rs  Minimal POP3 over TLS (local virtual-folder filing)
@@ -86,8 +88,7 @@ src/
 
 ## Roadmap
 
-- IMAP IDLE push, local mail cache (SQLite)
-- OAuth2 / XOAUTH2 (Exchange Online, Gmail)
+- Gmail OAuth2
 - YubiKey support
-- Attachment download/upload, safe HTML body rendering
+- Server-side IMAP search, custom signature text, localization
 - Native EWS / Microsoft Graph for Exchange

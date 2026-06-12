@@ -53,14 +53,14 @@ export function LedgerBindModal(p: Props) {
         <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {!rows && (
             <>
-              <div style={{ fontSize: 13, color: "#3A3E46", lineHeight: 1.7 }}>
+              <div style={{ fontSize: 13, color: "var(--ink-3)", lineHeight: 1.7 }}>
                 1. 用 USB 连接 Ledger 并解锁
                 <br />
                 2. 在设备上打开 <b>Ethereum</b> app
                 <br />
                 3. 点击下方按钮读取账户地址
               </div>
-              <div style={{ fontSize: 11.5, color: "#A39E91", lineHeight: 1.6 }}>
+              <div style={{ fontSize: 11.5, color: "var(--mut-3)", lineHeight: 1.6 }}>
                 绑定后，发邮件签名会改用 Ledger（EIP-191 personal_sign，secp256k1）。
                 每次发送签名邮件需要在设备上按键确认；私钥永不离开硬件。
               </div>
@@ -69,13 +69,13 @@ export function LedgerBindModal(p: Props) {
 
           {rows && (
             <>
-              <div style={{ fontSize: 12.5, color: "#3A3E46" }}>选择用于签名的账户：</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-3)" }}>选择用于签名的账户：</div>
               <div className="card-list">
                 {rows.map((r) => (
                   <div
                     className="card-row"
                     key={r.index}
-                    style={{ cursor: "pointer", background: selected?.index === r.index ? "#F3EFE6" : "#fff" }}
+                    style={{ cursor: "pointer", background: selected?.index === r.index ? "var(--bg-active)" : "#fff" }}
                     onClick={() => setSelected(r)}
                   >
                     <div
@@ -89,10 +89,10 @@ export function LedgerBindModal(p: Props) {
                       {selected?.index === r.index ? "✓" : ""}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "#2A2E36" }}>
+                      <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--ink-2)" }}>
                         {r.address.slice(0, 22)}…{r.address.slice(-6)}
                       </div>
-                      <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "#A39E91", marginTop: 2 }}>
+                      <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--mut-3)", marginTop: 2 }}>
                         {r.path}
                       </div>
                     </div>

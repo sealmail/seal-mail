@@ -112,8 +112,16 @@ export async function getMessage(accountId: string, folder: string, uid: number)
   return invoke("get_message", { accountId, folder, uid });
 }
 
+export async function listThread(accountId: string, folder: string, threadId: string): Promise<EmailMeta[]> {
+  return invoke("list_thread", { accountId, folder, threadId });
+}
+
 export async function moveMessage(accountId: string, folder: string, uid: number, target: string): Promise<void> {
   return invoke("move_message", { accountId, folder, uid, target });
+}
+
+export async function archiveMessage(accountId: string, folder: string, uid: number): Promise<void> {
+  return invoke("archive_message", { accountId, folder, uid });
 }
 
 export async function setRead(accountId: string, folder: string, uid: number, read: boolean): Promise<void> {

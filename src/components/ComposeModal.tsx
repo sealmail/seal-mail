@@ -167,19 +167,19 @@ export function ComposeModal(p: Props) {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  border: "1px solid #E8E3D8",
+                  border: "1px solid var(--border-2)",
                   borderRadius: 9,
                   padding: "0 14px",
                   height: 44,
                   background: "#fff",
                 }}
               >
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#A39E91", width: 42, flexShrink: 0 }}>发自</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--mut-3)", width: 42, flexShrink: 0 }}>发自</span>
                 {p.accounts.length > 1 ? (
                   <select
                     value={accountId}
                     onChange={(e) => setAccountId(e.target.value)}
-                    style={{ border: "none", outline: "none", background: "transparent", fontFamily: "var(--mono)", fontSize: 12.5, color: "#2A2E36", flex: 1 }}
+                    style={{ border: "none", outline: "none", background: "transparent", fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--ink-2)", flex: 1 }}
                   >
                     {p.accounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -188,7 +188,7 @@ export function ComposeModal(p: Props) {
                     ))}
                   </select>
                 ) : (
-                  <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "#2A2E36" }}>{account?.email}</span>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--ink-2)" }}>{account?.email}</span>
                 )}
                 {sign && (
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "#1E6B49", fontWeight: 600, whiteSpace: "nowrap" }}>
@@ -217,9 +217,9 @@ export function ComposeModal(p: Props) {
                   alignItems: "center",
                   gap: 10,
                   fontSize: 12,
-                  color: "#6E6A5F",
-                  background: sign ? "#F1F6F2" : "#F4F1EA",
-                  border: `1px solid ${sign ? "#DCE9DF" : "#E4DECF"}`,
+                  color: "var(--mut)",
+                  background: sign ? "var(--jade-bg)" : "var(--bg-chip)",
+                  border: `1px solid ${sign ? "#c8dfd1" : "var(--border-3)"}`,
                   borderRadius: 9,
                   padding: "12px 14px",
                   cursor: "pointer",
@@ -255,17 +255,17 @@ export function ComposeModal(p: Props) {
                 </div>
                 <div className="btn" />
               </div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#23272F", marginTop: 22 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--ink)", marginTop: 22 }}>
                 {sign && isLedger ? "在你的 Ledger 上确认签名" : sign ? "正在签名并发送" : "正在发送"}
               </div>
-              <div style={{ fontSize: 12.5, color: "#8A8576", marginTop: 6, maxWidth: 360, lineHeight: 1.6 }}>
+              <div style={{ fontSize: 12.5, color: "var(--mut)", marginTop: 6, maxWidth: 360, lineHeight: 1.6 }}>
                 {sign && isLedger
                   ? "核对设备屏幕上的内容摘要，按下两侧按钮确认。私钥永不离开硬件。"
                   : sign
                     ? "正文哈希已计算，正用你的本地密钥盖印，随后通过 SMTP 投递。私钥不会离开本机。"
                     : "正在通过 SMTP 投递。"}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18, color: "#9A958A", fontSize: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18, color: "var(--mut-2)", fontSize: 12 }}>
                 <span className="pulse-dot" /> {sign && isLedger ? "等待硬件确认…" : "正在投递…"}
               </div>
             </div>
@@ -277,7 +277,7 @@ export function ComposeModal(p: Props) {
               <div style={{ fontSize: 17, fontWeight: 700, color: "#1E6B49", marginTop: 18 }}>
                 {result.signed ? "已签名并发送" : "已发送（未签名）"}
               </div>
-              <div style={{ fontSize: 12.5, color: "#8A8576", marginTop: 7, maxWidth: 380, lineHeight: 1.6 }}>
+              <div style={{ fontSize: 12.5, color: "var(--mut)", marginTop: 7, maxWidth: 380, lineHeight: 1.6 }}>
                 {result.signed
                   ? "收件人若使用 SealMail，将看到这枚完整封印——证明邮件确实出自你的密钥，且内容未被改动。普通邮箱则正常收信。"
                   : "邮件已通过 SMTP 正常发出。"}
@@ -287,8 +287,8 @@ export function ComposeModal(p: Props) {
                   marginTop: 18,
                   fontFamily: "var(--mono)",
                   fontSize: 11,
-                  color: "#8A8576",
-                  background: "#F1EDE3",
+                  color: "var(--mut)",
+                  background: "var(--bg-chip)",
                   borderRadius: 8,
                   padding: "10px 14px",
                 }}
@@ -302,7 +302,7 @@ export function ComposeModal(p: Props) {
         <div className="modal-foot">
           <span className="toolbar-note">
             {countdown !== null && (
-              <span style={{ color: "#9A5B16", fontSize: 12, fontWeight: 600 }}>
+              <span style={{ color: "var(--amber)", fontSize: 12, fontWeight: 600 }}>
                 ⏳ {countdown} 秒后发送，反悔还来得及
               </span>
             )}
@@ -316,7 +316,7 @@ export function ComposeModal(p: Props) {
             <div style={{ display: "flex", gap: 9 }}>
               <button
                 className="btn-ghost"
-                style={{ height: 40, padding: "0 18px", borderColor: "#C99B4E", color: "#9A5B16", fontWeight: 700 }}
+                style={{ height: 40, padding: "0 18px", borderColor: "var(--gold)", color: "var(--amber)", fontWeight: 700 }}
                 onClick={() => setCountdown(null)}
               >
                 ↩ 撤销发送

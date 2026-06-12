@@ -11,13 +11,17 @@ import { Onboarding } from "./components/Onboarding";
 import { ProfileSlideOver } from "./components/ProfileSlideOver";
 import { RiskModal } from "./components/RiskModal";
 import { DraftsPane } from "./components/DraftsPane";
-import { DRAFTS_FOLDER, RISK_FOLDER, Sidebar } from "./components/Sidebar";
+import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { VerifyRail } from "./components/VerifyRail";
 import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
 
 function isRisky(m: EmailMeta) {
   return !!m.risk || m.trust === "tampered" || m.trust === "impersonation";
+}
+
+function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
+  return `${m.accountId}/${m.folder}/${m.uid}`;
 }
 
 export default function App() {
@@ -29,6 +33,7 @@ export default function App() {
   const [messages, setMessages] = useState<EmailMeta[]>([]);
   const [inboxMetas, setInboxMetas] = useState<EmailMeta[]>([]);
   const [selected, setSelected] = useState<EmailFull | null>(null);
+  const [thread, setThread] = useState<EmailMeta[]>([]);
   const [view, setView] = useState<"mail" | "keys">("mail");
   // 验证面板默认折叠成图标条，用户主动展开后记住偏好
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem("sealmail.railOpen") === "1");
@@ -78,6 +83,7 @@ export default function App() {
   const refreshFolders = useCallback(async (accId: string) => {
     const fs = await api.listFolders(accId);
     const withRisk: FolderInfo[] = [
+      { name: UNIFIED_FOLDER, display: "统一收件箱" },
       ...fs.filter((f) => f.name === "INBOX").map((f) => ({ ...f, display: "收件箱" })),
       { name: RISK_FOLDER, display: "高风险" },
       { name: DRAFTS_FOLDER, display: "草稿" },
@@ -97,6 +103,7 @@ export default function App() {
     if (!accountId) return;
     setFolder("INBOX");
     setSelected(null);
+    setThread([]);
     setListError(null);
     refreshFolders(accountId).catch((e) => setListError(String(e)));
   }, [accountId, refreshFolders]);
@@ -107,6 +114,16 @@ export default function App() {
 
   const loadCached = useCallback(
     async (count: number) => {
+      if (folder === UNIFIED_FOLDER) {
+        const pages = await Promise.all(accounts.map((a) => api.listCached(a.id, "INBOX", 0, count)));
+        const metas = pages.flatMap((p) => p.metas).sort((a, b) => b.timestamp - a.timestamp);
+        loadedRef.current = metas.length;
+        setTotal(pages.reduce((sum, p) => sum + p.total, 0));
+        setInboxMetas(metas);
+        setMessages(metas);
+        setSelected((prev) => (prev && metas.some((m) => mailKey(m) === mailKey(prev.meta)) ? prev : null));
+        return;
+      }
       const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
       const res = await api.listCached(accountId, realFolder, 0, count);
       loadedRef.current = res.metas.length;
@@ -115,9 +132,9 @@ export default function App() {
       let metas = folder === RISK_FOLDER ? res.metas.filter(isRisky) : res.metas;
       metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
       setMessages(metas);
-      setSelected((prev) => (prev && metas.some((m) => m.uid === prev.meta.uid) ? prev : null));
+      setSelected((prev) => (prev && metas.some((m) => mailKey(m) === mailKey(prev.meta)) ? prev : null));
     },
-    [accountId, folder]
+    [accountId, accounts, folder]
   );
 
   const loadMessages = useCallback(async () => {
@@ -138,15 +155,21 @@ export default function App() {
     // 2) 后台与服务器增量同步，再回填
     setSyncing(true);
     try {
-      const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-      await api.syncMessages(accountId, realFolder);
+      if (folder === UNIFIED_FOLDER) {
+        const settled = await Promise.allSettled(accounts.map((a) => api.syncMessages(a.id, "INBOX")));
+        const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (failed) throw failed.reason;
+      } else {
+        const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+        await api.syncMessages(accountId, realFolder);
+      }
       if (seq === fetchSeq.current) await loadCached(Math.max(loadedRef.current, PAGE));
     } catch (e) {
       if (seq === fetchSeq.current) setListError(`同步失败（本地缓存仍可用）：${e}`);
     } finally {
       if (seq === fetchSeq.current) setSyncing(false);
     }
-  }, [accountId, folder, loadCached]);
+  }, [accountId, accounts, folder, loadCached]);
 
   useEffect(() => {
     loadedRef.current = 0;
@@ -164,12 +187,12 @@ export default function App() {
   // ── 新邮件推送（后端 IMAP IDLE / POP3 轮询发出 new-mail 事件）──
   useEffect(() => {
     const unlisten = listen<{ accountId: string }>("new-mail", (e) => {
-      if (e.payload.accountId === accountId) loadMessages();
+      if (folder === UNIFIED_FOLDER || e.payload.accountId === accountId) loadMessages();
     });
     return () => {
       unlisten.then((f) => f());
     };
-  }, [accountId, loadMessages]);
+  }, [accountId, folder, loadMessages]);
 
   // ── 界面缩放（持久化）──
   useEffect(() => {
@@ -182,16 +205,39 @@ export default function App() {
     try {
       const full = await api.getMessage(m.accountId, m.folder, m.uid);
       setSelected(full);
+      setThread([]);
       setView("mail");
       if (m.unread) {
         api.setRead(m.accountId, m.folder, m.uid, true).catch(() => {});
-        setMessages((ms) => ms.map((x) => (x.uid === m.uid ? { ...x, unread: false } : x)));
-        setInboxMetas((ms) => ms.map((x) => (x.uid === m.uid ? { ...x, unread: false } : x)));
+        setMessages((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
+        setInboxMetas((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
       }
     } catch (e) {
       setListError(String(e));
     }
   }
+
+  useEffect(() => {
+    if (!selected) {
+      setThread([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .listThread(selected.meta.accountId, selected.meta.folder, selected.meta.threadId)
+      .then((rows) => {
+        if (!cancelled) setThread(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setThread([]);
+          console.error("读取会话线程失败", e);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.meta.accountId, selected?.meta.folder, selected?.meta.threadId, selected?.meta.uid]);
 
   // ── 搜索（本地过滤：发件人/主题/摘要/地址）+ 未读/星标过滤 ──
   const shownMessages = useMemo(() => {
@@ -214,9 +260,9 @@ export default function App() {
   const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
   const folderTitle = folders.find((f) => f.name === folder)?.display ?? folder;
 
-  function markLocal(uids: number[], unread: boolean) {
-    const set = new Set(uids);
-    const patch = (ms: EmailMeta[]) => ms.map((x) => (set.has(x.uid) ? { ...x, unread } : x));
+  function markLocal(keys: string[], unread: boolean) {
+    const set = new Set(keys);
+    const patch = (ms: EmailMeta[]) => ms.map((x) => (set.has(mailKey(x)) ? { ...x, unread } : x));
     setMessages(patch);
     setInboxMetas(patch);
   }
@@ -225,19 +271,28 @@ export default function App() {
     if (!selected) return;
     try {
       await api.setRead(selected.meta.accountId, selected.meta.folder, selected.meta.uid, false);
-      markLocal([selected.meta.uid], true);
+      markLocal([mailKey(selected.meta)], true);
     } catch (e) {
       setListError(String(e));
     }
   }
 
   async function handleMarkAllRead() {
-    const uids = messages.filter((m) => m.unread).map((m) => m.uid);
-    if (uids.length === 0) return;
-    const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+    const unread = messages.filter((m) => m.unread);
+    if (unread.length === 0) return;
     try {
-      await api.markRead(accountId, realFolder, uids);
-      markLocal(uids, false);
+      const groups = new Map<string, EmailMeta[]>();
+      for (const m of unread) {
+        const key = folder === RISK_FOLDER ? `${m.accountId}\0INBOX` : `${m.accountId}\0${m.folder}`;
+        groups.set(key, [...(groups.get(key) ?? []), m]);
+      }
+      await Promise.all(
+        [...groups.entries()].map(([key, rows]) => {
+          const [accId, fld] = key.split("\0");
+          return api.markRead(accId, fld, rows.map((m) => m.uid));
+        })
+      );
+      markLocal(unread.map(mailKey), false);
     } catch (e) {
       setListError(String(e));
     }
@@ -247,11 +302,11 @@ export default function App() {
     const next = !m.flagged;
     try {
       await api.setFlagged(m.accountId, m.folder, m.uid, next);
-      const patch = (ms: EmailMeta[]) => ms.map((x) => (x.uid === m.uid ? { ...x, flagged: next } : x));
+      const patch = (ms: EmailMeta[]) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, flagged: next } : x));
       setMessages(patch);
       setInboxMetas(patch);
       setSelected((prev) =>
-        prev && prev.meta.uid === m.uid ? { ...prev, meta: { ...prev.meta, flagged: next } } : prev
+        prev && mailKey(prev.meta) === mailKey(m) ? { ...prev, meta: { ...prev.meta, flagged: next } } : prev
       );
     } catch (e) {
       setListError(String(e));
@@ -263,7 +318,21 @@ export default function App() {
     try {
       await api.moveMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid, target);
       setSelected(null);
+      setThread([]);
       loadMessages();
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
+
+  async function handleArchive() {
+    if (!selected) return;
+    try {
+      await api.archiveMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid);
+      setSelected(null);
+      setThread([]);
+      loadMessages();
+      refreshFolders(accountId).catch(() => {});
     } catch (e) {
       setListError(String(e));
     }
@@ -271,6 +340,7 @@ export default function App() {
 
   // 当前选中邮件所在目录是否是回收站（回收站内删除 = 物理删除，需确认）
   const selectedInTrash = !!selected && folders.find((f) => f.name === selected.meta.folder)?.role === "trash";
+  const selectedInArchive = !!selected && folders.find((f) => f.name === selected.meta.folder)?.role === "archive";
 
   function handleDelete() {
     if (!selected) return;
@@ -287,6 +357,7 @@ export default function App() {
     try {
       await api.deleteMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid, permanent);
       setSelected(null);
+      setThread([]);
       loadMessages();
       // 第一次软删除可能刚在服务器上创建了回收站目录，刷新目录列表
       if (!permanent) refreshFolders(accountId).catch(() => {});
@@ -383,9 +454,11 @@ export default function App() {
         e.preventDefault();
         const down = e.key === "ArrowDown" || e.key === "j";
         if (shownMessages.length === 0) return;
-        const idx = selected ? shownMessages.findIndex((m) => m.uid === selected.meta.uid) : -1;
+        const idx = selected ? shownMessages.findIndex((m) => mailKey(m) === mailKey(selected.meta)) : -1;
         const next = idx < 0 ? 0 : Math.min(shownMessages.length - 1, Math.max(0, idx + (down ? 1 : -1)));
-        if (shownMessages[next] && shownMessages[next].uid !== selected?.meta.uid) selectMail(shownMessages[next]);
+        if (shownMessages[next] && (!selected || mailKey(shownMessages[next]) !== mailKey(selected.meta))) {
+          selectMail(shownMessages[next]);
+        }
       }
     }
     window.addEventListener("keydown", onKey);
@@ -444,6 +517,10 @@ export default function App() {
   }
 
   const ledgerMode = state?.identity.mode === "ledger";
+  const accountLabels = useMemo(
+    () => Object.fromEntries(accounts.map((a) => [a.id, a.email])),
+    [accounts]
+  );
 
   return (
     <div className="app">
@@ -457,8 +534,8 @@ export default function App() {
           {hasAccounts && (
             <div className="search">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                <circle cx="5.5" cy="5.5" r="4" stroke="#B3AEA2" strokeWidth="1.4" />
-                <path d="M8.5 8.5l3 3" stroke="#B3AEA2" strokeWidth="1.4" strokeLinecap="round" />
+                <circle cx="5.5" cy="5.5" r="4" stroke="var(--mut-4)" strokeWidth="1.4" />
+                <path d="M8.5 8.5l3 3" stroke="var(--mut-4)" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
               <input ref={searchRef} placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
@@ -556,7 +633,8 @@ export default function App() {
               <MailList
                 title={folderTitle}
                 messages={shownMessages}
-                selectedUid={selected?.meta.uid ?? null}
+                selectedKey={selected ? mailKey(selected.meta) : null}
+                accountLabels={folder === UNIFIED_FOLDER ? accountLabels : undefined}
                 loading={loading}
                 syncing={syncing}
                 error={listError}
@@ -572,11 +650,16 @@ export default function App() {
               />
               <MessageView
                 mail={selected}
+                thread={thread}
                 folders={folders}
+                onOpenThreadMail={selectMail}
                 onReply={handleReply}
                 onReplyAll={handleReplyAll}
                 onForward={handleForward}
                 onMove={handleMove}
+                canMove={folder !== UNIFIED_FOLDER}
+                canArchive={!selectedInArchive}
+                onArchive={handleArchive}
                 onDelete={handleDelete}
                 onShowRisk={() => setRiskOpen(true)}
                 onTrustSender={handleTrustSender}
@@ -650,7 +733,7 @@ export default function App() {
                 ×
               </button>
             </div>
-            <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "#6E6A5F" }}>
+            <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
               「{selected.meta.subject}」已在回收站中，继续删除将<b style={{ color: "#9A2C1D" }}>从服务器上永久移除，无法恢复</b>。
             </div>
             <div className="modal-foot">
@@ -690,7 +773,7 @@ export default function App() {
                   onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
                 />
               </div>
-              <div style={{ fontSize: 11, color: "#A39E91", lineHeight: 1.6 }}>
+              <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.6 }}>
                 IMAP 账户会在邮件服务器上创建真实目录；POP3 账户使用本地目录。配合「过滤规则」可把某一类邮件自动归入该目录。
               </div>
               {newFolderErr && <div className="form-error">{newFolderErr}</div>}

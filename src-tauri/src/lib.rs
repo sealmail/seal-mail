@@ -297,6 +297,7 @@ async fn create_folder(state: State<'_, AppState>, account_id: String, name: Str
 
 /// POP3 本地虚拟回收站目录名
 const POP3_TRASH: &str = "已删除";
+const POP3_ARCHIVE: &str = "归档";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -476,6 +477,32 @@ fn get_message(
     Ok(full)
 }
 
+/// Return all locally cached messages in the same folder conversation.
+#[tauri::command]
+fn list_thread(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    thread_id: String,
+) -> Result<Vec<EmailMeta>, String> {
+    let mut s = state.inner.lock().unwrap();
+    let account = s.account(&account_id)?;
+    let trusted = s.trusted_for_verify(&account);
+    let mut metas = Vec::new();
+    for r in db::list_folder(&s.db, &account_id, &folder)? {
+        match mail::parse_email(&r.raw, r.uid, &account_id, &folder, r.unread, r.flagged, &trusted) {
+            Ok(full) if full.meta.thread_id == thread_id => {
+                metas.push(full.meta.clone());
+                s.mail_cache.insert(StoreData::cache_key(&account_id, &folder, r.uid), full);
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("[thread] 解析缓存邮件失败 uid={}: {}", r.uid, e),
+        }
+    }
+    metas.sort_by_key(|m| m.timestamp);
+    Ok(metas)
+}
+
 #[tauri::command]
 async fn move_message(
     state: State<'_, AppState>,
@@ -509,6 +536,49 @@ async fn move_message(
             if let Some(mut full) = s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid)) {
                 full.meta.folder = target.clone();
                 s.mail_cache.insert(StoreData::cache_key(&account_id, &target, uid), full);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 一键归档：IMAP 移入服务器归档目录；POP3 移入本地「归档」虚拟目录。
+#[tauri::command]
+async fn archive_message(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uid: u32,
+) -> Result<(), String> {
+    let account = {
+        let s = state.inner.lock().unwrap();
+        s.account(&account_id)?
+    };
+    match account.protocol {
+        IncomingProtocol::Imap => {
+            let secret = fresh_secret(&state, &account_id).await?;
+            let f2 = folder.clone();
+            let target = tauri::async_runtime::spawn_blocking(move || {
+                imap_client::archive_message(&account, &secret, &f2, uid)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            if !target.eq_ignore_ascii_case(&folder) {
+                let mut s = state.inner.lock().unwrap();
+                db::delete_row(&s.db, &account_id, &folder, uid)?;
+                s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+            }
+        }
+        IncomingProtocol::Pop3 => {
+            let mut s = state.inner.lock().unwrap();
+            if !s.local_folders.contains(&POP3_ARCHIVE.to_string()) {
+                s.local_folders.push(POP3_ARCHIVE.into());
+                s.save_local_folders()?;
+            }
+            db::set_folder(&s.db, &account_id, &folder, uid, POP3_ARCHIVE)?;
+            if let Some(mut full) = s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid)) {
+                full.meta.folder = POP3_ARCHIVE.into();
+                s.mail_cache.insert(StoreData::cache_key(&account_id, POP3_ARCHIVE, uid), full);
             }
         }
     }
@@ -968,7 +1038,9 @@ pub fn run() {
             list_cached,
             sync_messages,
             get_message,
+            list_thread,
             move_message,
+            archive_message,
             set_read,
             mark_read,
             set_flagged,

@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-11（v9：产品 review 后 P0/P1 全量落地——SQLite 缓存、HTML 渲染、附件、联系人、草稿、撤销发送、回收站、星标、快捷键、系统通知）
+> 最后更新：2026-06-12（v13：UI 配色中性化——接近 Codex 的灰白底、低饱和绿色强调）
 
 ## 项目定位
 
@@ -148,6 +148,31 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] **新邮件系统通知**（tauri-plugin-notification）：watcher 检测到新邮件且窗口未聚焦时弹横幅，
       设置页可关（prefs.notify_new_mail）
 
+### v10（P2：会话线程视图）
+- [x] `mail.rs` 解析 `Message-ID` / `References` / `In-Reply-To`，生成 `message_id` 与 `thread_id`；
+      线程根优先取 References 首个 ID，其次 In-Reply-To，其次自身 Message-ID，最后用规范化主题兜底
+- [x] `list_thread` Tauri 命令基于本地 SQLite 缓存扫描当前目录同线程邮件，按时间正序返回
+- [x] `MessageView` 在正文上方显示会话时间线，可点击同线程其他邮件跳转；当前邮件高亮，未读发件人加粗
+- [x] 测试：`parses_conversation_headers` 覆盖 References/In-Reply-To 聚合规则
+
+### v11（P2：归档一键操作）
+- [x] IMAP：识别 `\Archive` special-use、Archive/All Mail/归档等常见目录；找不到则创建 `Archive`
+- [x] POP3：归档到本地「归档」虚拟目录，并自动加入侧栏目录列表
+- [x] 后端新增 `archive_message` 命令；前端阅读窗新增「归档」按钮，归档后清空选中邮件、刷新列表和目录
+- [x] 已在归档目录内隐藏「归档」按钮；IMAP 同目录归档后端 no-op，避免误删本地缓存行
+
+### v12（P2：统一收件箱）
+- [x] 侧栏新增「统一收件箱」虚拟目录，聚合所有账户本地缓存里的 INBOX 邮件并按时间倒序展示
+- [x] 打开统一收件箱时并行同步所有账户 INBOX；新邮件推送来自任一账户时自动刷新
+- [x] 列表行显示账户邮箱标签；选中、已读、星标、键盘上下移动改用 account/folder/uid 三元键，避免跨账户 UID 撞号
+- [x] 统一收件箱支持批量全部已读、加载更多；隐藏「移动到…」以避免跨账户误移动，保留归档/删除/星标/回复等单封操作
+
+### v13（UI 配色中性化）
+- [x] `styles.css` 主设计变量从暖黄纸感切到 Codex 风格的中性灰白底、近黑文字、低饱和绿色强调
+- [x] 侧栏、标题栏、列表、阅读窗、线程条、弹层、设置页、欢迎页等大面积背景/边框/hover/active 色统一去黄
+- [x] 组件内联颜色同步改为 CSS 变量（写信弹窗、账户/OAuth、Ledger、身份密钥、档案、风险弹窗、验证栏等）
+- [x] 保留风险红、签名金、可信绿的语义色，但降低大面积黄色占比
+
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）
 - `TAURI_SIGNING_PRIVATE_KEY` = ~/.tauri/sealmail-updater.key 的内容（私钥，签 updater 工件）
@@ -156,13 +181,12 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 
 ## 待办 / 路线图（2026-06-11 产品 review 后重排，定位「小而美」）
 
-P0/P1 全部 12 项已在 v9 落地（见上）。剩余：
+P0/P1 全部 12 项已在 v9 落地，P2 第 13 项和第 15 项中的「归档」「统一收件箱」已在 v10-v12 落地（见上）。剩余：
 
 ### P2 — 下一批
 
-13. 会话线程视图（References/In-Reply-To 聚合）
 14. IMAP 服务器端搜索（本地缓存已覆盖大部分场景后补盲区）
-15. 自定义签名档文本、归档一键操作、统一收件箱
+15. 自定义签名档文本
 16. Gmail OAuth2（需注册 Google Cloud 客户端；Gmail 应用专用密码目前仍可用）
 17. 多语言 UI；macOS 公证（APPLE_* secrets 同 auto-desktop）
 

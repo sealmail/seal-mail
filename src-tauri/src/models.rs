@@ -174,6 +174,8 @@ pub struct EmailMeta {
     pub uid: u32,
     pub account_id: String,
     pub folder: String,
+    pub message_id: Option<String>,
+    pub thread_id: String,
     pub from_name: String,
     pub from_addr: String,
     pub subject: String,

@@ -88,6 +88,30 @@ pub fn count(conn: &Connection, account: &str, folder: &str) -> Result<i64, Stri
     .map_err(err)
 }
 
+/// Read a whole folder newest-first. Used for local conversation grouping.
+pub fn list_folder(conn: &Connection, account: &str, folder: &str) -> Result<Vec<CachedRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT uid, unread, flagged, raw FROM messages
+             WHERE account_id=?1 AND folder=?2
+             ORDER BY timestamp DESC, uid DESC",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![account, folder], |r| {
+            Ok(CachedRow {
+                uid: r.get(0)?,
+                unread: r.get::<_, i64>(1)? != 0,
+                flagged: r.get::<_, i64>(2)? != 0,
+                raw: r.get(3)?,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(rows)
+}
+
 pub fn get_raw(conn: &Connection, account: &str, folder: &str, uid: u32) -> Result<Option<CachedRow>, String> {
     conn.query_row(
         "SELECT uid, unread, flagged, raw FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3",

@@ -102,11 +102,11 @@ export function FiltersModal(p: Props) {
         <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {!editing && (
             <>
-              <div style={{ fontSize: 12, color: "#8A8576", lineHeight: 1.6 }}>
+              <div style={{ fontSize: 12, color: "var(--mut)", lineHeight: 1.6 }}>
                 规则按顺序匹配收件箱中的邮件，命中后移动到目标目录。可手动「立即整理」，每次刷新收件箱后也可以一键执行。
               </div>
               {p.filters.length === 0 && (
-                <div className="card-list" style={{ padding: "20px 18px", fontSize: 12.5, color: "#8A8576" }}>
+                <div className="card-list" style={{ padding: "20px 18px", fontSize: 12.5, color: "var(--mut)" }}>
                   还没有规则。点击下方「新建规则」，例如：发件人 包含 github.com → 移动到「通知」。
                 </div>
               )}
@@ -212,7 +212,7 @@ export function FiltersModal(p: Props) {
                   </select>
                 </div>
               </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#3A3E46", cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--ink-3)", cursor: "pointer" }}>
                 <input
                   type="checkbox"
                   checked={editing.markRead}

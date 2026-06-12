@@ -100,12 +100,12 @@ export function ProfileSlideOver(p: Props) {
   }
 
   const noteColors = {
-    jade: { bg: "#EAF4EE", border: "#CDE4D7", fg: "#1E6B49" },
-    gray: { bg: "#F1EDE3", border: "#E4DECF", fg: "#6E6A5F" },
+    jade: { bg: "var(--jade-bg)", border: "#c8dfd1", fg: "var(--jade)" },
+    gray: { bg: "var(--gray-bg)", border: "var(--border-3)", fg: "var(--gray)" },
     red: { bg: "#FBECE9", border: "#F2D7D0", fg: "#9A2C1D" },
   }[noteTone];
 
-  const statusBg = { jade: "#EAF4EE", gold: "#FBEFD9", gray: "#F1EDE3", red: "#FBECE9" }[st.tone];
+  const statusBg = { jade: "var(--jade-bg)", gold: "var(--amber-bg)", gray: "var(--gray-bg)", red: "#FBECE9" }[st.tone];
 
   return (
     <>
@@ -120,8 +120,8 @@ export function ProfileSlideOver(p: Props) {
         <div style={{ flex: 1, overflowY: "auto", padding: "28px 26px 40px" }}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
             <Seal trust={m.meta.trust} size={108} />
-            <div style={{ fontSize: 19, fontWeight: 700, color: "#23272F", marginTop: 16 }}>{m.meta.fromName}</div>
-            <div style={{ fontSize: 12, color: "#8A8576", marginTop: 3, fontFamily: "var(--mono)" }}>
+            <div style={{ fontSize: 19, fontWeight: 700, color: "var(--ink)", marginTop: 16 }}>{m.meta.fromName}</div>
+            <div style={{ fontSize: 12, color: "var(--mut)", marginTop: 3, fontFamily: "var(--mono)" }}>
               {m.meta.fromAddr}
             </div>
             <div
@@ -149,7 +149,7 @@ export function ProfileSlideOver(p: Props) {
               <div className={`check ${s.kind}`} key={i} style={{ alignItems: "center" }}>
                 <div className="dot">{s.kind === "ok" ? "✓" : s.kind === "bad" ? "✕" : "–"}</div>
                 <span style={{ fontSize: 12.5, color: "#34383F", flex: 1 }}>{s.label}</span>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "#8A8576", maxWidth: 220, textAlign: "right", wordBreak: "break-all" }}>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mut)", maxWidth: 220, textAlign: "right", wordBreak: "break-all" }}>
                   {s.val}
                 </span>
               </div>
@@ -158,11 +158,11 @@ export function ProfileSlideOver(p: Props) {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 26 }}>
             {stats.map((s, i) => (
-              <div key={i} style={{ border: "1px solid #E8E3D8", borderRadius: 11, padding: 14, background: "#fff" }}>
-                <div style={{ fontSize: 21, fontWeight: 700, color: s.red ? "#9A2C1D" : "#23272F", fontFamily: "var(--mono)" }}>
+              <div key={i} style={{ border: "1px solid var(--border-2)", borderRadius: 11, padding: 14, background: "#fff" }}>
+                <div style={{ fontSize: 21, fontWeight: 700, color: s.red ? "#9A2C1D" : "var(--ink)", fontFamily: "var(--mono)" }}>
                   {s.num}
                 </div>
-                <div style={{ fontSize: 11, color: "#8A8576", marginTop: 3 }}>{s.label}</div>
+                <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 3 }}>{s.label}</div>
               </div>
             ))}
           </div>

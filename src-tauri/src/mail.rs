@@ -11,6 +11,60 @@ fn header_text(msg: &mail_parser::Message, name: &str) -> Option<String> {
     msg.header(name).and_then(|h| h.as_text()).map(|s| s.to_string())
 }
 
+fn header_raw_text(msg: &mail_parser::Message, name: &'static str) -> Option<String> {
+    msg.header_raw(name).map(|s| s.to_string())
+}
+
+fn normalize_msg_id(s: &str) -> Option<String> {
+    let trimmed = s.trim().trim_matches('<').trim_matches('>').trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_lowercase())
+    }
+}
+
+fn extract_msg_ids(s: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = s;
+    while let Some(start) = rest.find('<') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('>') else { break };
+        if let Some(id) = normalize_msg_id(&after[..end]) {
+            ids.push(id);
+        }
+        rest = &after[end + 1..];
+    }
+    if ids.is_empty() {
+        ids.extend(s.split_whitespace().filter_map(normalize_msg_id));
+    }
+    ids
+}
+
+fn base_subject(subject: &str) -> String {
+    let mut s = subject.trim();
+    loop {
+        let lower = s.to_lowercase();
+        let prefixes = ["re:", "fw:", "fwd:", "答复:", "回复:", "转发:"];
+        let Some(prefix) = prefixes.iter().find(|p| lower.starts_with(**p)) else {
+            break;
+        };
+        s = s[prefix.len()..].trim();
+    }
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+pub fn thread_id_for(msg: &mail_parser::Message, subject: &str) -> (Option<String>, String) {
+    let message_id = header_raw_text(msg, "Message-ID").and_then(|s| normalize_msg_id(&s));
+    let reference_root = header_raw_text(msg, "References")
+        .and_then(|s| extract_msg_ids(&s).into_iter().next())
+        .or_else(|| header_raw_text(msg, "In-Reply-To").and_then(|s| extract_msg_ids(&s).into_iter().next()));
+    let thread_id = reference_root
+        .or_else(|| message_id.clone())
+        .unwrap_or_else(|| format!("subject:{}", base_subject(subject)));
+    (message_id, thread_id)
+}
+
 pub fn detect_lang(text: &str) -> String {
     let mut has_kana = false;
     let mut has_cjk = false;
@@ -289,6 +343,7 @@ pub fn parse_email(
         .unwrap_or_default();
 
     let subject = msg.subject().unwrap_or("(无主题)").to_string();
+    let (message_id, thread_id) = thread_id_for(&msg, &subject);
     let timestamp = msg.date().map(|d| d.to_timestamp()).unwrap_or(0);
     let body_text = msg
         .body_text(0)
@@ -328,6 +383,8 @@ pub fn parse_email(
         uid,
         account_id: account_id.to_string(),
         folder: folder.to_string(),
+        message_id,
+        thread_id,
         from_name,
         from_addr,
         subject: subject.clone(),

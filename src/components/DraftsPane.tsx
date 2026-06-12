@@ -25,7 +25,7 @@ export function DraftsPane(p: Props) {
       <div className="list-scroll">
         {p.drafts.length === 0 && (
           <div className="empty-pane">
-            <div style={{ fontSize: 22, color: "#C7C1B2" }}>✎</div>
+            <div style={{ fontSize: 22, color: "var(--mut-4)" }}>✎</div>
             没有草稿。写信时会自动保存，关掉也不丢。
           </div>
         )}

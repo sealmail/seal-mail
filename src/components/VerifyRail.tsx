@@ -19,7 +19,7 @@ export function VerifyRail(p: Props) {
     return (
       <div
         className="rail rail-collapsed"
-        style={{ background: st?.railBg ?? "#FAF9F5" }}
+        style={{ background: st?.railBg ?? "var(--bg-side)" }}
         onClick={p.onToggle}
         title="展开验证面板"
       >
@@ -40,7 +40,7 @@ export function VerifyRail(p: Props) {
 
   if (!p.mail || !st) {
     return (
-      <div className="rail" style={{ background: "#FAF9F5" }}>
+      <div className="rail" style={{ background: "var(--bg-side)" }}>
         <button className="rail-collapse-btn" onClick={p.onToggle} title="收起验证面板">
           »
         </button>
@@ -81,7 +81,7 @@ export function VerifyRail(p: Props) {
         </div>
 
         {canTrust && (
-          <button className="rail-btn" style={{ borderColor: "#C99B4E" }} onClick={p.onTrustSender}>
+          <button className="rail-btn" style={{ borderColor: "var(--gold)" }} onClick={p.onTrustSender}>
             ✓ 核实后加入可信联系人
           </button>
         )}

@@ -116,6 +116,23 @@ fn e2e_signed_unknown_mail() {
 }
 
 #[test]
+fn parses_conversation_headers() {
+    let raw = MessageBuilder::new()
+        .from(("Aria", "aria@example.com"))
+        .to(vec![("", "mara@example.com")])
+        .subject("Re: Q2 Report")
+        .header("Message-ID", Raw::new("<reply@example.com>"))
+        .header("In-Reply-To", Raw::new("<root@example.com>"))
+        .header("References", Raw::new("<root@example.com> <middle@example.com>"))
+        .text_body("Looks good.")
+        .write_to_vec()
+        .unwrap();
+    let mail = parse_email(&raw, 22, "acc1", "INBOX", true, false, &[]).unwrap();
+    assert_eq!(mail.meta.message_id.as_deref(), Some("reply@example.com"));
+    assert_eq!(mail.meta.thread_id, "root@example.com");
+}
+
+#[test]
 fn e2e_tampered_mail() {
     let id = test_identity();
     let body = "The amount is 100 USD.";
