@@ -14,7 +14,6 @@ import { ProfileSlideOver } from "./components/ProfileSlideOver";
 import { RiskModal } from "./components/RiskModal";
 import { DraftsPane } from "./components/DraftsPane";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
-import { VerifyRail } from "./components/VerifyRail";
 import { Seal } from "./components/Seal";
 import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
@@ -137,8 +136,6 @@ function MailApp() {
   const [selected, setSelected] = useState<EmailFull | null>(null);
   const [thread, setThread] = useState<EmailMeta[]>([]);
   const [view, setView] = useState<"mail" | "keys">("mail");
-  // 验证面板默认折叠成图标条，用户主动展开后记住偏好
-  const [railOpen, setRailOpen] = useState(() => localStorage.getItem("sealmail.railOpen") === "1");
   const [search, setSearch] = useState("");
   const [filterMode, setFilterMode] = useState<"all" | "unread" | "flagged">("all");
   const [total, setTotal] = useState(0);
@@ -155,10 +152,6 @@ function MailApp() {
   const [listWidth, setListWidth] = useState(() => {
     const n = Number(localStorage.getItem("sealmail.listWidth") ?? 348);
     return Number.isFinite(n) ? clamp(n, 300, 480) : 348;
-  });
-  const [railWidth, setRailWidth] = useState(() => {
-    const n = Number(localStorage.getItem("sealmail.railWidth") ?? 288);
-    return Number.isFinite(n) ? clamp(n, 240, 420) : 288;
   });
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -235,7 +228,6 @@ function MailApp() {
   const loadedRef = useRef(0);
   const sidebarDragBase = useRef(sidebarWidth);
   const listDragBase = useRef(listWidth);
-  const railDragBase = useRef(railWidth);
 
   const loadCached = useCallback(
     async (count: number) => {
@@ -374,7 +366,6 @@ function MailApp() {
 
   useEffect(() => localStorage.setItem("sealmail.sidebarWidth", String(sidebarWidth)), [sidebarWidth]);
   useEffect(() => localStorage.setItem("sealmail.listWidth", String(listWidth)), [listWidth]);
-  useEffect(() => localStorage.setItem("sealmail.railWidth", String(railWidth)), [railWidth]);
 
   // ── 选中邮件 ──
   async function selectMail(m: EmailMeta, opts: { markRead?: boolean } = {}) {
@@ -596,13 +587,6 @@ function MailApp() {
       body: `\n\n----- 原始邮件 -----\n${selected.bodyText}`,
     });
     setComposeOpen(true);
-  }
-
-  function toggleRail() {
-    setRailOpen((o) => {
-      localStorage.setItem("sealmail.railOpen", o ? "0" : "1");
-      return !o;
-    });
   }
 
   // ── 全局键盘快捷键 ──
@@ -889,23 +873,9 @@ function MailApp() {
                 onDelete={handleDelete}
                 onShowRisk={() => setRiskOpen(true)}
                 onTrustSender={handleTrustSender}
+                onOpenProfile={() => setProfileOpen(true)}
                 onMarkUnread={handleMarkUnread}
                 onToggleFlag={() => selected && handleToggleFlag(selected.meta)}
-              />
-              <PaneResizer
-                title="拖动调整验证栏宽度"
-                onStart={() => {
-                  railDragBase.current = railWidth;
-                }}
-                onDrag={(dx) => setRailWidth(clamp(railDragBase.current - dx, 240, 420))}
-              />
-              <VerifyRail
-                mail={selected}
-                open={railOpen}
-                width={railWidth}
-                onToggle={toggleRail}
-                onOpenProfile={() => setProfileOpen(true)}
-                onTrustSender={handleTrustSender}
               />
             </>
           )}

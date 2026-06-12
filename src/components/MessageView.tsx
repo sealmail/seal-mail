@@ -3,7 +3,7 @@ import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
 import { saveAttachment } from "../api";
-import { riskBanner } from "../trust";
+import { buildChecks, riskBanner, statusText, TONE_COLOR } from "../trust";
 import type { EmailFull, EmailMeta, FolderInfo } from "../types";
 
 interface Props {
@@ -21,6 +21,7 @@ interface Props {
   onDelete: () => void;
   onShowRisk: () => void;
   onTrustSender: () => void;
+  onOpenProfile: () => void;
   onMarkUnread: () => void;
   onToggleFlag: () => void;
 }
@@ -35,6 +36,8 @@ export function MessageView(p: Props) {
   // 一键信任确认卡：换邮件时收起
   const [trustConfirm, setTrustConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyPinned, setVerifyPinned] = useState(false);
   /** 正文视图：null=自动（未签名邮件优先 HTML；签名邮件显示被签名的纯文本） */
   const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
   /** 附件下载状态：index → 状态文案 */
@@ -43,6 +46,8 @@ export function MessageView(p: Props) {
   useEffect(() => {
     setTrustConfirm(false);
     setCopied(false);
+    setVerifyOpen(false);
+    setVerifyPinned(false);
     setHtmlMode(null);
     setAttachState({});
   }, [uid]);
@@ -71,9 +76,12 @@ export function MessageView(p: Props) {
     );
   }
   const m = p.mail;
+  const status = statusText(m.verify);
+  const checks = buildChecks(m);
   const unknownFpr = m.verify.status === "signedUnknown" ? m.verify.fingerprint : null;
   const banner = riskBanner(m);
   const moveTargets = p.folders.filter((f) => f.name !== m.meta.folder && f.name !== "__risk__");
+  const canTrust = m.verify.status === "signedUnknown";
 
   return (
     <div className="msg-pane">
@@ -82,8 +90,56 @@ export function MessageView(p: Props) {
           <div className="msg-subject">{m.meta.subject}</div>
           <div className="msg-head2">
             <div className="msg-fromline">
-              <div style={{ paddingTop: 1 }}>
-                <Seal trust={m.meta.trust} size={30} />
+              <div
+                className="verify-trigger-wrap"
+                onMouseEnter={() => setVerifyOpen(true)}
+                onMouseLeave={() => !verifyPinned && setVerifyOpen(false)}
+              >
+                <button
+                  className="verify-trigger"
+                  title="查看验证详情"
+                  onClick={() => {
+                    setVerifyPinned((v) => !v);
+                    setVerifyOpen(true);
+                  }}
+                >
+                  <Seal trust={m.meta.trust} size={30} />
+                </button>
+                {verifyOpen && (
+                  <div className="verify-popover">
+                    <div className="verify-pop-head">
+                      <Seal trust={m.meta.trust} size={42} />
+                      <div style={{ minWidth: 0 }}>
+                        <div className="verify-pop-title" style={{ color: TONE_COLOR[status.tone] }}>
+                          {status.title}
+                        </div>
+                        <div className="verify-pop-sub">{status.sub}</div>
+                      </div>
+                    </div>
+                    <div className="verify-pop-checks">
+                      {checks.map((c, i) => (
+                        <div className={`check ${c.kind}`} key={i}>
+                          <div className="dot">{c.kind === "ok" ? "✓" : c.kind === "bad" ? "✕" : c.kind === "warn" ? "!" : "–"}</div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div className="label">{c.label}</div>
+                            <div className={`val${c.mono ? " mono" : ""}`}>{c.val}</div>
+                            {c.sub && <div className={`sub${c.mono ? " mono" : ""}`}>{c.sub}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="verify-pop-actions">
+                      {canTrust && (
+                        <button className="btn-ghost" onClick={p.onTrustSender}>
+                          加入可信联系人
+                        </button>
+                      )}
+                      <button className="btn-ghost" onClick={p.onOpenProfile}>
+                        发件人档案
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               <div style={{ minWidth: 0 }}>
                 <div className="msg-fromname">{m.meta.fromName}</div>

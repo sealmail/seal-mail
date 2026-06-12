@@ -340,6 +340,22 @@ input, textarea, select { font-family: inherit; }
 .msg-fromname { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
 .msg-fromname .org { font-weight: 400; color: var(--mut-2); }
 .msg-addr { font-family: var(--mono); font-size: 11px; color: var(--mut); margin-top: 2px; }
+.verify-trigger-wrap { position: relative; padding-top: 1px; flex-shrink: 0; }
+.verify-trigger {
+  width: 34px; height: 34px; border: 0; border-radius: 9px; padding: 0; background: transparent;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.verify-trigger:hover { background: var(--bg-chip); }
+.verify-popover {
+  position: absolute; top: 40px; left: 0; z-index: 25; width: 360px; max-width: calc(100vw - 80px);
+  padding: 14px; border: 1px solid var(--border-2); border-radius: 10px; background: #fff;
+  box-shadow: 0 18px 45px -22px rgba(18, 22, 19, 0.55);
+}
+.verify-pop-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); }
+.verify-pop-title { font-size: 13px; font-weight: 700; }
+.verify-pop-sub { margin-top: 3px; color: var(--mut); font-size: 11.5px; line-height: 1.45; }
+.verify-pop-checks { display: flex; flex-direction: column; gap: 11px; padding-top: 12px; }
+.verify-pop-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
 /* 收件人 / 抄送行 */
 .msg-rcpts { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; }
 .rcpt-line { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.5; }
@@ -464,38 +480,8 @@ input, textarea, select { font-family: inherit; }
   font-size: 12px; font-weight: 600; cursor: pointer;
 }
 
-/* ─── 验证栏 ─── */
-.rail {
-  width: 288px; flex-shrink: 0;
-  display: flex; flex-direction: column; min-height: 0; position: relative;
-}
-/* 折叠态：窄图标条，点击展开 */
-.rail-collapsed {
-  width: 40px; align-items: center; gap: 12px; padding-top: 22px; cursor: pointer;
-}
-.rail-collapsed:hover .rail-toggle { color: var(--ink); }
-.rail-mini-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  box-shadow: 0 0 0 3px rgba(18, 22, 19, 0.06);
-}
-.rail-mini-placeholder {
-  width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--border-2);
-  color: var(--mut-3); display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-size: 13px; background: rgba(255,255,255,.62);
-}
-.rail-toggle { color: var(--mut-4); font-size: 15px; line-height: 1; }
-.rail-collapse-btn {
-  position: absolute; top: 10px; right: 12px; width: 26px; height: 26px; z-index: 2;
-  border: 1px solid var(--border-2); background: #fff; border-radius: 7px;
-  color: var(--gray); font-size: 13px; cursor: pointer; line-height: 1;
-}
-.rail-collapse-btn:hover { border-color: var(--gold); color: var(--ink); }
-.rail-scroll { flex: 1; overflow-y: auto; padding: 26px 22px; }
-.rail-hero { display: flex; flex-direction: column; align-items: center; text-align: center; }
-.rail-status { font-size: 16px; font-weight: 700; margin-top: 16px; }
-.rail-sub { font-size: 12px; color: var(--gray); margin-top: 5px; line-height: 1.5; max-width: 240px; }
+/* ─── 验证详情 ─── */
 .rail-div { height: 1px; background: var(--border-2); margin: 22px 0; }
-.rail-checks { display: flex; flex-direction: column; gap: 15px; }
 .check { display: flex; gap: 11px; }
 .check .dot {
   width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; margin-top: 1px;
@@ -510,14 +496,6 @@ input, textarea, select { font-family: inherit; }
 .check.warn .dot { background: var(--amber-bg); color: var(--amber); }
 .check.neu .dot { background: var(--gray-bg); color: var(--gray); }
 .check .mono { font-family: var(--mono); }
-
-.rail-btn {
-  margin-top: 24px; width: 100%; height: 38px; border: 1px solid var(--border-3); background: #fff;
-  border-radius: 9px; font-size: 12.5px; font-weight: 600; color: var(--ink-3); cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-}
-.rail-btn:hover { border-color: var(--gold); }
-.rail-note { margin-top: 16px; text-align: center; font-size: 10.5px; color: var(--mut-4); line-height: 1.5; }
 
 /* ─── 弹层 ─── */
 .overlay {
