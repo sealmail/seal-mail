@@ -1002,8 +1002,8 @@ function MailApp() {
               </button>
             </div>
             <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
-              将删除目录「{folderToDelete.display}」。目录中的邮件也会随目录删除，
-              <b style={{ color: "#9A2C1D" }}>此操作无法撤销</b>。
+              将移除目录「{folderToDelete.display}」。如果服务器允许删除，会同时删除该目录中的邮件；
+              如果服务器拒绝删除，会从侧栏隐藏这个目录。
               {deleteFolderErr && (
                 <div className="form-error" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
                   {deleteFolderErr}

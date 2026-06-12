@@ -241,16 +241,22 @@ fn remove_account(state: State<'_, AppState>, account_id: String) -> Result<(), 
 
 #[tauri::command]
 async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<Vec<FolderInfo>, String> {
-    let (account, local) = {
+    let (account, local, hidden) = {
         let s = state.inner.lock().unwrap();
-        (s.account(&account_id)?, s.local_folders.clone())
+        (
+            s.account(&account_id)?,
+            s.local_folders.clone(),
+            s.hidden_folders.get(&account_id).cloned().unwrap_or_default(),
+        )
     };
     let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
-            tauri::async_runtime::spawn_blocking(move || imap_client::list_folders(&account, &secret))
+            let mut folders = tauri::async_runtime::spawn_blocking(move || imap_client::list_folders(&account, &secret))
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())??;
+            folders.retain(|f| !hidden.contains(&f.name));
+            Ok(folders)
         }
         IncomingProtocol::Pop3 => {
             // POP3 无服务器目录：内置一个本地「已删除」虚拟目录承接软删除
@@ -306,12 +312,23 @@ async fn delete_folder(state: State<'_, AppState>, account_id: String, name: Str
         IncomingProtocol::Imap => {
             let secret = fresh_secret(&state, &account_id).await?;
             let name_for_server = name.clone();
-            tauri::async_runtime::spawn_blocking(move || imap_client::delete_folder(&account, &secret, &name_for_server))
+            let delete_result = tauri::async_runtime::spawn_blocking(move || imap_client::delete_folder(&account, &secret, &name_for_server))
                 .await
-                .map_err(|e| e.to_string())??;
+                .map_err(|e| e.to_string())?;
             let mut s = state.inner.lock().unwrap();
-            db::clear_folder(&s.db, &account_id, &name)?;
-            s.mail_cache.retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
+            match delete_result {
+                Ok(()) => {
+                    db::clear_folder(&s.db, &account_id, &name)?;
+                    s.mail_cache.retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
+                }
+                Err(_) => {
+                    let hidden = s.hidden_folders.entry(account_id.clone()).or_default();
+                    if !hidden.contains(&name) {
+                        hidden.push(name.clone());
+                        s.save_hidden_folders()?;
+                    }
+                }
+            }
             Ok(())
         }
         IncomingProtocol::Pop3 => {

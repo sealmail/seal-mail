@@ -21,6 +21,8 @@ pub struct StoreData {
     pub trusted: Vec<TrustedContact>,
     /// 本地虚拟目录（POP3 账户没有服务器目录时使用；IMAP 账户用服务器目录）
     pub local_folders: Vec<String>,
+    /// 用户隐藏的服务器目录（IMAP 服务器拒绝删除的内置目录仍可从侧栏移除）
+    pub hidden_folders: HashMap<String, Vec<String>>,
     /// POP3 邮件 → 本地目录的归属（key: account_id/uid）
     pub local_assign: HashMap<String, String>,
     /// POP3 已读标记（key: account_id/uid）
@@ -59,6 +61,7 @@ impl StoreData {
             filters: read_json(&dir.join("filters.json")),
             trusted: read_json(&dir.join("trusted.json")),
             local_folders: read_json(&dir.join("local_folders.json")),
+            hidden_folders: read_json(&dir.join("hidden_folders.json")),
             local_assign: read_json(&dir.join("local_assign.json")),
             local_read: read_json(&dir.join("local_read.json")),
             contacts: read_json(&dir.join("contacts.json")),
@@ -141,6 +144,10 @@ impl StoreData {
         write_json(&self.dir.join("local_folders.json"), &self.local_folders)?;
         write_json(&self.dir.join("local_assign.json"), &self.local_assign)?;
         write_json(&self.dir.join("local_read.json"), &self.local_read)
+    }
+
+    pub fn save_hidden_folders(&self) -> Result<(), String> {
+        write_json(&self.dir.join("hidden_folders.json"), &self.hidden_folders)
     }
 
     /// 校验邮件用的可信列表：附加本机签名身份——
