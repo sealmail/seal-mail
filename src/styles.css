@@ -287,11 +287,12 @@ input, textarea, select { font-family: inherit; }
   column-gap: 8px; padding: 10px 14px 10px 10px; border-bottom: 1px solid var(--border-soft);
   cursor: pointer; border-left: 3px solid transparent; position: relative;
 }
+.mail-row.unread { grid-template-columns: 8px 34px minmax(0, 1fr); column-gap: 6px; }
 .mail-row:hover { background: var(--bg-hover); }
 .mail-row.selected { background: var(--bg-active); }
-.mail-row.unread::after {
-  content: ""; position: absolute; left: 5px; top: 20px;
-  width: 6px; height: 6px; border-radius: 50%; background: var(--jade-deep);
+.mail-unread-dot {
+  width: 7px; height: 7px; border-radius: 50%; align-self: start; justify-self: center;
+  margin-top: 12px; background: #1f9d62; box-shadow: 0 0 0 3px rgba(31, 157, 98, 0.11);
 }
 .mail-seal-cell {
   width: 34px; min-width: 34px; padding-top: 1px;

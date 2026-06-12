@@ -104,6 +104,7 @@ export function MailList(p: Props) {
                 onClick={() => p.onSelect(m)}
                 onDoubleClick={() => p.onOpenWindow(m)}
               >
+                {m.unread && <div className="mail-unread-dot" />}
                 <div className="mail-seal-cell">
                   <Seal trust={m.trust} size={28} />
                 </div>
