@@ -161,6 +161,8 @@ function MailApp() {
     return Number.isFinite(n) ? clamp(n, 240, 420) : 288;
   });
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [olderExhausted, setOlderExhausted] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -227,7 +229,9 @@ function MailApp() {
   }, [accountId, refreshFolders]);
 
   // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
-  const PAGE = 50;
+  const PAGE = 200;
+  const AUTO_CACHE_TARGET = 1000;
+  const AUTO_BACKFILL_ROUNDS = 4;
   const loadedRef = useRef(0);
   const sidebarDragBase = useRef(sidebarWidth);
   const listDragBase = useRef(listWidth);
@@ -258,6 +262,32 @@ function MailApp() {
     [accountId, accounts, folder]
   );
 
+  const backfillOlderToTarget = useCallback(
+    async (cachedTotal: number) => {
+      if (folder === RISK_FOLDER || folder === DRAFTS_FOLDER || cachedTotal >= AUTO_CACHE_TARGET) return;
+      let nextTotal = cachedTotal;
+      for (let round = 0; round < AUTO_BACKFILL_ROUNDS && nextTotal < AUTO_CACHE_TARGET; round += 1) {
+        if (folder === UNIFIED_FOLDER) {
+          const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
+          if (results.every((r) => r.added === 0)) {
+            setOlderExhausted(true);
+            return;
+          }
+          nextTotal = results.reduce((sum, r) => sum + r.total, 0);
+        } else {
+          const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+          const res = await api.syncOlderMessages(accountId, realFolder);
+          if (res.added === 0) {
+            setOlderExhausted(true);
+            return;
+          }
+          nextTotal = res.total;
+        }
+      }
+    },
+    [accountId, accounts, folder]
+  );
+
   const loadMessages = useCallback(async () => {
     if (!accountId) return;
     if (folder === DRAFTS_FOLDER) return; // 草稿是本地数据，不走邮件拉取
@@ -276,32 +306,53 @@ function MailApp() {
     // 2) 后台与服务器增量同步，再回填
     setSyncing(true);
     try {
+      let syncedTotal = 0;
       if (folder === UNIFIED_FOLDER) {
         const settled = await Promise.allSettled(accounts.map((a) => api.syncMessages(a.id, "INBOX")));
         const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
         if (failed) throw failed.reason;
+        syncedTotal = settled.reduce((sum, r) => (r.status === "fulfilled" ? sum + r.value.total : sum), 0);
       } else {
         const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-        await api.syncMessages(accountId, realFolder);
+        const res = await api.syncMessages(accountId, realFolder);
+        syncedTotal = res.total;
       }
+      await backfillOlderToTarget(syncedTotal);
       if (seq === fetchSeq.current) await loadCached(Math.max(loadedRef.current, PAGE));
     } catch (e) {
       if (seq === fetchSeq.current) setListError(`同步失败（本地缓存仍可用）：${e}`);
     } finally {
       if (seq === fetchSeq.current) setSyncing(false);
     }
-  }, [accountId, accounts, folder, loadCached]);
+  }, [accountId, accounts, backfillOlderToTarget, folder, loadCached]);
 
   useEffect(() => {
     loadedRef.current = 0;
+    setOlderExhausted(false);
     loadMessages();
   }, [loadMessages]);
 
   async function handleLoadMore() {
+    if (loadingMore) return;
+    setLoadingMore(true);
     try {
+      if (loadedRef.current < total) {
+        await loadCached(loadedRef.current + PAGE);
+        return;
+      }
+      const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+      if (folder === UNIFIED_FOLDER) {
+        const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
+        if (results.every((r) => r.added === 0)) setOlderExhausted(true);
+      } else {
+        const res = await api.syncOlderMessages(accountId, realFolder);
+        if (res.added === 0) setOlderExhausted(true);
+      }
       await loadCached(loadedRef.current + PAGE);
     } catch (e) {
       setListError(String(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -798,7 +849,10 @@ function MailApp() {
                 error={listError}
                 filterMode={filterMode}
                 unreadCount={listUnread}
-                hasMore={loadedRef.current < total && folder !== RISK_FOLDER}
+                loadedCount={shownMessages.length}
+                totalCount={folder === RISK_FOLDER ? messages.length : total}
+                hasMore={folder !== RISK_FOLDER && (loadedRef.current < total || !olderExhausted)}
+                loadingMore={loadingMore}
                 onFilterMode={setFilterMode}
                 onMarkAllRead={handleMarkAllRead}
                 onToggleFlag={handleToggleFlag}

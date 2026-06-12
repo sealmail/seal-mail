@@ -1,3 +1,4 @@
+import type { UIEvent } from "react";
 import { Seal } from "./Seal";
 import { TRUST_LABEL } from "../trust";
 import type { EmailMeta } from "../types";
@@ -13,7 +14,10 @@ interface Props {
   error: string | null;
   filterMode: "all" | "unread" | "flagged";
   unreadCount: number;
+  loadedCount: number;
+  totalCount: number;
   hasMore: boolean;
+  loadingMore: boolean;
   onFilterMode: (m: "all" | "unread" | "flagged") => void;
   onMarkAllRead: () => void;
   onToggleFlag: (m: EmailMeta) => void;
@@ -32,12 +36,21 @@ const BAR_COLOR: Record<string, string> = {
 };
 
 export function MailList(p: Props) {
+  function handleScroll(e: UIEvent<HTMLDivElement>) {
+    if (!p.hasMore || p.loadingMore || p.loading || p.error) return;
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 180) p.onLoadMore();
+  }
+
   return (
     <div className="list-pane" style={{ width: p.width }}>
       <div className="list-head">
         <span className="title">{p.title}</span>
         <span className="meta">
-          {p.syncing && <span>同步中…</span>}
+          {p.syncing && <span className="sync-dot" title="同步中" />}
+          <span className="cache-count" title="当前筛选显示 / 本地已缓存">
+            显示 {p.loadedCount.toLocaleString()} · 缓存 {p.totalCount.toLocaleString()}
+          </span>
           {p.unreadCount > 0 && (
             <button className="icon-btn" title="全部标为已读" onClick={p.onMarkAllRead}>
               ✓✓
@@ -49,17 +62,20 @@ export function MailList(p: Props) {
         </span>
       </div>
       <div className="list-filterbar">
-        <button className={`seg${p.filterMode === "all" ? " on" : ""}`} onClick={() => p.onFilterMode("all")}>
-          全部
-        </button>
-        <button className={`seg${p.filterMode === "unread" ? " on" : ""}`} onClick={() => p.onFilterMode("unread")}>
-          未读{p.unreadCount > 0 ? ` ${p.unreadCount}` : ""}
-        </button>
-        <button className={`seg${p.filterMode === "flagged" ? " on" : ""}`} onClick={() => p.onFilterMode("flagged")}>
-          ★ 星标
-        </button>
+        <div className="filter-segs">
+          <button className={`seg${p.filterMode === "all" ? " on" : ""}`} onClick={() => p.onFilterMode("all")}>
+            全部
+          </button>
+          <button className={`seg${p.filterMode === "unread" ? " on" : ""}`} onClick={() => p.onFilterMode("unread")}>
+            未读{p.unreadCount > 0 ? ` ${p.unreadCount}` : ""}
+          </button>
+          <button className={`seg${p.filterMode === "flagged" ? " on" : ""}`} onClick={() => p.onFilterMode("flagged")}>
+            ★ 星标
+          </button>
+        </div>
+        <span className="list-count">{p.hasMore ? "可继续加载" : "已缓存"}</span>
       </div>
-      <div className="list-scroll">
+      <div className="list-scroll" onScroll={handleScroll}>
         {p.loading && <div className="empty-pane">正在读取本地缓存…</div>}
         {!p.loading && p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
         {!p.loading && p.error && p.messages.length === 0 && (
@@ -88,12 +104,12 @@ export function MailList(p: Props) {
                 onClick={() => p.onSelect(m)}
                 onDoubleClick={() => p.onOpenWindow(m)}
               >
-                <div style={{ paddingTop: 2 }}>
+                <div className="mail-seal-cell">
                   <Seal trust={m.trust} size={28} />
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="mail-main">
                   <div className="top">
-                    {m.unread && <div className="unread-dot" />}
+                    <div className={`unread-dot${m.unread ? "" : " off"}`} />
                     <span className="from">{m.fromName}</span>
                     <button
                       className={`star-btn${m.flagged ? " on" : ""}`}
@@ -121,8 +137,8 @@ export function MailList(p: Props) {
             );
           })}
         {!p.loading && p.hasMore && (
-          <button className="load-more" onClick={p.onLoadMore}>
-            加载更早的邮件
+          <button className="load-more" onClick={p.onLoadMore} disabled={p.loadingMore}>
+            {p.loadingMore ? "正在加载…" : "加载更早的邮件"}
           </button>
         )}
       </div>

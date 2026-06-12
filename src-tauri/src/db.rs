@@ -10,7 +10,9 @@ use std::path::Path;
 /// 已读/删除状态回扫窗口（最近 N 封）
 pub const FLAG_SYNC_WINDOW: u32 = 200;
 /// 首次同步抓取的邮件数
-pub const INITIAL_WINDOW: u32 = 50;
+pub const INITIAL_WINDOW: u32 = 200;
+/// 用户继续向下翻页时，每次按需回填的更早邮件数
+pub const OLDER_WINDOW: u32 = 200;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS messages (
@@ -210,6 +212,15 @@ pub fn clear_folder(conn: &Connection, account: &str, folder: &str) -> Result<()
 pub fn max_uid(conn: &Connection, account: &str, folder: &str) -> Result<Option<u32>, String> {
     conn.query_row(
         "SELECT MAX(uid) FROM messages WHERE account_id=?1 AND folder=?2",
+        params![account, folder],
+        |r| r.get::<_, Option<u32>>(0),
+    )
+    .map_err(err)
+}
+
+pub fn min_uid(conn: &Connection, account: &str, folder: &str) -> Result<Option<u32>, String> {
+    conn.query_row(
+        "SELECT MIN(uid) FROM messages WHERE account_id=?1 AND folder=?2",
         params![account, folder],
         |r| r.get::<_, Option<u32>>(0),
     )

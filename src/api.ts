@@ -104,6 +104,11 @@ export async function syncMessages(accountId: string, folder: string): Promise<S
   return invoke("sync_messages", { accountId, folder });
 }
 
+/** 按需回填更早邮件（用户继续向下翻页时触发） */
+export async function syncOlderMessages(accountId: string, folder: string): Promise<SyncResult> {
+  return invoke("sync_older_messages", { accountId, folder });
+}
+
 export async function setFlagged(accountId: string, folder: string, uid: number, flagged: boolean): Promise<void> {
   return invoke("set_flagged", { accountId, folder, uid, flagged });
 }

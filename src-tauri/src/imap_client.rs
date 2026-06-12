@@ -311,6 +311,47 @@ pub fn sync_fetch(
     Ok(SyncFetch { uidvalidity, reset: false, new_mails, server_flags, flags_low: low })
 }
 
+/// 从当前本地最早 UID 之前继续回填更早邮件。返回值按服务器返回顺序排列。
+pub fn fetch_older(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    before_uid: Option<u32>,
+    batch: u32,
+) -> Result<Vec<RawMail>, String> {
+    let Some(before) = before_uid else { return Ok(Vec::new()) };
+    if before <= 1 || batch == 0 {
+        return Ok(Vec::new());
+    }
+    let mut sess = connect(account, secret)?;
+    sess.select(folder)
+        .map_err(|e| format!("无法打开目录 {}: {}", folder, e))?;
+
+    let probe = sess
+        .uid_fetch(format!("1:{}", before - 1), "UID")
+        .map_err(|e| format!("探测更早邮件失败: {}", e))?;
+    let mut uids: Vec<u32> = probe.iter().filter_map(|f| f.uid).filter(|u| *u < before).collect();
+    uids.sort_unstable_by(|a, b| b.cmp(a));
+    uids.truncate(batch as usize);
+    if uids.is_empty() {
+        let _ = sess.logout();
+        return Ok(Vec::new());
+    }
+    uids.sort_unstable();
+    let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    let fetches = sess
+        .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
+        .map_err(|e| format!("拉取更早邮件失败: {}", e))?;
+    let mut mails = Vec::new();
+    for f in fetches.iter() {
+        let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+        let (unread, flagged) = flags_of(f);
+        mails.push(RawMail { uid, unread, flagged, raw: raw.to_vec() });
+    }
+    let _ = sess.logout();
+    Ok(mails)
+}
+
 pub fn set_flagged(
     account: &Account,
     secret: &AccountSecret,

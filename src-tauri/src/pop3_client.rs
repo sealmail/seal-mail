@@ -161,6 +161,29 @@ pub fn sync_fetch(
     Ok(PopSync { new_mails, all_uidls })
 }
 
+/// POP3 没有目录分页语义；这里从尚未缓存的 UIDL 里取相对最新的一批。
+pub fn fetch_unknown_window(
+    account: &Account,
+    secret: &AccountSecret,
+    known: &std::collections::HashSet<String>,
+    batch: u32,
+) -> Result<PopSync, String> {
+    let mut c = Pop3Client::connect(account, secret)?;
+    let list = c.uidl()?;
+    let all_uidls: Vec<String> = list.iter().map(|(_, u)| u.clone()).collect();
+    let unknown: Vec<&(u32, String)> = list.iter().filter(|(_, u)| !known.contains(u)).collect();
+    let start = unknown.len().saturating_sub(batch as usize);
+    let mut new_mails = Vec::new();
+    for (seq, uidl) in &unknown[start..] {
+        match c.retrieve(*seq) {
+            Ok(raw) => new_mails.push((uidl.clone(), raw)),
+            Err(e) => eprintln!("[pop3] RETR {} 失败: {}", seq, e),
+        }
+    }
+    c.quit();
+    Ok(PopSync { new_mails, all_uidls })
+}
+
 /// 按 UIDL 拉取单封原文（附件下载用；seq 跨会话不稳定，必须用 uidl 定位）
 pub fn fetch_raw_by_uidl(account: &Account, secret: &AccountSecret, uidl: &str) -> Result<Vec<u8>, String> {
     let mut c = Pop3Client::connect(account, secret)?;

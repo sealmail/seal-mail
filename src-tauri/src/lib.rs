@@ -456,6 +456,88 @@ async fn sync_messages(
     }
 }
 
+/// 按需回填更早邮件：用户滚动/点击加载更多时调用。
+#[tauri::command]
+async fn sync_older_messages(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+) -> Result<SyncResult, String> {
+    let (account, trusted) = {
+        let s = state.inner.lock().unwrap();
+        let account = s.account(&account_id)?;
+        let trusted = s.trusted_for_verify(&account);
+        (account, trusted)
+    };
+    let secret = fresh_secret(&state, &account_id).await?;
+
+    match account.protocol {
+        IncomingProtocol::Imap => {
+            let before_uid = {
+                let s = state.inner.lock().unwrap();
+                db::min_uid(&s.db, &account_id, &folder)?
+            };
+            let acc2 = account.clone();
+            let f2 = folder.clone();
+            let mails = tauri::async_runtime::spawn_blocking(move || {
+                imap_client::fetch_older(&acc2, &secret, &f2, before_uid, db::OLDER_WINDOW)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+
+            let mut s = state.inner.lock().unwrap();
+            let mut added = 0u32;
+            for m in &mails {
+                let ts = match mail::parse_email(&m.raw, m.uid, &account_id, &folder, m.unread, m.flagged, &trusted) {
+                    Ok(full) => {
+                        s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
+                        full.meta.timestamp
+                    }
+                    Err(_) => 0,
+                };
+                db::upsert_message(&s.db, &account_id, &folder, m.uid, None, m.unread, m.flagged, ts, &m.raw)?;
+                added += 1;
+            }
+            if let Err(e) = s.save_contacts() {
+                eprintln!("[contacts] 保存失败: {}", e);
+            }
+            Ok(SyncResult { added, total: db::count(&s.db, &account_id, &folder)? })
+        }
+        IncomingProtocol::Pop3 => {
+            let known: std::collections::HashSet<String> = {
+                let s = state.inner.lock().unwrap();
+                db::pop_known_uidls(&s.db, &account_id)?
+                    .into_iter()
+                    .map(|(uidl, _, _)| uidl)
+                    .collect()
+            };
+            let acc2 = account.clone();
+            let known2 = known.clone();
+            let ps = tauri::async_runtime::spawn_blocking(move || {
+                pop3_client::fetch_unknown_window(&acc2, &secret, &known2, db::OLDER_WINDOW)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+
+            let mut s = state.inner.lock().unwrap();
+            let mut added = 0u32;
+            for (uidl, raw) in &ps.new_mails {
+                let uid = db::pop_next_uid(&s.db, &account_id)?;
+                let ts = match mail::parse_email(raw, uid, &account_id, "INBOX", true, false, &trusted) {
+                    Ok(full) => {
+                        s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
+                        full.meta.timestamp
+                    }
+                    Err(_) => 0,
+                };
+                db::upsert_message(&s.db, &account_id, "INBOX", uid, Some(uidl), true, false, ts, raw)?;
+                added += 1;
+            }
+            Ok(SyncResult { added, total: db::count(&s.db, &account_id, &folder)? })
+        }
+    }
+}
+
 #[tauri::command]
 fn get_message(
     state: State<'_, AppState>,
@@ -1037,6 +1119,7 @@ pub fn run() {
             create_folder,
             list_cached,
             sync_messages,
+            sync_older_messages,
             get_message,
             list_thread,
             move_message,
