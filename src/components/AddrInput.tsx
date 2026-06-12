@@ -58,7 +58,7 @@ export function AddrInput(p: Props) {
     .map((x) => x.trim())
     .filter(Boolean);
   const complete = /[,;，；\s]$/.test(p.value);
-  const lastLooksReady = !!addrs.at(-1)?.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
+  const lastLooksReady = !!addrs[addrs.length - 1]?.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
   const preview = complete || lastLooksReady ? addrs : addrs.slice(0, -1);
 
   function onKeyDown(e: React.KeyboardEvent) {
