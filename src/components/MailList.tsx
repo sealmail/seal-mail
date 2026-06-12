@@ -3,6 +3,7 @@ import { TRUST_LABEL } from "../trust";
 import type { EmailMeta } from "../types";
 
 interface Props {
+  width?: number;
   title: string;
   messages: EmailMeta[];
   selectedKey: string | null;
@@ -18,6 +19,7 @@ interface Props {
   onToggleFlag: (m: EmailMeta) => void;
   onLoadMore: () => void;
   onSelect: (m: EmailMeta) => void;
+  onOpenWindow: (m: EmailMeta) => void;
   onRefresh: () => void;
 }
 
@@ -31,11 +33,11 @@ const BAR_COLOR: Record<string, string> = {
 
 export function MailList(p: Props) {
   return (
-    <div className="list-pane">
+    <div className="list-pane" style={{ width: p.width }}>
       <div className="list-head">
         <span className="title">{p.title}</span>
         <span className="meta">
-          {p.syncing ? "同步中…" : `${p.messages.length} 封`}
+          {p.syncing && <span>同步中…</span>}
           {p.unreadCount > 0 && (
             <button className="icon-btn" title="全部标为已读" onClick={p.onMarkAllRead}>
               ✓✓
@@ -84,6 +86,7 @@ export function MailList(p: Props) {
                 className={`mail-row${selected ? " selected" : ""}${m.unread ? " unread" : ""}`}
                 style={{ borderLeftColor: selected ? BAR_COLOR[m.trust] : "transparent" }}
                 onClick={() => p.onSelect(m)}
+                onDoubleClick={() => p.onOpenWindow(m)}
               >
                 <div style={{ paddingTop: 2 }}>
                   <Seal trust={m.trust} size={28} />

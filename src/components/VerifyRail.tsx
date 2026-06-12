@@ -6,6 +6,7 @@ interface Props {
   mail: EmailFull | null;
   /** 展开完整面板；折叠时只显示图标条 */
   open: boolean;
+  width?: number;
   onToggle: () => void;
   onOpenProfile: () => void;
   onTrustSender: () => void;
@@ -26,12 +27,10 @@ export function VerifyRail(p: Props) {
         {p.mail && st ? (
           <>
             <Seal trust={p.mail.meta.trust} size={34} />
-            <div className="rail-mini-label" style={{ color: TONE_COLOR[st.tone] }}>
-              {st.title}
-            </div>
+            <div className="rail-mini-dot" style={{ background: TONE_COLOR[st.tone] }} />
           </>
         ) : (
-          <div className="rail-mini-label">验证面板</div>
+          <div className="rail-mini-placeholder">印</div>
         )}
         <div className="rail-toggle">‹</div>
       </div>
@@ -40,7 +39,7 @@ export function VerifyRail(p: Props) {
 
   if (!p.mail || !st) {
     return (
-      <div className="rail" style={{ background: "var(--bg-side)" }}>
+      <div className="rail" style={{ background: "var(--bg-side)", width: p.width }}>
         <button className="rail-collapse-btn" onClick={p.onToggle} title="收起验证面板">
           »
         </button>
@@ -52,7 +51,7 @@ export function VerifyRail(p: Props) {
   const canTrust = p.mail.verify.status === "signedUnknown";
 
   return (
-    <div className="rail" style={{ background: st.railBg }}>
+    <div className="rail" style={{ background: st.railBg, width: p.width }}>
       <button className="rail-collapse-btn" onClick={p.onToggle} title="收起验证面板">
         »
       </button>

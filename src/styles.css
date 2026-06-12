@@ -1,5 +1,5 @@
 /* ─── SealMail 信印 设计系统 ───
-   中性灰底 + 近黑文字；火漆青绿/朱红/金 做信任状态；
+   中性灰底 + 近黑文字；火漆青绿/朱红做信任状态；
    地址/指纹/哈希一律 IBM Plex Mono，UI 用 IBM Plex Sans，印章字 IBM Plex Serif */
 
 :root {
@@ -87,6 +87,7 @@ input, textarea, select { font-family: inherit; }
   background: var(--bg-warm);
   border-bottom: 1px solid var(--border);
 }
+.titlebar-left { width: 120px; flex-shrink: 0; }
 .brand { display: flex; align-items: center; gap: 9px; }
 .brand-seal {
   width: 18px; height: 18px; border-radius: 5px;
@@ -98,7 +99,7 @@ input, textarea, select { font-family: inherit; }
 .brand-name { font-weight: 600; font-size: 13.5px; color: var(--ink-2); letter-spacing: 0.2px; }
 .brand-cn { font-family: var(--serif); font-size: 13px; color: var(--mut); }
 
-.search-wrap { flex: 1; display: flex; justify-content: center; }
+.search-wrap { flex: 1; display: flex; justify-content: center; min-width: 220px; }
 .search {
   display: flex; align-items: center; gap: 8px;
   width: 340px; max-width: 42%; height: 28px; padding: 0 12px;
@@ -134,11 +135,22 @@ input, textarea, select { font-family: inherit; }
 .btn-ghost:hover { border-color: #b8bdb5; }
 
 .main { flex: 1; display: flex; min-height: 0; }
+.pane-resizer {
+  width: 7px; flex-shrink: 0; cursor: col-resize; position: relative;
+  background: transparent;
+}
+.pane-resizer::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px;
+  background: var(--border); transition: background 0.12s ease, width 0.12s ease, left 0.12s ease;
+}
+.pane-resizer:hover::after {
+  left: 2px; width: 3px; background: #9da99c;
+}
 
 /* ─── 侧栏 ─── */
 .sidebar {
-  width: 240px; flex-shrink: 0;
-  background: var(--bg-side); border-right: 1px solid var(--border);
+  width: 228px; flex-shrink: 0;
+  background: var(--bg-side);
   display: flex; flex-direction: column; padding: 14px 12px; gap: 4px; overflow-y: auto;
 }
 .identity-chip {
@@ -181,6 +193,10 @@ input, textarea, select { font-family: inherit; }
   background: var(--bg-active-deep); border-radius: 9px; padding: 1px 7px; min-width: 18px; text-align: center;
 }
 .side-item .count.red { color: var(--red); background: var(--red-bg); }
+.key-status {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--jade);
+  box-shadow: 0 0 0 3px rgba(8, 116, 67, 0.1); flex-shrink: 0;
+}
 
 .account-row { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 10px; border-radius: 8px; cursor: pointer; }
 .account-row:hover { background: #e1e6e0; }
@@ -200,7 +216,7 @@ input, textarea, select { font-family: inherit; }
 
 /* ─── 列表 ─── */
 .list-pane {
-  width: 348px; flex-shrink: 0; border-right: 1px solid var(--border);
+  width: 348px; flex-shrink: 0;
   display: flex; flex-direction: column; min-height: 0; background: var(--bg);
 }
 .list-head {
@@ -276,7 +292,7 @@ input, textarea, select { font-family: inherit; }
 }
 
 /* ─── 邮件正文 ─── */
-.msg-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.msg-pane { flex: 1; min-width: 420px; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
 .msg-scroll { flex: 1; overflow-y: auto; padding: 28px 34px 40px; }
 .msg-head { margin-bottom: 18px; }
 .msg-subject { font-size: 21px; font-weight: 600; color: var(--ink); line-height: 1.3; text-wrap: pretty; }
@@ -411,16 +427,22 @@ input, textarea, select { font-family: inherit; }
 
 /* ─── 验证栏 ─── */
 .rail {
-  width: 322px; flex-shrink: 0; border-left: 1px solid var(--border);
+  width: 288px; flex-shrink: 0;
   display: flex; flex-direction: column; min-height: 0; position: relative;
 }
 /* 折叠态：窄图标条，点击展开 */
 .rail-collapsed {
-  width: 54px; align-items: center; gap: 14px; padding-top: 22px; cursor: pointer;
+  width: 40px; align-items: center; gap: 12px; padding-top: 22px; cursor: pointer;
 }
 .rail-collapsed:hover .rail-toggle { color: var(--ink); }
-.rail-mini-label {
-  writing-mode: vertical-rl; font-size: 11px; font-weight: 700; letter-spacing: 3px; color: var(--gray);
+.rail-mini-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(18, 22, 19, 0.06);
+}
+.rail-mini-placeholder {
+  width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--border-2);
+  color: var(--mut-3); display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-size: 13px; background: rgba(255,255,255,.62);
 }
 .rail-toggle { color: var(--mut-4); font-size: 15px; line-height: 1; }
 .rail-collapse-btn {
@@ -639,3 +661,22 @@ input, textarea, select { font-family: inherit; }
   border-bottom: 1px solid var(--amber-border); padding: 6px 16px; text-align: center; flex-shrink: 0;
 }
 .demo-banner button { border: none; background: none; color: var(--amber); font-weight: 700; cursor: pointer; text-decoration: underline; font-size: 11.5px; }
+
+/* 独立邮件窗口 */
+.popout-shell {
+  height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink-2);
+}
+.popout-head {
+  flex-shrink: 0; padding: 22px 28px 18px; border-bottom: 1px solid var(--border);
+  background: var(--bg-warm);
+}
+.popout-subject {
+  font-size: 22px; font-weight: 700; color: var(--ink); line-height: 1.28; text-wrap: pretty;
+}
+.popout-from {
+  margin-top: 14px; display: flex; align-items: center; gap: 11px; min-width: 0;
+}
+.popout-from .msg-date { margin-left: auto; }
+.popout-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 24px 34px 40px;
+}

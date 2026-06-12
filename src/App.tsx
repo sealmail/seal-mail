@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
 import { FiltersModal } from "./components/FiltersModal";
+import { HtmlBody } from "./components/HtmlBody";
 import { KeysView } from "./components/KeysView";
 import { MailList } from "./components/MailList";
 import { MessageView } from "./components/MessageView";
@@ -13,6 +15,7 @@ import { RiskModal } from "./components/RiskModal";
 import { DraftsPane } from "./components/DraftsPane";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { VerifyRail } from "./components/VerifyRail";
+import { Seal } from "./components/Seal";
 import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
 
@@ -31,7 +34,99 @@ function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.uid}`;
 }
 
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function PaneResizer({
+  title,
+  onStart,
+  onDrag,
+}: {
+  title: string;
+  onStart: () => void;
+  onDrag: (deltaX: number) => void;
+}) {
+  function onPointerDown(e: React.PointerEvent) {
+    e.preventDefault();
+    onStart();
+    const startX = e.clientX;
+    const previousCursor = document.body.style.cursor;
+    const previousSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const move = (ev: PointerEvent) => onDrag(ev.clientX - startX);
+    const up = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousSelect;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  }
+
+  return <div className="pane-resizer" title={title} onPointerDown={onPointerDown} />;
+}
+
+function PopoutApp({ storageKey }: { storageKey: string }) {
+  const [mail] = useState<EmailFull | null>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return raw ? (JSON.parse(raw) as EmailFull) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
+
+  if (!mail) {
+    return (
+      <div className="popout-shell">
+        <div className="empty-pane">这封邮件窗口的数据已经过期，请从主窗口重新打开。</div>
+      </div>
+    );
+  }
+
+  const hasHtml = !!mail.bodyHtml;
+  const signed = mail.verify.status !== "unsigned";
+  const showHtml = hasHtml && (htmlMode ?? !signed);
+
+  return (
+    <div className="popout-shell">
+      <div className="popout-head">
+        <div className="popout-subject">{mail.meta.subject}</div>
+        <div className="popout-from">
+          <Seal trust={mail.meta.trust} size={28} />
+          <div style={{ minWidth: 0 }}>
+            <div className="msg-fromname">{mail.meta.fromName}</div>
+            <div className="msg-addr">{mail.meta.fromAddr}</div>
+          </div>
+          <span className="msg-date">{mail.meta.dateDisplay}</span>
+        </div>
+      </div>
+      <div className="popout-body">
+        {hasHtml && (
+          <div className="body-toolbar">
+            {signed && showHtml && <span className="body-note">签名校验针对纯文本正文，HTML 版式仅供参考</span>}
+            <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setHtmlMode(!showHtml)}>
+              {showHtml ? "查看纯文本" : "查看 HTML 版式"}
+            </button>
+          </div>
+        )}
+        {showHtml ? <HtmlBody html={mail.bodyHtml as string} /> : <div className="msg-body">{mail.bodyText || "(无正文)"}</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const popoutKey = new URLSearchParams(window.location.search).get("popout");
+  if (popoutKey) return <PopoutApp storageKey={popoutKey} />;
+  return <MailApp />;
+}
+
+function MailApp() {
   const [state, setState] = useState<AppStateView | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState("");
@@ -52,6 +147,18 @@ export default function App() {
   const [zoom, setZoom] = useState(() => {
     const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
     return Number.isFinite(z) && z >= 0.7 && z <= 1.6 ? z : 1;
+  });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const n = Number(localStorage.getItem("sealmail.sidebarWidth") ?? 228);
+    return Number.isFinite(n) ? clamp(n, 176, 280) : 228;
+  });
+  const [listWidth, setListWidth] = useState(() => {
+    const n = Number(localStorage.getItem("sealmail.listWidth") ?? 348);
+    return Number.isFinite(n) ? clamp(n, 300, 480) : 348;
+  });
+  const [railWidth, setRailWidth] = useState(() => {
+    const n = Number(localStorage.getItem("sealmail.railWidth") ?? 288);
+    return Number.isFinite(n) ? clamp(n, 240, 420) : 288;
   });
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -122,6 +229,9 @@ export default function App() {
   // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
   const PAGE = 50;
   const loadedRef = useRef(0);
+  const sidebarDragBase = useRef(sidebarWidth);
+  const listDragBase = useRef(listWidth);
+  const railDragBase = useRef(railWidth);
 
   const loadCached = useCallback(
     async (count: number) => {
@@ -211,6 +321,10 @@ export default function App() {
     localStorage.setItem("sealmail.zoom", String(zoom));
   }, [zoom]);
 
+  useEffect(() => localStorage.setItem("sealmail.sidebarWidth", String(sidebarWidth)), [sidebarWidth]);
+  useEffect(() => localStorage.setItem("sealmail.listWidth", String(listWidth)), [listWidth]);
+  useEffect(() => localStorage.setItem("sealmail.railWidth", String(railWidth)), [railWidth]);
+
   // ── 选中邮件 ──
   async function selectMail(m: EmailMeta) {
     try {
@@ -223,6 +337,29 @@ export default function App() {
         setMessages((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
         setInboxMetas((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
       }
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
+
+  async function openMailWindow(m: EmailMeta) {
+    try {
+      const full = await api.getMessage(m.accountId, m.folder, m.uid);
+      const key = `sealmail.popout.${m.accountId}.${m.folder}.${m.uid}.${Date.now()}`;
+      localStorage.setItem(key, JSON.stringify(full));
+      const label = `mail-${m.accountId}-${m.uid}-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+      const win = new WebviewWindow(label, {
+        url: `/?popout=${encodeURIComponent(key)}`,
+        title: full.meta.subject || "邮件",
+        width: 920,
+        height: 760,
+        minWidth: 680,
+        minHeight: 520,
+      });
+      win.once("tauri://created", () => {
+        if (m.unread) selectMail(m);
+      });
+      win.once("tauri://error", (e) => setListError(String(e.payload)));
     } catch (e) {
       setListError(String(e));
     }
@@ -536,11 +673,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="titlebar" data-tauri-drag-region>
-        <div className="brand" data-tauri-drag-region>
-          <div className="brand-seal" data-tauri-drag-region>印</div>
-          <span className="brand-name" data-tauri-drag-region>SealMail</span>
-          <span className="brand-cn" data-tauri-drag-region>信印</span>
-        </div>
+        <div className="titlebar-left" data-tauri-drag-region />
         <div className="search-wrap" data-tauri-drag-region>
           {hasAccounts && (
             <div className="search">
@@ -595,6 +728,7 @@ export default function App() {
       ) : (
         <div className="main">
           <Sidebar
+            width={sidebarWidth}
             identity={state?.identity ?? null}
             accounts={accounts}
             currentAccountId={accountId}
@@ -617,6 +751,13 @@ export default function App() {
             onAddAccount={() => setAccountModal(true)}
             onNewFolder={() => setNewFolderOpen(true)}
             onOpenFilters={() => setFiltersOpen(true)}
+          />
+          <PaneResizer
+            title="拖动调整侧栏宽度"
+            onStart={() => {
+              sidebarDragBase.current = sidebarWidth;
+            }}
+            onDrag={(dx) => setSidebarWidth(clamp(sidebarDragBase.current + dx, 176, 280))}
           />
 
           {view === "keys" ? (
@@ -647,6 +788,7 @@ export default function App() {
           ) : (
             <>
               <MailList
+                width={listWidth}
                 title={folderTitle}
                 messages={shownMessages}
                 selectedKey={selected ? mailKey(selected.meta) : null}
@@ -662,7 +804,15 @@ export default function App() {
                 onToggleFlag={handleToggleFlag}
                 onLoadMore={handleLoadMore}
                 onSelect={selectMail}
+                onOpenWindow={openMailWindow}
                 onRefresh={loadMessages}
+              />
+              <PaneResizer
+                title="拖动调整列表宽度"
+                onStart={() => {
+                  listDragBase.current = listWidth;
+                }}
+                onDrag={(dx) => setListWidth(clamp(listDragBase.current + dx, 300, 480))}
               />
               <MessageView
                 mail={selected}
@@ -682,9 +832,17 @@ export default function App() {
                 onMarkUnread={handleMarkUnread}
                 onToggleFlag={() => selected && handleToggleFlag(selected.meta)}
               />
+              <PaneResizer
+                title="拖动调整验证栏宽度"
+                onStart={() => {
+                  railDragBase.current = railWidth;
+                }}
+                onDrag={(dx) => setRailWidth(clamp(railDragBase.current - dx, 240, 420))}
+              />
               <VerifyRail
                 mail={selected}
                 open={railOpen}
+                width={railWidth}
                 onToggle={toggleRail}
                 onOpenProfile={() => setProfileOpen(true)}
                 onTrustSender={handleTrustSender}

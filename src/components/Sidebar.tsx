@@ -1,4 +1,3 @@
-import { shortFpr } from "../trust";
 import type { Account, FolderInfo, IdentityInfo } from "../types";
 
 export const RISK_FOLDER = "__risk__";
@@ -24,6 +23,7 @@ function folderIcon(name: string, display: string) {
 }
 
 interface Props {
+  width?: number;
   identity: IdentityInfo | null;
   accounts: Account[];
   currentAccountId: string;
@@ -44,19 +44,7 @@ interface Props {
 
 export function Sidebar(p: Props) {
   return (
-    <div className="sidebar">
-      <button className="identity-chip" onClick={p.onOpenKeys}>
-        <div className="row">
-          <div className="id-seal">印</div>
-          <div style={{ minWidth: 0 }}>
-            <div className="name">我的签名身份</div>
-            <div className="status">● {p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"}</div>
-          </div>
-        </div>
-        <div className="fpr">{p.identity ? shortFpr(p.identity.fingerprint) : "…"}</div>
-      </button>
-
-      <div style={{ height: 6 }} />
+    <div className="sidebar" style={{ width: p.width }}>
       <div className="side-label">邮箱</div>
       {p.folders.map((f) => {
         const active = p.view === "mail" && p.currentFolder === f.name;
@@ -109,6 +97,7 @@ export function Sidebar(p: Props) {
       <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
         <span className="icon">⊟</span>
         <span className="label">身份与密钥</span>
+        {p.identity && <span className="key-status" title={p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"} />}
       </button>
     </div>
   );
