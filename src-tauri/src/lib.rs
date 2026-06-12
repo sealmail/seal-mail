@@ -293,6 +293,38 @@ async fn create_folder(state: State<'_, AppState>, account_id: String, name: Str
     }
 }
 
+#[tauri::command]
+async fn delete_folder(state: State<'_, AppState>, account_id: String, name: String) -> Result<(), String> {
+    if name == "INBOX" || name == POP3_TRASH || name == POP3_ARCHIVE {
+        return Err("系统目录不能删除".into());
+    }
+    let account = {
+        let s = state.inner.lock().unwrap();
+        s.account(&account_id)?
+    };
+    match account.protocol {
+        IncomingProtocol::Imap => {
+            let secret = fresh_secret(&state, &account_id).await?;
+            let name_for_server = name.clone();
+            tauri::async_runtime::spawn_blocking(move || imap_client::delete_folder(&account, &secret, &name_for_server))
+                .await
+                .map_err(|e| e.to_string())??;
+            let mut s = state.inner.lock().unwrap();
+            db::clear_folder(&s.db, &account_id, &name)?;
+            s.mail_cache.retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
+            Ok(())
+        }
+        IncomingProtocol::Pop3 => {
+            let mut s = state.inner.lock().unwrap();
+            s.local_folders.retain(|f| f != &name);
+            s.save_local_folders()?;
+            db::clear_folder(&s.db, &account_id, &name)?;
+            s.mail_cache.retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
+            Ok(())
+        }
+    }
+}
+
 // ───────────────────────── messages ─────────────────────────
 
 /// POP3 本地虚拟回收站目录名
@@ -1121,6 +1153,7 @@ pub fn run() {
             remove_account,
             list_folders,
             create_folder,
+            delete_folder,
             list_cached,
             sync_messages,
             sync_older_messages,

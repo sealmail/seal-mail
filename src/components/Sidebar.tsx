@@ -39,6 +39,7 @@ interface Props {
   onOpenKeys: () => void;
   onAddAccount: () => void;
   onNewFolder: () => void;
+  onDeleteFolder: (folder: FolderInfo) => void;
   onOpenFilters: () => void;
 }
 
@@ -50,17 +51,31 @@ export function Sidebar(p: Props) {
         const active = p.view === "mail" && p.currentFolder === f.name;
         const isInbox = f.name === "INBOX";
         const isRisk = f.name === RISK_FOLDER;
+        const deletable = !f.role && ![UNIFIED_FOLDER, "INBOX", RISK_FOLDER, DRAFTS_FOLDER].includes(f.name);
         const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : f.name === DRAFTS_FOLDER ? p.draftCount : 0;
         return (
-          <button
-            key={f.name}
-            className={`side-item${active ? " active" : ""}`}
-            onClick={() => p.onSelectFolder(f.name)}
-          >
-            <span className="icon">{folderIcon(f.name, f.display)}</span>
-            <span className="label">{f.display}</span>
-            {count > 0 && <span className={`count${isRisk ? " red" : ""}`}>{count}</span>}
-          </button>
+          <div key={f.name} className="side-row">
+            <button
+              className={`side-item${active ? " active" : ""}${deletable ? " has-action" : ""}`}
+              onClick={() => p.onSelectFolder(f.name)}
+            >
+              <span className="icon">{folderIcon(f.name, f.display)}</span>
+              <span className="label">{f.display}</span>
+              {count > 0 && <span className={`count${isRisk ? " red" : ""}`}>{count}</span>}
+            </button>
+            {deletable && (
+              <button
+                className="side-action"
+                title={`删除目录 ${f.display}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  p.onDeleteFolder(f);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
         );
       })}
       <button className="side-add" onClick={p.onNewFolder}>

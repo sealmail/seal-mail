@@ -172,6 +172,8 @@ function MailApp() {
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderErr, setNewFolderErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [folderToDelete, setFolderToDelete] = useState<FolderInfo | null>(null);
+  const [deleteFolderErr, setDeleteFolderErr] = useState<string | null>(null);
 
   const fetchSeq = useRef(0);
   const selectSeq = useRef(0);
@@ -599,7 +601,7 @@ function MailApp() {
 
   // ── 全局键盘快捷键 ──
   const anyModalOpen =
-    composeOpen || accountModal || filtersOpen || profileOpen || riskOpen || newFolderOpen || confirmDelete;
+    composeOpen || accountModal || filtersOpen || profileOpen || riskOpen || newFolderOpen || confirmDelete || !!folderToDelete;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
@@ -716,6 +718,24 @@ function MailApp() {
     }
   }
 
+  async function handleDeleteFolder() {
+    if (!folderToDelete) return;
+    setDeleteFolderErr(null);
+    try {
+      await api.deleteFolder(accountId, folderToDelete.name);
+      const deletedCurrent = folder === folderToDelete.name;
+      if (deletedCurrent) {
+        setFolder("INBOX");
+        clearSelection();
+      }
+      await refreshFolders(accountId);
+      setFolderToDelete(null);
+      if (!deletedCurrent) await loadMessages();
+    } catch (e) {
+      setDeleteFolderErr(String(e));
+    }
+  }
+
   const ledgerMode = state?.identity.mode === "ledger";
   const accountLabels = useMemo(
     () => Object.fromEntries(accounts.map((a) => [a.id, a.email])),
@@ -803,6 +823,10 @@ function MailApp() {
             onOpenKeys={() => setView("keys")}
             onAddAccount={() => setAccountModal(true)}
             onNewFolder={() => setNewFolderOpen(true)}
+            onDeleteFolder={(f) => {
+              setDeleteFolderErr(null);
+              setFolderToDelete(f);
+            }}
             onOpenFilters={() => setFiltersOpen(true)}
           />
           <PaneResizer
@@ -962,6 +986,40 @@ function MailApp() {
                 onClick={() => doDelete(true)}
               >
                 永久删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {folderToDelete && (
+        <div className="overlay" onClick={() => setFolderToDelete(null)}>
+          <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span className="title">删除目录</span>
+              <button className="modal-close" onClick={() => setFolderToDelete(null)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
+              将删除目录「{folderToDelete.display}」。目录中的邮件也会随目录删除，
+              <b style={{ color: "#9A2C1D" }}>此操作无法撤销</b>。
+              {deleteFolderErr && (
+                <div className="form-error" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
+                  {deleteFolderErr}
+                </div>
+              )}
+            </div>
+            <div className="modal-foot">
+              <button className="btn-ghost" style={{ height: 40 }} onClick={() => setFolderToDelete(null)}>
+                取消
+              </button>
+              <button
+                className="btn-primary"
+                style={{ height: 40, background: "#9A2C1D" }}
+                onClick={handleDeleteFolder}
+              >
+                删除目录
               </button>
             </div>
           </div>

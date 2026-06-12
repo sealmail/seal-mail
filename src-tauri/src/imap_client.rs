@@ -396,6 +396,14 @@ pub fn create_folder(account: &Account, secret: &AccountSecret, name: &str) -> R
     Ok(())
 }
 
+pub fn delete_folder(account: &Account, secret: &AccountSecret, name: &str) -> Result<(), String> {
+    let mut sess = connect(account, secret)?;
+    sess.delete(name)
+        .map_err(|e| format!("删除目录失败: {}", e))?;
+    let _ = sess.logout();
+    Ok(())
+}
+
 pub fn move_message(
     account: &Account,
     secret: &AccountSecret,

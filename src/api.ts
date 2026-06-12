@@ -83,6 +83,10 @@ export async function createFolder(accountId: string, name: string): Promise<voi
   return invoke("create_folder", { accountId, name });
 }
 
+export async function deleteFolder(accountId: string, name: string): Promise<void> {
+  return invoke("delete_folder", { accountId, name });
+}
+
 // ── 邮件 ──
 export interface CachedList {
   metas: EmailMeta[];
