@@ -1,5 +1,7 @@
 //! 核心逻辑端到端测试：签名 → 构造真实 MIME → 解析 → 验证各信任状态。
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use encoding_rs::GB18030;
 use mail_builder::headers::raw::Raw;
 use mail_builder::MessageBuilder;
 use sealmail_lib::crypto::{self, Identity};
@@ -68,7 +70,8 @@ fn sign_then_verify_roundtrip() {
         body_hash: get(crypto::H_BODY_HASH),
     };
     // CRLF→LF 等规范化后应当一致
-    let (fpr, body_ok, _, _) = crypto::verify_headers(&h, "Hello Aria,\n\nPlease review the doc.").unwrap();
+    let (fpr, body_ok, _, _) =
+        crypto::verify_headers(&h, "Hello Aria,\n\nPlease review the doc.").unwrap();
     assert!(body_ok, "规范化后的正文哈希必须一致");
     assert_eq!(fpr, id.fingerprint());
 
@@ -94,12 +97,22 @@ fn sign_then_verify_roundtrip() {
 fn e2e_verified_mail() {
     let id = test_identity();
     let body = "Quarterly report attached.\nNumbers look good.";
-    let raw = build_raw("Mara Castellanos", "mara@aragon.eth", "Q2 Report", body, Some(&id));
+    let raw = build_raw(
+        "Mara Castellanos",
+        "mara@aragon.eth",
+        "Q2 Report",
+        body,
+        Some(&id),
+    );
     let trusted = trusted_for(&id, "Mara Castellanos", "mara@aragon.eth");
     let mail = parse_email(&raw, 1, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "verified");
     match mail.verify {
-        VerifyDetail::Verified { contact_name, verified_count, .. } => {
+        VerifyDetail::Verified {
+            contact_name,
+            verified_count,
+            ..
+        } => {
             assert_eq!(contact_name, "Mara Castellanos");
             assert_eq!(verified_count, 42);
         }
@@ -110,9 +123,58 @@ fn e2e_verified_mail() {
 #[test]
 fn e2e_signed_unknown_mail() {
     let id = test_identity();
-    let raw = build_raw("New Person", "new@startup.io", "Intro", "Hi, we just met.", Some(&id));
+    let raw = build_raw(
+        "New Person",
+        "new@startup.io",
+        "Intro",
+        "Hi, we just met.",
+        Some(&id),
+    );
     let mail = parse_email(&raw, 2, "acc1", "INBOX", true, false, &[]).unwrap();
     assert_eq!(mail.meta.trust, "signedUnknown");
+}
+
+#[test]
+fn decodes_legacy_chinese_mail_without_charset() {
+    let (from_name, _, _) = GB18030.encode("测试用户");
+    let (subject, _, _) = GB18030.encode("修改密码");
+    let (body, _, _) = GB18030.encode("两个点\r\nOK了\r\n");
+    let mut raw = Vec::new();
+    raw.extend_from_slice(b"From: ");
+    raw.extend_from_slice(&from_name);
+    raw.extend_from_slice(b" <f814326328@163.com>\r\n");
+    raw.extend_from_slice(b"To: molin@example.com\r\nSubject: ");
+    raw.extend_from_slice(&subject);
+    raw.extend_from_slice(
+        b"\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
+    raw.extend_from_slice(&body);
+
+    let mail = parse_email(&raw, 20, "acc1", "INBOX", true, false, &[]).unwrap();
+    assert_eq!(mail.meta.from_name, "测试用户");
+    assert_eq!(mail.meta.subject, "修改密码");
+    assert!(mail.body_text.contains("两个点"));
+    assert_eq!(mail.meta.preview, "两个点");
+    assert_eq!(mail.meta.lang, "ZH");
+}
+
+#[test]
+fn decodes_gbk_encoded_word_headers() {
+    let encode_word = |text: &str| {
+        let (bytes, _, _) = GB18030.encode(text);
+        format!("=?GBK?B?{}?=", STANDARD.encode(bytes))
+    };
+    let raw = format!(
+        "From: {} <f814326328@163.com>\r\nTo: molin@example.com\r\nSubject: {}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n账号 18223506701\r\n密码 fh2012008..\r\n",
+        encode_word("账号"),
+        encode_word("密码")
+    )
+    .into_bytes();
+
+    let mail = parse_email(&raw, 21, "acc1", "INBOX", true, false, &[]).unwrap();
+    assert_eq!(mail.meta.from_name, "账号");
+    assert_eq!(mail.meta.subject, "密码");
+    assert_eq!(mail.meta.preview, "账号 18223506701");
 }
 
 #[test]
@@ -123,7 +185,10 @@ fn parses_conversation_headers() {
         .subject("Re: Q2 Report")
         .header("Message-ID", Raw::new("<reply@example.com>"))
         .header("In-Reply-To", Raw::new("<root@example.com>"))
-        .header("References", Raw::new("<root@example.com> <middle@example.com>"))
+        .header(
+            "References",
+            Raw::new("<root@example.com> <middle@example.com>"),
+        )
         .text_body("Looks good.")
         .write_to_vec()
         .unwrap();
@@ -136,16 +201,35 @@ fn parses_conversation_headers() {
 fn e2e_tampered_mail() {
     let id = test_identity();
     let body = "The amount is 100 USD.";
-    let raw = build_raw("Mara Castellanos", "mara@aragon.eth", "Invoice", body, Some(&id));
+    let raw = build_raw(
+        "Mara Castellanos",
+        "mara@aragon.eth",
+        "Invoice",
+        body,
+        Some(&id),
+    );
     // 模拟传输中篡改正文（保持长度避免破坏 MIME 结构）
     let tampered = String::from_utf8(raw.clone())
         .unwrap()
         .replace("The amount is 100 USD.", "The amount is 999 USD.");
     let trusted = trusted_for(&id, "Mara Castellanos", "mara@aragon.eth");
-    let mail = parse_email(tampered.as_bytes(), 3, "acc1", "INBOX", true, false, &trusted).unwrap();
+    let mail = parse_email(
+        tampered.as_bytes(),
+        3,
+        "acc1",
+        "INBOX",
+        true,
+        false,
+        &trusted,
+    )
+    .unwrap();
     assert_eq!(mail.meta.trust, "tampered");
     match mail.verify {
-        VerifyDetail::Tampered { signed_hash, got_hash, .. } => assert_ne!(signed_hash, got_hash),
+        VerifyDetail::Tampered {
+            signed_hash,
+            got_hash,
+            ..
+        } => assert_ne!(signed_hash, got_hash),
         other => panic!("应为 Tampered，实际 {:?}", other),
     }
 }
@@ -165,7 +249,11 @@ fn e2e_impersonation_by_display_name() {
     let mail = parse_email(&raw, 4, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "impersonation");
     match mail.verify {
-        VerifyDetail::Impersonation { got_domain, real_domain, .. } => {
+        VerifyDetail::Impersonation {
+            got_domain,
+            real_domain,
+            ..
+        } => {
             assert_eq!(got_domain, "aragon-finance.io");
             assert_eq!(real_domain, "aragon.eth");
         }
@@ -195,7 +283,13 @@ fn e2e_impersonation_wrong_key_same_address() {
 
 #[test]
 fn e2e_unsigned_mail() {
-    let raw = build_raw("Yuki Tanaka", "yuki@kanso.jp", "こんにちは", "初めてご連絡いたします。", None);
+    let raw = build_raw(
+        "Yuki Tanaka",
+        "yuki@kanso.jp",
+        "こんにちは",
+        "初めてご連絡いたします。",
+        None,
+    );
     let mail = parse_email(&raw, 6, "acc1", "INBOX", false, false, &[]).unwrap();
     assert_eq!(mail.meta.trust, "unsigned");
     assert_eq!(mail.meta.lang, "JA");
@@ -241,7 +335,10 @@ fn eth_personal_sign_recover_roundtrip() {
     assert!(addr.starts_with("0x") && addr.len() == 42);
     // 同一密钥对另一条消息恢复出同一地址
     let sig2 = crypto::eth_personal_sign_with_key(&secret, b"other message").unwrap();
-    assert_eq!(crypto::eth_personal_recover(b"other message", &sig2).unwrap(), addr);
+    assert_eq!(
+        crypto::eth_personal_recover(b"other message", &sig2).unwrap(),
+        addr
+    );
     // 消息被篡改 → 恢复出的地址不同
     let addr_tampered = crypto::eth_personal_recover(b"tampered!", &sig).unwrap();
     assert_ne!(addr_tampered, addr);
@@ -252,7 +349,14 @@ fn e2e_eth_verified_mail() {
     let secret = [5u8; 32];
     let address = eth_address_of(&secret);
     let body = "Payload hash attached for co-signing.";
-    let raw = build_raw_eth("Mara Castellanos", "mara@aragon.eth", "Rotation", body, &secret, &address);
+    let raw = build_raw_eth(
+        "Mara Castellanos",
+        "mara@aragon.eth",
+        "Rotation",
+        body,
+        &secret,
+        &address,
+    );
 
     // 可信记录里登记的是 0x 地址
     let trusted = vec![TrustedContact {
@@ -266,7 +370,11 @@ fn e2e_eth_verified_mail() {
     let mail = parse_email(&raw, 10, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "verified");
     match mail.verify {
-        VerifyDetail::Verified { method, fingerprint, .. } => {
+        VerifyDetail::Verified {
+            method,
+            fingerprint,
+            ..
+        } => {
             assert_eq!(method, "Ledger · secp256k1");
             assert!(fingerprint.eq_ignore_ascii_case(&address));
         }
@@ -295,19 +403,30 @@ fn e2e_eth_tampered_mail() {
 fn eth_sign_rejects_wrong_address_binding() {
     // 设备返回的签名恢复出的地址与绑定地址不一致时必须报错（自检）
     let secret = [5u8; 32];
-    let err = crypto::sign_email_eth("0x0000000000000000000000000000000000000001", "a@b.c", "hi", |msg| {
-        crypto::eth_personal_sign_with_key(&secret, msg)
-    });
+    let err = crypto::sign_email_eth(
+        "0x0000000000000000000000000000000000000001",
+        "a@b.c",
+        "hi",
+        |msg| crypto::eth_personal_sign_with_key(&secret, msg),
+    );
     assert!(err.is_err());
 }
 
 #[test]
 fn risk_detection() {
     // 资金 + 紧急 → fund
-    let r = detect_risk("Approve transfer", "Please wire 250,000 USDC before end of day.").unwrap();
+    let r = detect_risk(
+        "Approve transfer",
+        "Please wire 250,000 USDC before end of day.",
+    )
+    .unwrap();
     assert_eq!(r.kind, "fund");
     // 索取助记词 → account（无需紧急词）
-    let r = detect_risk("Security check", "Please confirm your seed phrase to keep access.").unwrap();
+    let r = detect_risk(
+        "Security check",
+        "Please confirm your seed phrase to keep access.",
+    )
+    .unwrap();
     assert_eq!(r.kind, "account");
     // 合同 + 时限 → contract
     let r = detect_risk("MSA", "Please counter-sign the agreement immediately.").unwrap();
@@ -315,7 +434,11 @@ fn risk_detection() {
     // 普通邮件 → 无风险
     assert!(detect_risk("Lunch", "Want to grab lunch tomorrow?").is_none());
     // 资金但不紧急 → 不触发
-    assert!(detect_risk("Invoice archive", "Attached last year's payment records for bookkeeping.").is_none());
+    assert!(detect_risk(
+        "Invoice archive",
+        "Attached last year's payment records for bookkeeping."
+    )
+    .is_none());
 }
 
 #[test]
@@ -332,7 +455,11 @@ fn mk_mail(from_addr: &str, subject: &str, body: &str) -> EmailFull {
 
 #[test]
 fn filter_rules_match() {
-    let mail = mk_mail("billing@github.com", "Your receipt #1234", "Thanks for your purchase.");
+    let mail = mk_mail(
+        "billing@github.com",
+        "Your receipt #1234",
+        "Thanks for your purchase.",
+    );
     let mut rule = FilterRule {
         id: "r1".into(),
         name: "GitHub".into(),
@@ -388,7 +515,13 @@ fn e2e_self_signed_mail_is_verified() {
     };
 
     // 用本机身份给自己发信
-    let raw = build_raw("Molin", "me@example.com", "test", "self test\r\n", Some(&store.identity));
+    let raw = build_raw(
+        "Molin",
+        "me@example.com",
+        "test",
+        "self test\r\n",
+        Some(&store.identity),
+    );
 
     // 不注入本人身份：黄色 signedUnknown
     let plain = parse_email(&raw, 1, "a1", "INBOX", false, false, &store.trusted).unwrap();
@@ -399,7 +532,11 @@ fn e2e_self_signed_mail_is_verified() {
     let own = parse_email(&raw, 1, "a1", "INBOX", false, false, &trusted).unwrap();
     assert_eq!(own.meta.trust, "verified");
     match own.verify {
-        VerifyDetail::Verified { contact_name, fingerprint, .. } => {
+        VerifyDetail::Verified {
+            contact_name,
+            fingerprint,
+            ..
+        } => {
             assert_eq!(contact_name, "Molin（本人）");
             assert_eq!(fingerprint, store.identity.fingerprint());
         }

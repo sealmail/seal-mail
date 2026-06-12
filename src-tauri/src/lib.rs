@@ -80,7 +80,11 @@ async fn ledger_get_addresses(count: Option<u32>) -> Result<Vec<LedgerAccountRow
         let indices: Vec<u32> = (0..n).collect();
         ledger::get_addresses(&indices).map(|rows| {
             rows.into_iter()
-                .map(|(index, path, address)| LedgerAccountRow { index, path, address })
+                .map(|(index, path, address)| LedgerAccountRow {
+                    index,
+                    path,
+                    address,
+                })
                 .collect()
         })
     })
@@ -89,7 +93,11 @@ async fn ledger_get_addresses(count: Option<u32>) -> Result<Vec<LedgerAccountRow
 }
 
 #[tauri::command]
-fn bind_ledger(state: State<'_, AppState>, path: String, address: String) -> Result<IdentityInfo, String> {
+fn bind_ledger(
+    state: State<'_, AppState>,
+    path: String,
+    address: String,
+) -> Result<IdentityInfo, String> {
     let mut s = state.inner.lock().unwrap();
     s.identity_config = IdentityConfig {
         mode: "ledger".into(),
@@ -150,17 +158,25 @@ async fn oauth_begin_device(client_id: Option<String>) -> Result<oauth::DeviceFl
 }
 
 #[tauri::command]
-async fn oauth_poll_device(client_id: String, device_code: String) -> Result<oauth::DevicePoll, String> {
+async fn oauth_poll_device(
+    client_id: String,
+    device_code: String,
+) -> Result<oauth::DevicePoll, String> {
     oauth::poll_device(&client_id, &device_code).await
 }
 
 /// 取账户凭据；OAuth2 账户的 access_token 临近过期时先刷新并回写 secrets.json
-async fn fresh_secret(state: &State<'_, AppState>, account_id: &str) -> Result<AccountSecret, String> {
+async fn fresh_secret(
+    state: &State<'_, AppState>,
+    account_id: &str,
+) -> Result<AccountSecret, String> {
     let secret = {
         let s = state.inner.lock().unwrap();
         s.secret(account_id)?
     };
-    let Some(tokens) = &secret.oauth else { return Ok(secret) };
+    let Some(tokens) = &secret.oauth else {
+        return Ok(secret);
+    };
     if !tokens.needs_refresh() {
         return Ok(secret);
     }
@@ -211,7 +227,9 @@ async fn add_account(
         IncomingProtocol::Imap => imap_client::connect(&acc2, &sec2).map(|mut s| {
             let _ = s.logout();
         }),
-        IncomingProtocol::Pop3 => pop3_client::Pop3Client::connect(&acc2, &sec2).map(|mut c| c.quit()),
+        IncomingProtocol::Pop3 => {
+            pop3_client::Pop3Client::connect(&acc2, &sec2).map(|mut c| c.quit())
+        }
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -240,35 +258,55 @@ fn remove_account(state: State<'_, AppState>, account_id: String) -> Result<(), 
 // ───────────────────────── folders ─────────────────────────
 
 #[tauri::command]
-async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<Vec<FolderInfo>, String> {
+async fn list_folders(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<FolderInfo>, String> {
     let (account, local, hidden) = {
         let s = state.inner.lock().unwrap();
         (
             s.account(&account_id)?,
             s.local_folders.clone(),
-            s.hidden_folders.get(&account_id).cloned().unwrap_or_default(),
+            s.hidden_folders
+                .get(&account_id)
+                .cloned()
+                .unwrap_or_default(),
         )
     };
     let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
         IncomingProtocol::Imap => {
-            let mut folders = tauri::async_runtime::spawn_blocking(move || imap_client::list_folders(&account, &secret))
-                .await
-                .map_err(|e| e.to_string())??;
+            let mut folders = tauri::async_runtime::spawn_blocking(move || {
+                imap_client::list_folders(&account, &secret)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             folders.retain(|f| !hidden.contains(&f.name));
             Ok(folders)
         }
         IncomingProtocol::Pop3 => {
             // POP3 无服务器目录：内置一个本地「已删除」虚拟目录承接软删除
             let mut out = vec![
-                FolderInfo { name: "INBOX".into(), display: "收件箱".into(), role: None },
-                FolderInfo { name: POP3_TRASH.into(), display: "已删除".into(), role: Some("trash".into()) },
+                FolderInfo {
+                    name: "INBOX".into(),
+                    display: "收件箱".into(),
+                    role: None,
+                },
+                FolderInfo {
+                    name: POP3_TRASH.into(),
+                    display: "已删除".into(),
+                    role: Some("trash".into()),
+                },
             ];
             out.extend(
                 local
                     .into_iter()
                     .filter(|f| f != POP3_TRASH)
-                    .map(|f| FolderInfo { display: f.clone(), name: f, role: None }),
+                    .map(|f| FolderInfo {
+                        display: f.clone(),
+                        name: f,
+                        role: None,
+                    }),
             );
             Ok(out)
         }
@@ -276,18 +314,22 @@ async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<
 }
 
 #[tauri::command]
-async fn create_folder(state: State<'_, AppState>, account_id: String, name: String) -> Result<(), String> {
+async fn create_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+) -> Result<(), String> {
     let account = {
         let s = state.inner.lock().unwrap();
         s.account(&account_id)?
     };
     let secret = fresh_secret(&state, &account_id).await?;
     match account.protocol {
-        IncomingProtocol::Imap => {
-            tauri::async_runtime::spawn_blocking(move || imap_client::create_folder(&account, &secret, &name))
-                .await
-                .map_err(|e| e.to_string())?
-        }
+        IncomingProtocol::Imap => tauri::async_runtime::spawn_blocking(move || {
+            imap_client::create_folder(&account, &secret, &name)
+        })
+        .await
+        .map_err(|e| e.to_string())?,
         IncomingProtocol::Pop3 => {
             let mut s = state.inner.lock().unwrap();
             if !s.local_folders.contains(&name) {
@@ -300,7 +342,11 @@ async fn create_folder(state: State<'_, AppState>, account_id: String, name: Str
 }
 
 #[tauri::command]
-async fn delete_folder(state: State<'_, AppState>, account_id: String, name: String) -> Result<(), String> {
+async fn delete_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+) -> Result<(), String> {
     if name == "INBOX" || name == POP3_TRASH || name == POP3_ARCHIVE {
         return Err("系统目录不能删除".into());
     }
@@ -312,14 +358,17 @@ async fn delete_folder(state: State<'_, AppState>, account_id: String, name: Str
         IncomingProtocol::Imap => {
             let secret = fresh_secret(&state, &account_id).await?;
             let name_for_server = name.clone();
-            let delete_result = tauri::async_runtime::spawn_blocking(move || imap_client::delete_folder(&account, &secret, &name_for_server))
-                .await
-                .map_err(|e| e.to_string())?;
+            let delete_result = tauri::async_runtime::spawn_blocking(move || {
+                imap_client::delete_folder(&account, &secret, &name_for_server)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
             let mut s = state.inner.lock().unwrap();
             match delete_result {
                 Ok(()) => {
                     db::clear_folder(&s.db, &account_id, &name)?;
-                    s.mail_cache.retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
+                    s.mail_cache
+                        .retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
                 }
                 Err(_) => {
                     let hidden = s.hidden_folders.entry(account_id.clone()).or_default();
@@ -336,7 +385,8 @@ async fn delete_folder(state: State<'_, AppState>, account_id: String, name: Str
             s.local_folders.retain(|f| f != &name);
             s.save_local_folders()?;
             db::clear_folder(&s.db, &account_id, &name)?;
-            s.mail_cache.retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
+            s.mail_cache
+                .retain(|k, _| !k.starts_with(&format!("{account_id}/{name}/")));
             Ok(())
         }
     }
@@ -371,10 +421,19 @@ fn list_cached(
     let total = db::count(&s.db, &account_id, &folder)?;
     let mut metas = Vec::new();
     for r in rows {
-        match mail::parse_email(&r.raw, r.uid, &account_id, &folder, r.unread, r.flagged, &trusted) {
+        match mail::parse_email(
+            &r.raw,
+            r.uid,
+            &account_id,
+            &folder,
+            r.unread,
+            r.flagged,
+            &trusted,
+        ) {
             Ok(full) => {
                 metas.push(full.meta.clone());
-                s.mail_cache.insert(StoreData::cache_key(&account_id, &folder, r.uid), full);
+                s.mail_cache
+                    .insert(StoreData::cache_key(&account_id, &folder, r.uid), full);
             }
             Err(e) => eprintln!("[cache] 解析缓存邮件失败 uid={}: {}", r.uid, e),
         }
@@ -416,7 +475,15 @@ async fn sync_messages(
             };
             let (acc2, f2) = (account.clone(), folder.clone());
             let sf = tauri::async_runtime::spawn_blocking(move || {
-                imap_client::sync_fetch(&acc2, &secret, &f2, validity, max_uid, low, db::INITIAL_WINDOW)
+                imap_client::sync_fetch(
+                    &acc2,
+                    &secret,
+                    &f2,
+                    validity,
+                    max_uid,
+                    low,
+                    db::INITIAL_WINDOW,
+                )
             })
             .await
             .map_err(|e| e.to_string())??;
@@ -428,19 +495,44 @@ async fn sync_messages(
             db::set_uidvalidity(&s.db, &account_id, &folder, sf.uidvalidity)?;
             let mut added = 0u32;
             for m in &sf.new_mails {
-                let ts = match mail::parse_email(&m.raw, m.uid, &account_id, &folder, m.unread, m.flagged, &trusted) {
+                let ts = match mail::parse_email(
+                    &m.raw,
+                    m.uid,
+                    &account_id,
+                    &folder,
+                    m.unread,
+                    m.flagged,
+                    &trusted,
+                ) {
                     Ok(full) => {
-                        s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
+                        s.upsert_contact(
+                            &full.meta.from_name,
+                            &full.meta.from_addr,
+                            full.meta.timestamp,
+                        );
                         full.meta.timestamp
                     }
                     Err(_) => 0,
                 };
-                db::upsert_message(&s.db, &account_id, &folder, m.uid, None, m.unread, m.flagged, ts, &m.raw)?;
+                db::upsert_message(
+                    &s.db,
+                    &account_id,
+                    &folder,
+                    m.uid,
+                    None,
+                    m.unread,
+                    m.flagged,
+                    ts,
+                    &m.raw,
+                )?;
                 added += 1;
             }
             if !sf.reset {
-                let server: std::collections::HashMap<u32, (bool, bool)> =
-                    sf.server_flags.iter().map(|(u, a, b)| (*u, (*a, *b))).collect();
+                let server: std::collections::HashMap<u32, (bool, bool)> = sf
+                    .server_flags
+                    .iter()
+                    .map(|(u, a, b)| (*u, (*a, *b)))
+                    .collect();
                 for uid in db::uids_from(&s.db, &account_id, &folder, sf.flags_low)? {
                     match server.get(&uid) {
                         Some((unread, flagged)) => {
@@ -449,7 +541,8 @@ async fn sync_messages(
                         None => {
                             // 服务器上已不存在（被其他客户端删除/移动）
                             db::delete_row(&s.db, &account_id, &folder, uid)?;
-                            s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+                            s.mail_cache
+                                .remove(&StoreData::cache_key(&account_id, &folder, uid));
                         }
                     }
                 }
@@ -457,7 +550,10 @@ async fn sync_messages(
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
             }
-            Ok(SyncResult { added, total: db::count(&s.db, &account_id, &folder)? })
+            Ok(SyncResult {
+                added,
+                total: db::count(&s.db, &account_id, &folder)?,
+            })
         }
         IncomingProtocol::Pop3 => {
             let known: std::collections::HashSet<String> = {
@@ -479,14 +575,36 @@ async fn sync_messages(
             let mut added = 0u32;
             for (uidl, raw) in &ps.new_mails {
                 let uid = db::pop_next_uid(&s.db, &account_id)?;
-                let ts = match mail::parse_email(raw, uid, &account_id, "INBOX", true, false, &trusted) {
+                let ts = match mail::parse_email(
+                    raw,
+                    uid,
+                    &account_id,
+                    "INBOX",
+                    true,
+                    false,
+                    &trusted,
+                ) {
                     Ok(full) => {
-                        s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
+                        s.upsert_contact(
+                            &full.meta.from_name,
+                            &full.meta.from_addr,
+                            full.meta.timestamp,
+                        );
                         full.meta.timestamp
                     }
                     Err(_) => 0,
                 };
-                db::upsert_message(&s.db, &account_id, "INBOX", uid, Some(uidl), true, false, ts, raw)?;
+                db::upsert_message(
+                    &s.db,
+                    &account_id,
+                    "INBOX",
+                    uid,
+                    Some(uidl),
+                    true,
+                    false,
+                    ts,
+                    raw,
+                )?;
                 added += 1;
             }
             // 服务器侧删除检测（跨所有本地目录）
@@ -494,13 +612,17 @@ async fn sync_messages(
             for (uidl, fld, uid) in db::pop_known_uidls(&s.db, &account_id)? {
                 if !server.contains(&uidl) {
                     db::delete_row(&s.db, &account_id, &fld, uid)?;
-                    s.mail_cache.remove(&StoreData::cache_key(&account_id, &fld, uid));
+                    s.mail_cache
+                        .remove(&StoreData::cache_key(&account_id, &fld, uid));
                 }
             }
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
             }
-            Ok(SyncResult { added, total: db::count(&s.db, &account_id, &folder)? })
+            Ok(SyncResult {
+                added,
+                total: db::count(&s.db, &account_id, &folder)?,
+            })
         }
     }
 }
@@ -537,20 +659,45 @@ async fn sync_older_messages(
             let mut s = state.inner.lock().unwrap();
             let mut added = 0u32;
             for m in &mails {
-                let ts = match mail::parse_email(&m.raw, m.uid, &account_id, &folder, m.unread, m.flagged, &trusted) {
+                let ts = match mail::parse_email(
+                    &m.raw,
+                    m.uid,
+                    &account_id,
+                    &folder,
+                    m.unread,
+                    m.flagged,
+                    &trusted,
+                ) {
                     Ok(full) => {
-                        s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
+                        s.upsert_contact(
+                            &full.meta.from_name,
+                            &full.meta.from_addr,
+                            full.meta.timestamp,
+                        );
                         full.meta.timestamp
                     }
                     Err(_) => 0,
                 };
-                db::upsert_message(&s.db, &account_id, &folder, m.uid, None, m.unread, m.flagged, ts, &m.raw)?;
+                db::upsert_message(
+                    &s.db,
+                    &account_id,
+                    &folder,
+                    m.uid,
+                    None,
+                    m.unread,
+                    m.flagged,
+                    ts,
+                    &m.raw,
+                )?;
                 added += 1;
             }
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
             }
-            Ok(SyncResult { added, total: db::count(&s.db, &account_id, &folder)? })
+            Ok(SyncResult {
+                added,
+                total: db::count(&s.db, &account_id, &folder)?,
+            })
         }
         IncomingProtocol::Pop3 => {
             let known: std::collections::HashSet<String> = {
@@ -572,17 +719,42 @@ async fn sync_older_messages(
             let mut added = 0u32;
             for (uidl, raw) in &ps.new_mails {
                 let uid = db::pop_next_uid(&s.db, &account_id)?;
-                let ts = match mail::parse_email(raw, uid, &account_id, "INBOX", true, false, &trusted) {
+                let ts = match mail::parse_email(
+                    raw,
+                    uid,
+                    &account_id,
+                    "INBOX",
+                    true,
+                    false,
+                    &trusted,
+                ) {
                     Ok(full) => {
-                        s.upsert_contact(&full.meta.from_name, &full.meta.from_addr, full.meta.timestamp);
+                        s.upsert_contact(
+                            &full.meta.from_name,
+                            &full.meta.from_addr,
+                            full.meta.timestamp,
+                        );
                         full.meta.timestamp
                     }
                     Err(_) => 0,
                 };
-                db::upsert_message(&s.db, &account_id, "INBOX", uid, Some(uidl), true, false, ts, raw)?;
+                db::upsert_message(
+                    &s.db,
+                    &account_id,
+                    "INBOX",
+                    uid,
+                    Some(uidl),
+                    true,
+                    false,
+                    ts,
+                    raw,
+                )?;
                 added += 1;
             }
-            Ok(SyncResult { added, total: db::count(&s.db, &account_id, &folder)? })
+            Ok(SyncResult {
+                added,
+                total: db::count(&s.db, &account_id, &folder)?,
+            })
         }
     }
 }
@@ -606,7 +778,15 @@ fn get_message(
             .ok_or("邮件不在本地缓存中，请刷新列表")?;
         (trusted, row)
     };
-    let full = mail::parse_email(&row.raw, uid, &account_id, &folder, row.unread, row.flagged, &trusted)?;
+    let full = mail::parse_email(
+        &row.raw,
+        uid,
+        &account_id,
+        &folder,
+        row.unread,
+        row.flagged,
+        &trusted,
+    )?;
     let mut s = state.inner.lock().unwrap();
     s.mail_cache.insert(key, full.clone());
     Ok(full)
@@ -625,10 +805,19 @@ fn list_thread(
     let trusted = s.trusted_for_verify(&account);
     let mut metas = Vec::new();
     for r in db::list_folder(&s.db, &account_id, &folder)? {
-        match mail::parse_email(&r.raw, r.uid, &account_id, &folder, r.unread, r.flagged, &trusted) {
+        match mail::parse_email(
+            &r.raw,
+            r.uid,
+            &account_id,
+            &folder,
+            r.unread,
+            r.flagged,
+            &trusted,
+        ) {
             Ok(full) if full.meta.thread_id == thread_id => {
                 metas.push(full.meta.clone());
-                s.mail_cache.insert(StoreData::cache_key(&account_id, &folder, r.uid), full);
+                s.mail_cache
+                    .insert(StoreData::cache_key(&account_id, &folder, r.uid), full);
             }
             Ok(_) => {}
             Err(e) => eprintln!("[thread] 解析缓存邮件失败 uid={}: {}", r.uid, e),
@@ -662,15 +851,20 @@ async fn move_message(
             // 服务器移动后邮件在目标目录会拿到新 UID，本地行删除，目标目录下次同步补齐
             let mut s = state.inner.lock().unwrap();
             db::delete_row(&s.db, &account_id, &folder, uid)?;
-            s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+            s.mail_cache
+                .remove(&StoreData::cache_key(&account_id, &folder, uid));
         }
         IncomingProtocol::Pop3 => {
             // POP3 目录纯本地：直接改归属
             let mut s = state.inner.lock().unwrap();
             db::set_folder(&s.db, &account_id, &folder, uid, &target)?;
-            if let Some(mut full) = s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid)) {
+            if let Some(mut full) =
+                s.mail_cache
+                    .remove(&StoreData::cache_key(&account_id, &folder, uid))
+            {
                 full.meta.folder = target.clone();
-                s.mail_cache.insert(StoreData::cache_key(&account_id, &target, uid), full);
+                s.mail_cache
+                    .insert(StoreData::cache_key(&account_id, &target, uid), full);
             }
         }
     }
@@ -701,7 +895,8 @@ async fn archive_message(
             if !target.eq_ignore_ascii_case(&folder) {
                 let mut s = state.inner.lock().unwrap();
                 db::delete_row(&s.db, &account_id, &folder, uid)?;
-                s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+                s.mail_cache
+                    .remove(&StoreData::cache_key(&account_id, &folder, uid));
             }
         }
         IncomingProtocol::Pop3 => {
@@ -711,9 +906,13 @@ async fn archive_message(
                 s.save_local_folders()?;
             }
             db::set_folder(&s.db, &account_id, &folder, uid, POP3_ARCHIVE)?;
-            if let Some(mut full) = s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid)) {
+            if let Some(mut full) =
+                s.mail_cache
+                    .remove(&StoreData::cache_key(&account_id, &folder, uid))
+            {
                 full.meta.folder = POP3_ARCHIVE.into();
-                s.mail_cache.insert(StoreData::cache_key(&account_id, POP3_ARCHIVE, uid), full);
+                s.mail_cache
+                    .insert(StoreData::cache_key(&account_id, POP3_ARCHIVE, uid), full);
             }
         }
     }
@@ -743,7 +942,10 @@ async fn set_read(
     }
     let mut s = state.inner.lock().unwrap();
     db::set_unread(&s.db, &account_id, &folder, &[uid], !read)?;
-    if let Some(full) = s.mail_cache.get_mut(&StoreData::cache_key(&account_id, &folder, uid)) {
+    if let Some(full) = s
+        .mail_cache
+        .get_mut(&StoreData::cache_key(&account_id, &folder, uid))
+    {
         full.meta.unread = !read;
     }
     Ok(())
@@ -774,7 +976,10 @@ async fn mark_read(
     let mut s = state.inner.lock().unwrap();
     db::set_unread(&s.db, &account_id, &folder, &uids, !read)?;
     for uid in &uids {
-        if let Some(full) = s.mail_cache.get_mut(&StoreData::cache_key(&account_id, &folder, *uid)) {
+        if let Some(full) = s
+            .mail_cache
+            .get_mut(&StoreData::cache_key(&account_id, &folder, *uid))
+        {
             full.meta.unread = !read;
         }
     }
@@ -805,7 +1010,10 @@ async fn set_flagged(
     }
     let mut s = state.inner.lock().unwrap();
     db::set_flagged(&s.db, &account_id, &folder, uid, flagged)?;
-    if let Some(full) = s.mail_cache.get_mut(&StoreData::cache_key(&account_id, &folder, uid)) {
+    if let Some(full) = s
+        .mail_cache
+        .get_mut(&StoreData::cache_key(&account_id, &folder, uid))
+    {
         full.meta.flagged = flagged;
     }
     Ok(())
@@ -836,7 +1044,8 @@ async fn delete_message(
             .map_err(|e| e.to_string())??;
             let mut s = state.inner.lock().unwrap();
             db::delete_row(&s.db, &account_id, &folder, uid)?;
-            s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+            s.mail_cache
+                .remove(&StoreData::cache_key(&account_id, &folder, uid));
         }
         IncomingProtocol::Pop3 => {
             if permanent {
@@ -853,12 +1062,14 @@ async fn delete_message(
                 .map_err(|e| e.to_string())??;
                 let mut s = state.inner.lock().unwrap();
                 db::delete_row(&s.db, &account_id, &folder, uid)?;
-                s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+                s.mail_cache
+                    .remove(&StoreData::cache_key(&account_id, &folder, uid));
             } else {
                 // 软删除：归入本地「已删除」虚拟目录
                 let mut s = state.inner.lock().unwrap();
                 db::set_folder(&s.db, &account_id, &folder, uid, POP3_TRASH)?;
-                s.mail_cache.remove(&StoreData::cache_key(&account_id, &folder, uid));
+                s.mail_cache
+                    .remove(&StoreData::cache_key(&account_id, &folder, uid));
             }
         }
     }
@@ -942,8 +1153,12 @@ async fn send_mail(
         let signer = if !sign {
             smtp_client::Signer::None
         } else if id_cfg.mode == "ledger" {
-            let path = id_cfg.ledger_path.ok_or("Ledger 未绑定派生路径，请在「身份与密钥」重新绑定")?;
-            let address = id_cfg.ledger_address.ok_or("Ledger 未绑定地址，请在「身份与密钥」重新绑定")?;
+            let path = id_cfg
+                .ledger_path
+                .ok_or("Ledger 未绑定派生路径，请在「身份与密钥」重新绑定")?;
+            let address = id_cfg
+                .ledger_address
+                .ok_or("Ledger 未绑定地址，请在「身份与密钥」重新绑定")?;
             smtp_client::Signer::Ledger { path, address }
         } else {
             smtp_client::Signer::Local(&identity)
@@ -974,7 +1189,11 @@ fn list_contacts(state: State<'_, AppState>, query: Option<String>) -> Vec<Conta
     let mut list: Vec<&Contact> = s
         .contacts
         .values()
-        .filter(|c| q.is_empty() || c.email.to_lowercase().contains(&q) || c.name.to_lowercase().contains(&q))
+        .filter(|c| {
+            q.is_empty()
+                || c.email.to_lowercase().contains(&q)
+                || c.name.to_lowercase().contains(&q)
+        })
         .collect();
     list.sort_by(|a, b| b.count.cmp(&a.count).then(b.last_seen.cmp(&a.last_seen)));
     list.into_iter().take(8).cloned().collect()
@@ -1012,7 +1231,10 @@ fn delete_draft(state: State<'_, AppState>, id: String) -> Result<(), String> {
 // ───────────────────────── filters ─────────────────────────
 
 #[tauri::command]
-fn save_filter(state: State<'_, AppState>, mut rule: FilterRule) -> Result<Vec<FilterRule>, String> {
+fn save_filter(
+    state: State<'_, AppState>,
+    mut rule: FilterRule,
+) -> Result<Vec<FilterRule>, String> {
     let mut s = state.inner.lock().unwrap();
     if rule.id.is_empty() {
         rule.id = gen_id();
@@ -1040,7 +1262,10 @@ struct ApplyResult {
 
 /// 对收件箱执行所有过滤规则：匹配则移动到目标目录
 #[tauri::command]
-async fn apply_filters(state: State<'_, AppState>, account_id: String) -> Result<ApplyResult, String> {
+async fn apply_filters(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<ApplyResult, String> {
     // 先增量同步收件箱，再对本地缓存的最近邮件跑规则
     sync_messages(state.clone(), account_id.clone(), "INBOX".into()).await?;
     let (rules, mails) = {
@@ -1050,7 +1275,16 @@ async fn apply_filters(state: State<'_, AppState>, account_id: String) -> Result
         let mails: Vec<EmailFull> = db::list(&s.db, &account_id, "INBOX", 0, 200)?
             .iter()
             .filter_map(|r| {
-                mail::parse_email(&r.raw, r.uid, &account_id, "INBOX", r.unread, r.flagged, &trusted).ok()
+                mail::parse_email(
+                    &r.raw,
+                    r.uid,
+                    &account_id,
+                    "INBOX",
+                    r.unread,
+                    r.flagged,
+                    &trusted,
+                )
+                .ok()
             })
             .collect();
         (s.filters.clone(), mails)
@@ -1068,7 +1302,14 @@ async fn apply_filters(state: State<'_, AppState>, account_id: String) -> Result
             )
             .await?;
             if rule.mark_read {
-                let _ = set_read(state.clone(), account_id.clone(), rule.target_folder.clone(), mail.meta.uid, true).await;
+                let _ = set_read(
+                    state.clone(),
+                    account_id.clone(),
+                    rule.target_folder.clone(),
+                    mail.meta.uid,
+                    true,
+                )
+                .await;
             }
             details.push(format!("「{}」→ {}", mail.meta.subject, rule.target_folder));
             moved += 1;
@@ -1102,7 +1343,10 @@ fn trust_sender(
 }
 
 #[tauri::command]
-fn remove_trusted(state: State<'_, AppState>, email: String) -> Result<Vec<TrustedContact>, String> {
+fn remove_trusted(
+    state: State<'_, AppState>,
+    email: String,
+) -> Result<Vec<TrustedContact>, String> {
     let mut s = state.inner.lock().unwrap();
     s.trusted.retain(|t| !t.email.eq_ignore_ascii_case(&email));
     s.save_trusted()?;
@@ -1147,12 +1391,11 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let dir = app
-                .path()
-                .app_config_dir()
-                .expect("无法获取应用配置目录");
+            let dir = app.path().app_config_dir().expect("无法获取应用配置目录");
             let data = StoreData::load(dir).expect("初始化本地存储失败");
-            app.manage(AppState { inner: std::sync::Mutex::new(data) });
+            app.manage(AppState {
+                inner: std::sync::Mutex::new(data),
+            });
             // 启动新邮件监听（IMAP IDLE / POP3 轮询）
             watcher::ensure_watchers(&app.handle().clone());
             Ok(())

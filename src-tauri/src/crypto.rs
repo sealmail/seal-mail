@@ -67,9 +67,13 @@ pub fn load_or_create_identity(dir: &Path) -> Result<Identity, String> {
     let signing_key = SigningKey::from_bytes(&seed);
     let created = chrono::Utc::now().to_rfc3339();
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    fs::write(&key_path, format!("{}\n{}\n", B64.encode(seed), created)).map_err(|e| e.to_string())?;
+    fs::write(&key_path, format!("{}\n{}\n", B64.encode(seed), created))
+        .map_err(|e| e.to_string())?;
     restrict_perms(&key_path);
-    Ok(Identity { signing_key, created })
+    Ok(Identity {
+        signing_key,
+        created,
+    })
 }
 
 pub fn restrict_perms(path: &Path) {
@@ -163,8 +167,8 @@ pub fn eth_personal_recover(message: &[u8], sig_rsv: &[u8; 65]) -> Result<String
     let v = sig_rsv[64];
     let recid = RecoveryId::try_from((if v >= 27 { v - 27 } else { v }) & 1)
         .map_err(|_| "签名恢复位无效")?;
-    let vk = K256Vk::recover_from_prehash(&digest, &sig, recid)
-        .map_err(|_| "无法从签名恢复公钥")?;
+    let vk =
+        K256Vk::recover_from_prehash(&digest, &sig, recid).map_err(|_| "无法从签名恢复公钥")?;
 
     let point = vk.to_encoded_point(false);
     let mut h = Keccak256::new();
@@ -201,14 +205,18 @@ pub struct SealHeaders {
 }
 
 /// 验证签名头。返回 Ok((fingerprint, body_hash_matches, signed_hash, got_hash, signed_from))
-pub fn verify_headers(h: &SealHeaders, actual_body: &str) -> Result<(String, bool, String, String), String> {
+pub fn verify_headers(
+    h: &SealHeaders,
+    actual_body: &str,
+) -> Result<(String, bool, String, String), String> {
     let pk_bytes = B64.decode(h.pubkey.trim()).map_err(|_| "公钥格式错误")?;
     let pk_arr: [u8; 32] = pk_bytes.try_into().map_err(|_| "公钥长度错误")?;
     let vk = VerifyingKey::from_bytes(&pk_arr).map_err(|_| "公钥无效")?;
     let sig_bytes = B64.decode(h.signature.trim()).map_err(|_| "签名格式错误")?;
     let sig = Signature::from_slice(&sig_bytes).map_err(|_| "签名长度错误")?;
     let canon = canon_string(&h.from, &h.date, &h.body_hash);
-    vk.verify(canon.as_bytes(), &sig).map_err(|_| "签名校验失败")?;
+    vk.verify(canon.as_bytes(), &sig)
+        .map_err(|_| "签名校验失败")?;
     let got = body_hash_hex(actual_body);
     let matches = got == h.body_hash.trim().to_lowercase();
     Ok((fingerprint_of(&vk), matches, h.body_hash.clone(), got))

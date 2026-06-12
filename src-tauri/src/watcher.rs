@@ -29,7 +29,10 @@ pub fn ensure_watchers(app: &AppHandle) {
     let accounts: Vec<(String, IncomingProtocol)> = {
         let state = app.state::<AppState>();
         let s = state.inner.lock().unwrap();
-        s.accounts.iter().map(|a| (a.id.clone(), a.protocol.clone())).collect()
+        s.accounts
+            .iter()
+            .map(|a| (a.id.clone(), a.protocol.clone()))
+            .collect()
     };
     for (id, protocol) in accounts {
         if !running().lock().unwrap().insert(id.clone()) {
@@ -80,7 +83,13 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32) {
     } else {
         format!("{} 收到新邮件", email)
     };
-    if let Err(e) = app.notification().builder().title("SealMail 信印").body(body).show() {
+    if let Err(e) = app
+        .notification()
+        .builder()
+        .title("SealMail 信印")
+        .body(body)
+        .show()
+    {
         eprintln!("[watcher] 系统通知发送失败: {}", e);
     }
 }
@@ -105,7 +114,9 @@ fn creds(app: &AppHandle, account_id: &str) -> Result<Option<(Account, AccountSe
     let refreshed = oauth::refresh_tokens_blocking(&tokens)?;
     let s2 = app.state::<AppState>();
     let mut s = s2.inner.lock().unwrap();
-    let Some(entry) = s.secrets.get_mut(account_id) else { return Ok(None) };
+    let Some(entry) = s.secrets.get_mut(account_id) else {
+        return Ok(None);
+    };
     entry.oauth = Some(refreshed);
     let updated = entry.clone();
     s.save_secrets()?;
@@ -180,16 +191,18 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
         match creds(app, account_id) {
             Ok(None) => return,
             Err(e) => eprintln!("[watcher] {} 取凭据失败: {}", account_id, e),
-            Ok(Some((account, secret))) => match pop3_client::Pop3Client::connect(&account, &secret) {
-                Ok(mut c) => {
-                    match c.message_count() {
-                        Ok(n) => check_exists(app, account_id, n, &mut last),
-                        Err(e) => eprintln!("[watcher] {} POP3 STAT 失败: {}", account_id, e),
+            Ok(Some((account, secret))) => {
+                match pop3_client::Pop3Client::connect(&account, &secret) {
+                    Ok(mut c) => {
+                        match c.message_count() {
+                            Ok(n) => check_exists(app, account_id, n, &mut last),
+                            Err(e) => eprintln!("[watcher] {} POP3 STAT 失败: {}", account_id, e),
+                        }
+                        c.quit();
                     }
-                    c.quit();
+                    Err(e) => eprintln!("[watcher] {} POP3 连接失败: {}", account_id, e),
                 }
-                Err(e) => eprintln!("[watcher] {} POP3 连接失败: {}", account_id, e),
-            },
+            }
         }
         std::thread::sleep(POP3_POLL);
     }

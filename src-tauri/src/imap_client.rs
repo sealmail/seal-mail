@@ -52,14 +52,20 @@ fn decode_mutf7(s: &str) -> String {
             out.push('&');
             continue;
         }
-        let b64: String = seg.chars().map(|c| if c == ',' { '/' } else { c }).collect();
-        let decoded = STANDARD_NO_PAD.decode(b64.as_bytes()).ok().and_then(|bytes| {
-            let units: Vec<u16> = bytes
-                .chunks_exact(2)
-                .map(|p| u16::from_be_bytes([p[0], p[1]]))
-                .collect();
-            String::from_utf16(&units).ok()
-        });
+        let b64: String = seg
+            .chars()
+            .map(|c| if c == ',' { '/' } else { c })
+            .collect();
+        let decoded = STANDARD_NO_PAD
+            .decode(b64.as_bytes())
+            .ok()
+            .and_then(|bytes| {
+                let units: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|p| u16::from_be_bytes([p[0], p[1]]))
+                    .collect();
+                String::from_utf16(&units).ok()
+            });
         match decoded {
             Some(t) => out.push_str(&t),
             None => {
@@ -116,9 +122,18 @@ pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession,
         account.incoming_host.as_str(),
         &tls,
     )
-    .map_err(|e| format!("无法连接 {}:{} — {}", account.incoming_host, account.incoming_port, e))?;
+    .map_err(|e| {
+        format!(
+            "无法连接 {}:{} — {}",
+            account.incoming_host, account.incoming_port, e
+        )
+    })?;
     if let Some(oauth) = &secret.oauth {
-        let auth = XOAuth2 { user: &account.username, token: &oauth.access_token, sent: Cell::new(false) };
+        let auth = XOAuth2 {
+            user: &account.username,
+            token: &oauth.access_token,
+            sent: Cell::new(false),
+        };
         client
             .authenticate("XOAUTH2", &auth)
             .map_err(|(e, _)| format!("IMAP OAuth2 登录失败（授权可能已失效，请重新授权）: {}", e))
@@ -130,19 +145,36 @@ pub fn connect(account: &Account, secret: &AccountSecret) -> Result<ImapSession,
 }
 
 /// 回收站目录的常见名字（去层级后的末段，小写比较）
-const TRASH_NAMES: &[&str] = &["trash", "deleted items", "deleted messages", "已删除", "已删除邮件", "垃圾箱", "废件箱"];
-const ARCHIVE_NAMES: &[&str] = &["archive", "archives", "all mail", "all mails", "归档", "所有邮件"];
+const TRASH_NAMES: &[&str] = &[
+    "trash",
+    "deleted items",
+    "deleted messages",
+    "已删除",
+    "已删除邮件",
+    "垃圾箱",
+    "废件箱",
+];
+const ARCHIVE_NAMES: &[&str] = &[
+    "archive",
+    "archives",
+    "all mail",
+    "all mails",
+    "归档",
+    "所有邮件",
+];
 
 fn name_is_trash(n: &imap::types::Name) -> bool {
     // RFC 6154 special-use（Gmail 等在 LIST 中直接返回 \Trash）
-    if n.attributes()
-        .iter()
-        .any(|a| matches!(a, imap::types::NameAttribute::Custom(c) if c.eq_ignore_ascii_case("\\Trash")))
-    {
+    if n.attributes().iter().any(
+        |a| matches!(a, imap::types::NameAttribute::Custom(c) if c.eq_ignore_ascii_case("\\Trash")),
+    ) {
         return true;
     }
     let name = n.name();
-    let last = name.rsplit(n.delimiter().unwrap_or("/")).next().unwrap_or(name);
+    let last = name
+        .rsplit(n.delimiter().unwrap_or("/"))
+        .next()
+        .unwrap_or(name);
     TRASH_NAMES.contains(&decode_mutf7(last).to_lowercase().as_str())
 }
 
@@ -154,7 +186,10 @@ fn name_is_archive(n: &imap::types::Name) -> bool {
         return true;
     }
     let name = n.name();
-    let last = name.rsplit(n.delimiter().unwrap_or("/")).next().unwrap_or(name);
+    let last = name
+        .rsplit(n.delimiter().unwrap_or("/"))
+        .next()
+        .unwrap_or(name);
     ARCHIVE_NAMES.contains(&decode_mutf7(last).to_lowercase().as_str())
 }
 
@@ -191,7 +226,11 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
         .map_err(|e| format!("获取目录失败: {}", e))?;
     let mut out: Vec<FolderInfo> = names
         .iter()
-        .filter(|n| !n.attributes().iter().any(|a| matches!(a, imap::types::NameAttribute::NoSelect)))
+        .filter(|n| {
+            !n.attributes()
+                .iter()
+                .any(|a| matches!(a, imap::types::NameAttribute::NoSelect))
+        })
         .map(|n| {
             let name = n.name().to_string();
             let last = name
@@ -213,7 +252,13 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
         .collect();
     let _ = sess.logout();
     // INBOX 永远排第一
-    out.sort_by_key(|f| if f.name.eq_ignore_ascii_case("INBOX") { 0 } else { 1 });
+    out.sort_by_key(|f| {
+        if f.name.eq_ignore_ascii_case("INBOX") {
+            0
+        } else {
+            1
+        }
+    });
     Ok(out)
 }
 
@@ -237,8 +282,14 @@ pub struct SyncFetch {
 }
 
 fn flags_of(f: &imap::types::Fetch) -> (bool, bool) {
-    let unread = !f.flags().iter().any(|fl| matches!(fl, imap::types::Flag::Seen));
-    let flagged = f.flags().iter().any(|fl| matches!(fl, imap::types::Flag::Flagged));
+    let unread = !f
+        .flags()
+        .iter()
+        .any(|fl| matches!(fl, imap::types::Flag::Seen));
+    let flagged = f
+        .flags()
+        .iter()
+        .any(|fl| matches!(fl, imap::types::Flag::Flagged));
     (unread, flagged)
 }
 
@@ -264,18 +315,37 @@ pub fn sync_fetch(
     let mut new_mails = Vec::new();
     if reset {
         if mailbox.exists > 0 {
-            let start = mailbox.exists.saturating_sub(initial_window.saturating_sub(1)).max(1);
+            let start = mailbox
+                .exists
+                .saturating_sub(initial_window.saturating_sub(1))
+                .max(1);
             let fetches = sess
-                .fetch(format!("{}:{}", start, mailbox.exists), "(UID FLAGS BODY.PEEK[])")
+                .fetch(
+                    format!("{}:{}", start, mailbox.exists),
+                    "(UID FLAGS BODY.PEEK[])",
+                )
                 .map_err(|e| format!("拉取邮件失败: {}", e))?;
             for f in fetches.iter() {
-                let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+                let (Some(uid), Some(raw)) = (f.uid, f.body()) else {
+                    continue;
+                };
                 let (unread, flagged) = flags_of(f);
-                new_mails.push(RawMail { uid, unread, flagged, raw: raw.to_vec() });
+                new_mails.push(RawMail {
+                    uid,
+                    unread,
+                    flagged,
+                    raw: raw.to_vec(),
+                });
             }
         }
         let _ = sess.logout();
-        return Ok(SyncFetch { uidvalidity, reset: true, new_mails, server_flags: vec![], flags_low: 0 });
+        return Ok(SyncFetch {
+            uidvalidity,
+            reset: true,
+            new_mails,
+            server_flags: vec![],
+            flags_low: 0,
+        });
     }
 
     let max = max_uid.expect("checked above");
@@ -284,16 +354,31 @@ pub fn sync_fetch(
     let probe = sess
         .uid_fetch(format!("{}:*", max + 1), "UID")
         .map_err(|e| format!("探测新邮件失败: {}", e))?;
-    let new_uids: Vec<u32> = probe.iter().filter_map(|f| f.uid).filter(|u| *u > max).collect();
+    let new_uids: Vec<u32> = probe
+        .iter()
+        .filter_map(|f| f.uid)
+        .filter(|u| *u > max)
+        .collect();
     if !new_uids.is_empty() {
-        let set = new_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+        let set = new_uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         let fetches = sess
             .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
             .map_err(|e| format!("拉取新邮件失败: {}", e))?;
         for f in fetches.iter() {
-            let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+            let (Some(uid), Some(raw)) = (f.uid, f.body()) else {
+                continue;
+            };
             let (unread, flagged) = flags_of(f);
-            new_mails.push(RawMail { uid, unread, flagged, raw: raw.to_vec() });
+            new_mails.push(RawMail {
+                uid,
+                unread,
+                flagged,
+                raw: raw.to_vec(),
+            });
         }
     }
     // FLAGS 回扫（轻量，不带正文）
@@ -308,7 +393,13 @@ pub fn sync_fetch(
         server_flags.push((uid, unread, flagged));
     }
     let _ = sess.logout();
-    Ok(SyncFetch { uidvalidity, reset: false, new_mails, server_flags, flags_low: low })
+    Ok(SyncFetch {
+        uidvalidity,
+        reset: false,
+        new_mails,
+        server_flags,
+        flags_low: low,
+    })
 }
 
 /// 从当前本地最早 UID 之前继续回填更早邮件。返回值按服务器返回顺序排列。
@@ -319,7 +410,9 @@ pub fn fetch_older(
     before_uid: Option<u32>,
     batch: u32,
 ) -> Result<Vec<RawMail>, String> {
-    let Some(before) = before_uid else { return Ok(Vec::new()) };
+    let Some(before) = before_uid else {
+        return Ok(Vec::new());
+    };
     if before <= 1 || batch == 0 {
         return Ok(Vec::new());
     }
@@ -330,7 +423,11 @@ pub fn fetch_older(
     let probe = sess
         .uid_fetch(format!("1:{}", before - 1), "UID")
         .map_err(|e| format!("探测更早邮件失败: {}", e))?;
-    let mut uids: Vec<u32> = probe.iter().filter_map(|f| f.uid).filter(|u| *u < before).collect();
+    let mut uids: Vec<u32> = probe
+        .iter()
+        .filter_map(|f| f.uid)
+        .filter(|u| *u < before)
+        .collect();
     uids.sort_unstable_by(|a, b| b.cmp(a));
     uids.truncate(batch as usize);
     if uids.is_empty() {
@@ -338,15 +435,26 @@ pub fn fetch_older(
         return Ok(Vec::new());
     }
     uids.sort_unstable();
-    let set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    let set = uids
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let fetches = sess
         .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
         .map_err(|e| format!("拉取更早邮件失败: {}", e))?;
     let mut mails = Vec::new();
     for f in fetches.iter() {
-        let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+        let (Some(uid), Some(raw)) = (f.uid, f.body()) else {
+            continue;
+        };
         let (unread, flagged) = flags_of(f);
-        mails.push(RawMail { uid, unread, flagged, raw: raw.to_vec() });
+        mails.push(RawMail {
+            uid,
+            unread,
+            flagged,
+            raw: raw.to_vec(),
+        });
     }
     let _ = sess.logout();
     Ok(mails)
@@ -361,8 +469,13 @@ pub fn set_flagged(
 ) -> Result<(), String> {
     let mut sess = connect(account, secret)?;
     sess.select(folder).map_err(|e| e.to_string())?;
-    let op = if flagged { "+FLAGS (\\Flagged)" } else { "-FLAGS (\\Flagged)" };
-    sess.uid_store(uid.to_string(), op).map_err(|e| e.to_string())?;
+    let op = if flagged {
+        "+FLAGS (\\Flagged)"
+    } else {
+        "-FLAGS (\\Flagged)"
+    };
+    sess.uid_store(uid.to_string(), op)
+        .map_err(|e| e.to_string())?;
     let _ = sess.logout();
     Ok(())
 }
@@ -474,8 +587,16 @@ pub fn set_read_many(
     }
     let mut sess = connect(account, secret)?;
     sess.select(folder).map_err(|e| e.to_string())?;
-    let op = if read { "+FLAGS (\\Seen)" } else { "-FLAGS (\\Seen)" };
-    let uidset = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    let op = if read {
+        "+FLAGS (\\Seen)"
+    } else {
+        "-FLAGS (\\Seen)"
+    };
+    let uidset = uids
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     sess.uid_store(uidset, op).map_err(|e| e.to_string())?;
     let _ = sess.logout();
     Ok(())
@@ -490,7 +611,11 @@ pub fn delete_message(
     permanent: bool,
 ) -> Result<(), String> {
     let mut sess = connect(account, secret)?;
-    let trash = if permanent { None } else { Some(find_or_create_trash(&mut sess)?) };
+    let trash = if permanent {
+        None
+    } else {
+        Some(find_or_create_trash(&mut sess)?)
+    };
     sess.select(folder).map_err(|e| e.to_string())?;
     let uidset = uid.to_string();
     match trash {
@@ -533,7 +658,13 @@ mod tests {
 
     #[test]
     fn mutf7_roundtrip() {
-        for s in ["已发送", "重要客户 2026", "工作&生活", "收件箱/发票", "Ω≈ç√∫"] {
+        for s in [
+            "已发送",
+            "重要客户 2026",
+            "工作&生活",
+            "收件箱/发票",
+            "Ω≈ç√∫",
+        ] {
             assert_eq!(decode_mutf7(&encode_mutf7(s)), s, "roundtrip failed: {}", s);
         }
     }

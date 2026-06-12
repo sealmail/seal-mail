@@ -5,7 +5,7 @@ import type { EmailMeta } from "../types";
 
 interface Props {
   width?: number;
-  title: string;
+  title?: string;
   messages: EmailMeta[];
   selectedKey: string | null;
   accountLabels?: Record<string, string>;
@@ -45,7 +45,6 @@ export function MailList(p: Props) {
   return (
     <div className="list-pane" style={{ width: p.width }}>
       <div className="list-head">
-        <span className="title">{p.title}</span>
         <span className="meta">
           {p.syncing && <span className="sync-dot" title="同步中" />}
           <span className="cache-count" title="当前筛选显示 / 本地已缓存">

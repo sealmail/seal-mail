@@ -58,7 +58,11 @@ pub fn is_newer_version(latest: &str, current: &str) -> bool {
 pub fn matching_release_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
     #[cfg(target_os = "macos")]
     {
-        let arch = if cfg!(target_arch = "aarch64") { "aarch64" } else { "x64" };
+        let arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x64"
+        };
         return assets.iter().find(|asset| {
             let name = asset.name.to_ascii_lowercase();
             name.contains("macos") && name.contains(arch) && name.ends_with(".dmg")

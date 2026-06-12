@@ -43,7 +43,10 @@ fn transport(account: &Account, secret: &AccountSecret) -> Result<SmtpTransport,
     if let Some(oauth) = &secret.oauth {
         // XOAUTH2：密码位传 access_token
         return Ok(builder
-            .credentials(Credentials::new(account.username.clone(), oauth.access_token.clone()))
+            .credentials(Credentials::new(
+                account.username.clone(),
+                oauth.access_token.clone(),
+            ))
             .authentication(vec![Mechanism::Xoauth2])
             .build());
     }
@@ -58,7 +61,13 @@ fn transport(account: &Account, secret: &AccountSecret) -> Result<SmtpTransport,
 
 /// 按扩展名猜常见 MIME 类型（附件用；未知类型回退 octet-stream）
 fn guess_mime(name: &str) -> &'static str {
-    match name.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+    match name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "pdf" => "application/pdf",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -167,7 +176,11 @@ pub fn send_mail(
         .map_err(|_| "发件地址格式错误".to_string())?;
     let mut rcpt = Vec::new();
     for a in to.iter().chain(cc.iter()) {
-        rcpt.push(a.trim().parse().map_err(|_| format!("收件地址格式错误: {}", a))?);
+        rcpt.push(
+            a.trim()
+                .parse()
+                .map_err(|_| format!("收件地址格式错误: {}", a))?,
+        );
     }
     let envelope = Envelope::new(Some(from_addr), rcpt).map_err(|e| e.to_string())?;
 
@@ -190,5 +203,11 @@ pub fn test_smtp(account: &Account, secret: &AccountSecret) -> Result<(), String
     mailer
         .test_connection()
         .map_err(|e| format!("SMTP 连接失败: {}", e))
-        .and_then(|ok| if ok { Ok(()) } else { Err("SMTP 连接失败".into()) })
+        .and_then(|ok| {
+            if ok {
+                Ok(())
+            } else {
+                Err("SMTP 连接失败".into())
+            }
+        })
 }

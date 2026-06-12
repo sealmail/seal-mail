@@ -64,7 +64,9 @@ pub struct DeviceFlowStart {
 pub enum DevicePoll {
     /// 用户尚未在浏览器完成登录，继续轮询
     Pending,
-    Ok { tokens: OAuthTokens },
+    Ok {
+        tokens: OAuthTokens,
+    },
 }
 
 async fn form_post(params: &[(&str, &str)], url: &str) -> Result<serde_json::Value, String> {
@@ -88,7 +90,11 @@ fn ms_error(v: &serde_json::Value) -> String {
 }
 
 pub async fn begin_device_flow(client_id: &str) -> Result<DeviceFlowStart, String> {
-    let v = form_post(&[("client_id", client_id), ("scope", SCOPES)], DEVICE_CODE_URL).await?;
+    let v = form_post(
+        &[("client_id", client_id), ("scope", SCOPES)],
+        DEVICE_CODE_URL,
+    )
+    .await?;
     if v.get("error").is_some() {
         return Err(format!("发起设备码授权失败: {}", ms_error(&v)));
     }
@@ -99,7 +105,10 @@ pub async fn begin_device_flow(client_id: &str) -> Result<DeviceFlowStart, Strin
             .ok_or("响应缺少 verification_uri")?
             .into(),
         message: v["message"].as_str().unwrap_or_default().into(),
-        device_code: v["device_code"].as_str().ok_or("响应缺少 device_code")?.into(),
+        device_code: v["device_code"]
+            .as_str()
+            .ok_or("响应缺少 device_code")?
+            .into(),
         interval: v["interval"].as_u64().unwrap_or(5),
         expires_in: v["expires_in"].as_u64().unwrap_or(900),
         client_id: client_id.to_string(),
@@ -107,7 +116,11 @@ pub async fn begin_device_flow(client_id: &str) -> Result<DeviceFlowStart, Strin
 }
 
 /// 解析令牌端点成功响应（设备码流程要求带 refresh_token，即 offline_access 生效）
-fn parse_tokens(v: &serde_json::Value, client_id: &str, old_refresh: Option<&str>) -> Result<OAuthTokens, String> {
+fn parse_tokens(
+    v: &serde_json::Value,
+    client_id: &str,
+    old_refresh: Option<&str>,
+) -> Result<OAuthTokens, String> {
     let access_token = v["access_token"]
         .as_str()
         .ok_or("令牌响应缺少 access_token")?
@@ -117,7 +130,9 @@ fn parse_tokens(v: &serde_json::Value, client_id: &str, old_refresh: Option<&str
     let refresh_token = match (v["refresh_token"].as_str(), old_refresh) {
         (Some(r), _) => r.to_string(),
         (None, Some(old)) => old.to_string(),
-        (None, None) => return Err("令牌响应缺少 refresh_token（请确认 offline_access 权限）".into()),
+        (None, None) => {
+            return Err("令牌响应缺少 refresh_token（请确认 offline_access 权限）".into())
+        }
     };
     Ok(OAuthTokens {
         access_token,
@@ -138,7 +153,9 @@ pub async fn poll_device(client_id: &str, device_code: &str) -> Result<DevicePol
     )
     .await?;
     match v["error"].as_str() {
-        None => Ok(DevicePoll::Ok { tokens: parse_tokens(&v, client_id, None)? }),
+        None => Ok(DevicePoll::Ok {
+            tokens: parse_tokens(&v, client_id, None)?,
+        }),
         Some("authorization_pending") | Some("slow_down") => Ok(DevicePoll::Pending),
         Some("authorization_declined") => Err("你在登录页面拒绝了授权".into()),
         Some("expired_token") => Err("登录代码已过期，请重新获取".into()),

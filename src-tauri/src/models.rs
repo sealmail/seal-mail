@@ -127,7 +127,10 @@ pub enum VerifyDetail {
     },
     /// Valid signature but the key is not (yet) in the trusted list
     #[serde(rename_all = "camelCase")]
-    SignedUnknown { fingerprint: String, method: String },
+    SignedUnknown {
+        fingerprint: String,
+        method: String,
+    },
     Unsigned,
     /// Signature present but body hash or signature check failed
     #[serde(rename_all = "camelCase")]
@@ -250,7 +253,11 @@ fn default_mode() -> String {
 
 impl Default for IdentityConfig {
     fn default() -> Self {
-        IdentityConfig { mode: default_mode(), ledger_path: None, ledger_address: None }
+        IdentityConfig {
+            mode: default_mode(),
+            ledger_path: None,
+            ledger_address: None,
+        }
     }
 }
 

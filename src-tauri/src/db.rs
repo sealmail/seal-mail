@@ -41,8 +41,10 @@ CREATE TABLE IF NOT EXISTS pop_state (
 ";
 
 pub fn open(dir: &Path) -> Result<Connection, String> {
-    let conn = Connection::open(dir.join("mail.db")).map_err(|e| format!("打开邮件缓存失败: {e}"))?;
-    conn.execute_batch(SCHEMA).map_err(|e| format!("初始化邮件缓存失败: {e}"))?;
+    let conn =
+        Connection::open(dir.join("mail.db")).map_err(|e| format!("打开邮件缓存失败: {e}"))?;
+    conn.execute_batch(SCHEMA)
+        .map_err(|e| format!("初始化邮件缓存失败: {e}"))?;
     Ok(conn)
 }
 
@@ -58,7 +60,13 @@ pub struct CachedRow {
 }
 
 /// 按时间倒序分页读取
-pub fn list(conn: &Connection, account: &str, folder: &str, offset: u32, limit: u32) -> Result<Vec<CachedRow>, String> {
+pub fn list(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<CachedRow>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT uid, unread, flagged, raw FROM messages
@@ -91,7 +99,11 @@ pub fn count(conn: &Connection, account: &str, folder: &str) -> Result<i64, Stri
 }
 
 /// Read a whole folder newest-first. Used for local conversation grouping.
-pub fn list_folder(conn: &Connection, account: &str, folder: &str) -> Result<Vec<CachedRow>, String> {
+pub fn list_folder(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+) -> Result<Vec<CachedRow>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT uid, unread, flagged, raw FROM messages
@@ -114,7 +126,12 @@ pub fn list_folder(conn: &Connection, account: &str, folder: &str) -> Result<Vec
     Ok(rows)
 }
 
-pub fn get_raw(conn: &Connection, account: &str, folder: &str, uid: u32) -> Result<Option<CachedRow>, String> {
+pub fn get_raw(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+) -> Result<Option<CachedRow>, String> {
     conn.query_row(
         "SELECT uid, unread, flagged, raw FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid],
@@ -152,7 +169,13 @@ pub fn upsert_message(
     .map_err(err)
 }
 
-pub fn set_unread(conn: &Connection, account: &str, folder: &str, uids: &[u32], unread: bool) -> Result<(), String> {
+pub fn set_unread(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uids: &[u32],
+    unread: bool,
+) -> Result<(), String> {
     for uid in uids {
         conn.execute(
             "UPDATE messages SET unread=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
@@ -163,7 +186,13 @@ pub fn set_unread(conn: &Connection, account: &str, folder: &str, uids: &[u32], 
     Ok(())
 }
 
-pub fn set_flagged(conn: &Connection, account: &str, folder: &str, uid: u32, flagged: bool) -> Result<(), String> {
+pub fn set_flagged(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+    flagged: bool,
+) -> Result<(), String> {
     conn.execute(
         "UPDATE messages SET flagged=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid, flagged as i64],
@@ -172,7 +201,14 @@ pub fn set_flagged(conn: &Connection, account: &str, folder: &str, uid: u32, fla
     .map_err(err)
 }
 
-pub fn update_flags(conn: &Connection, account: &str, folder: &str, uid: u32, unread: bool, flagged: bool) -> Result<(), String> {
+pub fn update_flags(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+    unread: bool,
+    flagged: bool,
+) -> Result<(), String> {
     conn.execute(
         "UPDATE messages SET unread=?4, flagged=?5 WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid, unread as i64, flagged as i64],
@@ -182,7 +218,13 @@ pub fn update_flags(conn: &Connection, account: &str, folder: &str, uid: u32, un
 }
 
 /// POP3 移动到本地虚拟目录
-pub fn set_folder(conn: &Connection, account: &str, folder: &str, uid: u32, target: &str) -> Result<(), String> {
+pub fn set_folder(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+    target: &str,
+) -> Result<(), String> {
     conn.execute(
         "UPDATE messages SET folder=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid, target],
@@ -228,7 +270,12 @@ pub fn min_uid(conn: &Connection, account: &str, folder: &str) -> Result<Option<
 }
 
 /// FLAGS 回扫窗口下界：最近第 N 封的 uid
-pub fn window_low(conn: &Connection, account: &str, folder: &str, window: u32) -> Result<Option<u32>, String> {
+pub fn window_low(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    window: u32,
+) -> Result<Option<u32>, String> {
     conn.query_row(
         "SELECT MIN(uid) FROM (SELECT uid FROM messages WHERE account_id=?1 AND folder=?2
           ORDER BY uid DESC LIMIT ?3)",
@@ -238,7 +285,12 @@ pub fn window_low(conn: &Connection, account: &str, folder: &str, window: u32) -
     .map_err(err)
 }
 
-pub fn uids_from(conn: &Connection, account: &str, folder: &str, low: u32) -> Result<Vec<u32>, String> {
+pub fn uids_from(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    low: u32,
+) -> Result<Vec<u32>, String> {
     let mut stmt = conn
         .prepare("SELECT uid FROM messages WHERE account_id=?1 AND folder=?2 AND uid>=?3")
         .map_err(err)?;
@@ -260,7 +312,12 @@ pub fn uidvalidity(conn: &Connection, account: &str, folder: &str) -> Result<Opt
     .map_err(err)
 }
 
-pub fn set_uidvalidity(conn: &Connection, account: &str, folder: &str, v: u32) -> Result<(), String> {
+pub fn set_uidvalidity(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    v: u32,
+) -> Result<(), String> {
     conn.execute(
         "INSERT OR REPLACE INTO folder_state(account_id, folder, uidvalidity) VALUES (?1,?2,?3)",
         params![account, folder, v],
@@ -270,7 +327,10 @@ pub fn set_uidvalidity(conn: &Connection, account: &str, folder: &str, v: u32) -
 }
 
 /// 该账户全部已知的 POP3 UIDL（跨本地目录）
-pub fn pop_known_uidls(conn: &Connection, account: &str) -> Result<Vec<(String, String, u32)>, String> {
+pub fn pop_known_uidls(
+    conn: &Connection,
+    account: &str,
+) -> Result<Vec<(String, String, u32)>, String> {
     let mut stmt = conn
         .prepare("SELECT pop_uidl, folder, uid FROM messages WHERE account_id=?1 AND pop_uidl IS NOT NULL")
         .map_err(err)?;
@@ -282,7 +342,12 @@ pub fn pop_known_uidls(conn: &Connection, account: &str) -> Result<Vec<(String, 
     Ok(rows)
 }
 
-pub fn pop_uidl_of(conn: &Connection, account: &str, folder: &str, uid: u32) -> Result<Option<String>, String> {
+pub fn pop_uidl_of(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+) -> Result<Option<String>, String> {
     conn.query_row(
         "SELECT pop_uidl FROM messages WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid],
@@ -322,7 +387,18 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let conn = open(&dir).unwrap();
         for i in 1..=5u32 {
-            upsert_message(&conn, "a", "INBOX", i, None, true, false, 1000 + i as i64, b"raw").unwrap();
+            upsert_message(
+                &conn,
+                "a",
+                "INBOX",
+                i,
+                None,
+                true,
+                false,
+                1000 + i as i64,
+                b"raw",
+            )
+            .unwrap();
         }
         assert_eq!(count(&conn, "a", "INBOX").unwrap(), 5);
         // 时间倒序：第一页是最新的

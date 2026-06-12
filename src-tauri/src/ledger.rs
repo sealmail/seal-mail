@@ -44,9 +44,7 @@ fn parse_bip32_path(path: &str) -> Result<Vec<u32>, String> {
             Some(n) => (n, true),
             None => (part, false),
         };
-        let n: u32 = num
-            .parse()
-            .map_err(|_| format!("路径分量无效 '{part}'"))?;
+        let n: u32 = num.parse().map_err(|_| format!("路径分量无效 '{part}'"))?;
         if n >= HARDENED {
             return Err(format!("路径索引越界: {part}"));
         }
@@ -168,8 +166,12 @@ fn check_sw(resp: &[u8]) -> Result<&[u8], String> {
 fn map_sw(sw: u16) -> String {
     match sw {
         0x6985 | 0x5501 => "已在 Ledger 设备上拒绝签名。".to_string(),
-        0x6a80 | 0x6a87 => "Ledger 拒绝了数据——请在 Ethereum app 设置里开启 blind signing。".to_string(),
-        0x6700 | 0x6d00 | 0x6e00 | 0x6e01 | 0x6511 => "请在 Ledger 上打开 Ethereum app 后重试。".to_string(),
+        0x6a80 | 0x6a87 => {
+            "Ledger 拒绝了数据——请在 Ethereum app 设置里开启 blind signing。".to_string()
+        }
+        0x6700 | 0x6d00 | 0x6e00 | 0x6e01 | 0x6511 => {
+            "请在 Ledger 上打开 Ethereum app 后重试。".to_string()
+        }
         0x6982 | 0x5515 => "请先解锁 Ledger 并打开 Ethereum app。".to_string(),
         other => format!("Ledger 错误 0x{other:04x}"),
     }

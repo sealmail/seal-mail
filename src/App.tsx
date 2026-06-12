@@ -467,7 +467,6 @@ function MailApp() {
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
   const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
-  const folderTitle = folders.find((f) => f.name === folder)?.display ?? folder;
 
   function markLocal(keys: string[], unread: boolean) {
     const set = new Set(keys);
@@ -866,7 +865,6 @@ function MailApp() {
             <>
               <MailList
                 width={listWidth}
-                title={folderTitle}
                 messages={shownMessages}
                 selectedKey={selectedKey}
                 accountLabels={folder === UNIFIED_FOLDER ? accountLabels : undefined}
