@@ -109,7 +109,6 @@ export function MailList(p: Props) {
                 </div>
                 <div className="mail-main">
                   <div className="top">
-                    <div className={`unread-dot${m.unread ? "" : " off"}`} />
                     <span className="from">{m.fromName}</span>
                     <button
                       className={`star-btn${m.flagged ? " on" : ""}`}

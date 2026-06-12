@@ -283,25 +283,25 @@ input, textarea, select { font-family: inherit; }
 
 .list-scroll { flex: 1; overflow-y: auto; }
 .mail-row {
-  display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start;
-  column-gap: 0; padding: 14px 18px 14px 14px; border-bottom: 1px solid var(--border-soft);
+  display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start;
+  column-gap: 8px; padding: 10px 14px 10px 10px; border-bottom: 1px solid var(--border-soft);
   cursor: pointer; border-left: 3px solid transparent; position: relative;
 }
 .mail-row:hover { background: var(--bg-hover); }
 .mail-row.selected { background: var(--bg-active); }
+.mail-row.unread::after {
+  content: ""; position: absolute; left: 5px; top: 20px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--jade-deep);
+}
 .mail-seal-cell {
-  width: 40px; min-width: 40px; padding-top: 1px;
+  width: 34px; min-width: 34px; padding-top: 1px;
   display: flex; align-items: flex-start; justify-content: center;
 }
 .mail-main { min-width: 0; padding-left: 0; }
 .mail-row .top {
-  display: grid; grid-template-columns: 8px minmax(0, 1fr) 20px 42px;
-  align-items: center; gap: 7px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 20px 42px;
+  align-items: center; gap: 7px; min-height: 20px;
 }
-.mail-row .unread-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--jade-deep); flex-shrink: 0;
-}
-.mail-row .unread-dot.off { opacity: 0; }
 .mail-row .from {
   font-size: 13px; font-weight: 600; color: var(--ink-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -309,14 +309,14 @@ input, textarea, select { font-family: inherit; }
 .mail-row.unread .from { font-weight: 700; }
 .mail-row .time { font-size: 10.5px; color: var(--mut-3); flex-shrink: 0; text-align: right; }
 .mail-row .subject {
-  font-size: 12.5px; font-weight: 500; color: var(--ink-3); margin-top: 3px;
+  font-size: 12.5px; font-weight: 500; color: var(--ink-3); margin-top: 1px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mail-row .preview {
-  font-size: 11.5px; color: var(--mut-2); margin-top: 2px;
+  font-size: 11.5px; color: var(--mut-2); margin-top: 1px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.mail-row .tags { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.mail-row .tags { display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
 .tag { font-size: 10px; font-weight: 600; border-radius: 5px; padding: 2px 7px; }
 .tag.lang { font-weight: 500; color: var(--mut-3); background: var(--bg-chip); font-family: var(--mono); }
 .tag.risk { color: var(--red); background: var(--red-bg); }

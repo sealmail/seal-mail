@@ -377,13 +377,13 @@ function MailApp() {
   useEffect(() => localStorage.setItem("sealmail.railWidth", String(railWidth)), [railWidth]);
 
   // ── 选中邮件 ──
-  async function selectMail(m: EmailMeta) {
+  async function selectMail(m: EmailMeta, opts: { markRead?: boolean } = {}) {
     try {
       const full = await api.getMessage(m.accountId, m.folder, m.uid);
       setSelected(full);
       setThread([]);
       setView("mail");
-      if (m.unread) {
+      if (opts.markRead !== false && m.unread) {
         api.setRead(m.accountId, m.folder, m.uid, true).catch(() => {});
         setMessages((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
         setInboxMetas((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
@@ -453,6 +453,12 @@ function MailApp() {
         m.preview.toLowerCase().includes(q)
     );
   }, [messages, search, filterMode]);
+
+  useEffect(() => {
+    if (view !== "mail" || folder === DRAFTS_FOLDER || loading || shownMessages.length === 0) return;
+    const selectedVisible = selected && shownMessages.some((m) => mailKey(m) === mailKey(selected.meta));
+    if (!selectedVisible) selectMail(shownMessages[0], { markRead: false });
+  }, [folder, loading, selected, shownMessages, view]);
 
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
