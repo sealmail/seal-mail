@@ -15,21 +15,21 @@ export function statusText(v: VerifyDetail): { title: string; sub: string; tone:
         title: "已验证本人",
         sub: "数字签名有效 · 发件人身份与可信记录完全匹配",
         tone: "jade",
-        railBg: "#F7FAF8",
+        railBg: "#F6F8F5",
       };
     case "signedUnknown":
       return {
         title: "签名有效 · 尚未列入可信",
         sub: "签名校验通过，但这把密钥还不在你的可信联系人记录中。确认对方身份后可加入可信。",
         tone: "gold",
-        railBg: "#FAF8F2",
+        railBg: "#F0F4EE",
       };
     case "unsigned":
       return {
         title: "未盖印 · 身份未知",
         sub: "该发件人未签名，无法验证其真实身份。",
         tone: "gray",
-        railBg: "#FAF9F5",
+        railBg: "#F4F6F3",
       };
     case "tampered":
       return {
@@ -50,8 +50,8 @@ export function statusText(v: VerifyDetail): { title: string; sub: string; tone:
 
 export const TONE_COLOR: Record<string, string> = {
   jade: "#1E6B49",
-  gold: "#9A5B16",
-  gray: "#6E6A5F",
+  gold: "#5F695F",
+  gray: "#626A62",
   red: "#9A2C1D",
 };
 
@@ -132,7 +132,7 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
       title: "账号安全警告 · 疑似钓鱼",
       msg: "此邮件冒充你的可信联系人。任何合法机构都不会索取助记词、私钥或密码。请勿点击其中链接或回复。",
       btn: "查看风险详情",
-      solid: "#9A2C1D",
+      solid: "#9a2f27",
     };
   }
   if (trust === "tampered") {
@@ -142,7 +142,7 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
       title: "内容在传输中被改动",
       msg: "这封邮件的签名无法覆盖当前内容。执行任何操作前请向对方核实原始内容。",
       btn: "查看哈希对比",
-      solid: "#9A2C1D",
+      solid: "#9a2f27",
     };
   }
   if (!risk) return null;
@@ -153,7 +153,7 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
       title: "高风险资金操作",
       msg: "已验证 ≠ 应当照做——付款类操作不应仅凭一封邮件执行。请通过电话或线下渠道独立核实。",
       btn: "查看风险详情",
-      solid: "#9A5B16",
+      solid: "#5f554c",
     };
   }
   if (risk.kind === "account") {
@@ -163,7 +163,7 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
       title: "账号安全风险",
       msg: "此邮件涉及凭据 / 密钥类敏感信息。任何合法机构都不会通过邮件索取助记词或密码。",
       btn: "查看风险详情",
-      solid: "#9A2C1D",
+      solid: "#9a2f27",
     };
   }
   return {
@@ -172,7 +172,7 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
     title: "合同 / 条款相关 · 带时限要求",
     msg: "涉及合同条款且带有时限措辞。签署前请确认条款与此前沟通一致。",
     btn: "查看风险详情",
-    solid: "#9A5B16",
+    solid: "#5f554c",
   };
 }
 

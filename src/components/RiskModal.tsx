@@ -24,8 +24,8 @@ export function RiskModal(p: Props) {
         <div
           style={{
             padding: "24px 26px",
-            background: "#FBECE9",
-            borderBottom: "1px solid #F2D7D0",
+            background: "var(--red-bg)",
+            borderBottom: "1px solid #ead0cc",
             display: "flex",
             gap: 14,
             alignItems: "flex-start",
@@ -33,10 +33,10 @@ export function RiskModal(p: Props) {
         >
           <div style={{ fontSize: 26 }}>🔺</div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#9A2C1D" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--red)" }}>
               {dangerous ? "高风险邮件 · 请勿按邮件要求操作" : "高风险操作 · 需人工核实"}
             </div>
-            <div style={{ fontSize: 12.5, color: "#9A2C1D", opacity: 0.9, marginTop: 4, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12.5, color: "var(--red)", opacity: 0.9, marginTop: 4, lineHeight: 1.5 }}>
               {trust === "verified"
                 ? "发件人身份已验证，但此操作不应仅凭一封邮件执行。"
                 : "此邮件未通过身份验证，其中的要求不可信。"}
@@ -52,8 +52,8 @@ export function RiskModal(p: Props) {
                     width: 18,
                     height: 18,
                     borderRadius: "50%",
-                    background: "#FBECE9",
-                    color: "#B23A2B",
+                    background: "var(--red-bg)",
+                    color: "var(--red-bad)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -86,7 +86,7 @@ export function RiskModal(p: Props) {
                 height: 42,
                 border: "none",
                 borderRadius: 9,
-                background: ack ? "#B23A2B" : "#D8B6B0",
+                background: ack ? "var(--red-bad)" : "#d8d4ce",
                 color: "#fff",
                 fontSize: 13,
                 fontWeight: 600,

@@ -53,6 +53,14 @@ export function AddrInput(p: Props) {
     ref.current?.focus();
   }
 
+  const addrs = p.value
+    .split(/[,;，；\s]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const complete = /[,;，；\s]$/.test(p.value);
+  const lastLooksReady = !!addrs.at(-1)?.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
+  const preview = complete || lastLooksReady ? addrs : addrs.slice(0, -1);
+
   function onKeyDown(e: React.KeyboardEvent) {
     if (!open) return;
     if (e.key === "ArrowDown") {
@@ -80,6 +88,17 @@ export function AddrInput(p: Props) {
         onKeyDown={onKeyDown}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
       />
+      {preview.length > 0 && (
+        <div className="addr-preview" aria-live="polite">
+          {preview.slice(0, 3).map((addr) => (
+            <span className="addr-chip" key={addr}>
+              {addr}
+            </span>
+          ))}
+          {preview.length > 3 && <span className="addr-chip muted">+{preview.length - 3}</span>}
+          <span className="addr-count">已识别 {preview.length} 个地址</span>
+        </div>
+      )}
       {open && (
         <div className="addr-pop">
           {hits.map((c, i) => (

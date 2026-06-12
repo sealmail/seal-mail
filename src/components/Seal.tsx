@@ -2,8 +2,8 @@ import type { CSSProperties } from "react";
 import type { TrustTag } from "../types";
 
 /** 火漆封印：
- *  verified=完整封印(青玉+金边) · signedUnknown=金色封印(签名有效·未列入可信)
- *  unsigned=空印环(虚线) · tampered=裂开的封印 · impersonation=伪造封印(划痕+警示徽章) */
+ *  verified=完整封印(青玉) · signedUnknown=灰绿封印(签名有效·未列入可信)
+ *  unsigned=未验证盾牌 · tampered=裂开的封印 · impersonation=伪造封印(划痕+警示徽章) */
 export function Seal({ trust, size }: { trust: TrustTag; size: number }) {
   const fs = Math.round(size * 0.42);
   const ring = Math.max(1.4, size * 0.045);
@@ -38,7 +38,7 @@ export function Seal({ trust, size }: { trust: TrustTag; size: number }) {
             height: size,
             borderRadius: "50%",
             background: "radial-gradient(circle at 36% 30%, #4CA67E 0%, #2C7B58 52%, #1B5840 100%)",
-            boxShadow: `0 0 0 ${ring}px #C99B4E, inset 0 ${size * 0.04}px ${size * 0.08}px rgba(255,255,255,.45), inset 0 -${size * 0.05}px ${size * 0.1}px rgba(0,0,0,.32)`,
+            boxShadow: `0 0 0 ${ring}px #5F695F, inset 0 ${size * 0.04}px ${size * 0.08}px rgba(255,255,255,.45), inset 0 -${size * 0.05}px ${size * 0.1}px rgba(0,0,0,.32)`,
           }}
         />
         <div style={stamp("rgba(255,255,255,.92)")}>印</div>
@@ -54,8 +54,8 @@ export function Seal({ trust, size }: { trust: TrustTag; size: number }) {
             width: size,
             height: size,
             borderRadius: "50%",
-            background: "radial-gradient(circle at 36% 30%, #DDB46A 0%, #C99B4E 52%, #8F6A2C 100%)",
-            boxShadow: `inset 0 ${size * 0.04}px ${size * 0.08}px rgba(255,255,255,.45), inset 0 -${size * 0.05}px ${size * 0.1}px rgba(0,0,0,.3)`,
+            background: "radial-gradient(circle at 36% 30%, #8A978B 0%, #657164 54%, #3F4B42 100%)",
+            boxShadow: `inset 0 ${size * 0.04}px ${size * 0.08}px rgba(255,255,255,.38), inset 0 -${size * 0.05}px ${size * 0.1}px rgba(0,0,0,.3)`,
           }}
         />
         <div style={stamp("rgba(255,255,255,.92)")}>印</div>
@@ -70,12 +70,14 @@ export function Seal({ trust, size }: { trust: TrustTag; size: number }) {
           style={{
             width: size,
             height: size,
-            borderRadius: "50%",
-            border: `${Math.max(2, size * 0.075)}px dashed #C7C1B2`,
-            background: "rgba(0,0,0,.012)",
+            border: `${Math.max(1.5, size * 0.045)}px solid #92978f`,
+            borderRadius: "34%",
+            background: "linear-gradient(180deg, rgba(218,220,214,.98), rgba(239,240,236,.9))",
           }}
         />
-        <div style={{ ...stamp("#B3AEA2"), textShadow: "none", fontWeight: 500 }}>?</div>
+        <div style={{ ...stamp("#636960"), fontFamily: "var(--sans)", textShadow: "none", fontWeight: 800, fontSize: Math.round(size * 0.42) }}>
+          !
+        </div>
       </div>
     );
   }
@@ -140,7 +142,7 @@ export function Seal({ trust, size }: { trust: TrustTag; size: number }) {
           minWidth: 14,
           minHeight: 14,
           borderRadius: "50%",
-          background: "#F4F1EA",
+          background: "#F7E8E5",
           border: "1.5px solid #B23A2B",
           color: "#B23A2B",
           display: "flex",

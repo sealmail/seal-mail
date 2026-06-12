@@ -23,8 +23,8 @@ interface Props {
 
 const BAR_COLOR: Record<string, string> = {
   verified: "#087443",
-  signedUnknown: "#a7853a",
-  unsigned: "#adb2aa",
+  signedUnknown: "#657164",
+  unsigned: "#929b93",
   tampered: "#9f2f24",
   impersonation: "#9f2f24",
 };

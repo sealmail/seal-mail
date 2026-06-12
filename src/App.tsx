@@ -20,6 +20,13 @@ function isRisky(m: EmailMeta) {
   return !!m.risk || m.trust === "tampered" || m.trust === "impersonation";
 }
 
+const BUILTIN_FOLDERS: FolderInfo[] = [
+  { name: UNIFIED_FOLDER, display: "统一收件箱" },
+  { name: "INBOX", display: "收件箱" },
+  { name: RISK_FOLDER, display: "高风险" },
+  { name: DRAFTS_FOLDER, display: "草稿" },
+];
+
 function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.uid}`;
 }
@@ -28,7 +35,7 @@ export default function App() {
   const [state, setState] = useState<AppStateView | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState("");
-  const [folders, setFolders] = useState<FolderInfo[]>([]);
+  const [folders, setFolders] = useState<FolderInfo[]>(BUILTIN_FOLDERS);
   const [folder, setFolder] = useState("INBOX");
   const [messages, setMessages] = useState<EmailMeta[]>([]);
   const [inboxMetas, setInboxMetas] = useState<EmailMeta[]>([]);
@@ -82,9 +89,10 @@ export default function App() {
 
   const refreshFolders = useCallback(async (accId: string) => {
     const fs = await api.listFolders(accId);
+    const inbox = fs.find((f) => f.name === "INBOX");
     const withRisk: FolderInfo[] = [
       { name: UNIFIED_FOLDER, display: "统一收件箱" },
-      ...fs.filter((f) => f.name === "INBOX").map((f) => ({ ...f, display: "收件箱" })),
+      inbox ? { ...inbox, display: "收件箱" } : { name: "INBOX", display: "收件箱" },
       { name: RISK_FOLDER, display: "高风险" },
       { name: DRAFTS_FOLDER, display: "草稿" },
       ...fs.filter((f) => f.name !== "INBOX"),
@@ -105,7 +113,10 @@ export default function App() {
     setSelected(null);
     setThread([]);
     setListError(null);
-    refreshFolders(accountId).catch((e) => setListError(String(e)));
+    refreshFolders(accountId).catch((e) => {
+      setFolders(BUILTIN_FOLDERS);
+      setListError(String(e));
+    });
   }, [accountId, refreshFolders]);
 
   // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
@@ -538,6 +549,11 @@ export default function App() {
                 <path d="M8.5 8.5l3 3" stroke="var(--mut-4)" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
               <input ref={searchRef} placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              {search && (
+                <button className="search-clear" onClick={() => setSearch("")} title="清空搜索">
+                  ×
+                </button>
+              )}
             </div>
           )}
         </div>

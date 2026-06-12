@@ -3,42 +3,45 @@
    地址/指纹/哈希一律 IBM Plex Mono，UI 用 IBM Plex Sans，印章字 IBM Plex Serif */
 
 :root {
-  --bg: #f7f7f4;
-  --bg-warm: #f0f0ec;
-  --bg-side: #eeeeea;
-  --bg-chip: #e8e8e3;
-  --bg-hover: #f1f1ed;
-  --bg-active: #e9ece8;
-  --bg-active-deep: #dce2dc;
-  --border: #deded8;
-  --border-2: #d7d7d0;
-  --border-3: #ccccc4;
-  --border-soft: #e7e7e1;
-  --line: #deded8;
+  --bg: #f6f7f5;
+  --bg-warm: #eef0ed;
+  --bg-side: #ecefeb;
+  --bg-chip: #e4e8e3;
+  --bg-hover: #eef1ed;
+  --bg-active: #e4ebe4;
+  --bg-active-deep: #d7e2d8;
+  --border: #d8ddd7;
+  --border-2: #d0d7cf;
+  --border-3: #c2cbc1;
+  --border-soft: #e1e6e0;
+  --line: #d8ddd7;
   --ink: #151916;
   --ink-2: #202421;
   --ink-3: #343934;
   --body: #303530;
-  --mut: #6f746e;
-  --mut-2: #858a83;
-  --mut-3: #989d96;
-  --mut-4: #adb2aa;
+  --mut: #687069;
+  --mut-2: #7f8780;
+  --mut-3: #929b93;
+  --mut-4: #a6aea6;
   --jade: #087443;
   --jade-deep: #0b3b2e;
   --jade-btn-hover: #14543f;
   --jade-bg: #e4f1e9;
   --jade-ok: #0f8a50;
   --seal: #087443;
-  --red: #9f2f24;
-  --red-bg: #f8e8e6;
-  --red-bg-strong: #f5dcd8;
+  --red: #9a2f27;
+  --red-bg: #f7e8e5;
+  --red-bg-strong: #f2d8d3;
   --red-bad: #b43a2f;
-  --amber: #8b5a12;
-  --amber-bg: #f4ecd7;
-  --amber-border: #dac996;
-  --gold: #a7853a;
+  --warn: #596158;
+  --warn-bg: #e7ebe5;
+  --warn-border: #cbd4ca;
+  --amber: var(--warn);
+  --amber-bg: var(--warn-bg);
+  --amber-border: var(--warn-border);
+  --gold: #5f695f;
   --gray: #626760;
-  --gray-bg: #e8e8e3;
+  --gray-bg: #e5e9e4;
   --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --serif: "IBM Plex Serif", serif;
@@ -58,12 +61,12 @@ input, textarea, select { font-family: inherit; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb {
-  background: #cdcdc6;
+  background: #c7cec5;
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover { background: #b8b8b0; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #b3bbb1; background-clip: content-box; }
 
 @keyframes sm-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @keyframes sm-glow {
@@ -106,6 +109,13 @@ input, textarea, select { font-family: inherit; }
   font-size: 12.5px; color: var(--ink-3);
 }
 .search input::placeholder { color: var(--mut-2); }
+.search-clear {
+  width: 18px; height: 18px; border: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-chip); color: var(--mut); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0; flex-shrink: 0;
+}
+.search-clear:hover { background: var(--bg-active-deep); color: var(--ink-3); }
 
 .btn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
@@ -161,7 +171,7 @@ input, textarea, select { font-family: inherit; }
   border: none; border-radius: 8px; background: transparent; color: var(--ink-3);
   font-size: 12.5px; font-weight: 500; cursor: pointer; text-align: left; width: 100%;
 }
-.side-item:hover { background: #e4e4df; }
+.side-item:hover { background: #e1e6e0; }
 .side-item.active { background: var(--bg-active-deep); color: var(--ink); font-weight: 600; }
 .side-item .icon { width: 18px; text-align: center; font-size: 13px; color: var(--mut-3); flex-shrink: 0; }
 .side-item.active .icon { color: var(--jade-deep); }
@@ -173,7 +183,7 @@ input, textarea, select { font-family: inherit; }
 .side-item .count.red { color: var(--red); background: var(--red-bg); }
 
 .account-row { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 10px; border-radius: 8px; cursor: pointer; }
-.account-row:hover { background: #e4e4df; }
+.account-row:hover { background: #e1e6e0; }
 .account-row.active { background: var(--bg-active-deep); }
 .account-row .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .account-row .addr {
@@ -183,7 +193,7 @@ input, textarea, select { font-family: inherit; }
 .account-row .sys { font-size: 10px; color: var(--mut-3); }
 
 .side-add {
-  height: 32px; border: 1.5px dashed #c5c8c0; background: transparent; border-radius: 8px;
+  height: 32px; border: 1.5px dashed #bfc8be; background: transparent; border-radius: 8px;
   font-size: 11.5px; font-weight: 600; color: var(--mut); cursor: pointer; width: 100%;
 }
 .side-add:hover { border-color: var(--gold); color: var(--ink-3); }
@@ -207,7 +217,7 @@ input, textarea, select { font-family: inherit; }
 }
 .list-filterbar .seg.on { background: var(--bg-chip); border-color: var(--border-2); color: var(--ink-3); font-weight: 600; }
 .list-error-bar {
-  font-size: 11px; color: var(--amber); background: #f3eee0; border-bottom: 1px solid var(--amber-border);
+  font-size: 11px; color: var(--amber); background: var(--amber-bg); border-bottom: 1px solid var(--amber-border);
   padding: 6px 14px; line-height: 1.5;
 }
 .star-btn {
@@ -230,7 +240,7 @@ input, textarea, select { font-family: inherit; }
 
 .list-scroll { flex: 1; overflow-y: auto; }
 .mail-row {
-  display: flex; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #e8e8e3;
+  display: flex; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border-soft);
   cursor: pointer; border-left: 3px solid transparent; position: relative;
 }
 .mail-row:hover { background: var(--bg-hover); }
@@ -254,7 +264,7 @@ input, textarea, select { font-family: inherit; }
 .mail-row .tags { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 .tag { font-size: 10px; font-weight: 600; border-radius: 5px; padding: 2px 7px; }
 .tag.lang { font-weight: 500; color: var(--mut-3); background: var(--bg-chip); font-family: var(--mono); }
-.tag.risk { color: var(--amber); background: var(--amber-bg); }
+.tag.risk { color: var(--red); background: var(--red-bg); }
 .tag.verified { color: var(--jade); background: var(--jade-bg); }
 .tag.signedUnknown { color: var(--amber); background: var(--amber-bg); }
 .tag.unsigned { color: var(--gray); background: var(--gray-bg); }
@@ -283,13 +293,13 @@ input, textarea, select { font-family: inherit; }
 .msg-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
 .msg-date { font-size: 11.5px; color: var(--mut-3); }
 .msg-body { font-size: 14px; line-height: 1.72; color: var(--body); max-width: 640px; white-space: pre-wrap; word-break: break-word; }
-.thread-strip { margin: 0 0 18px; max-width: 720px; border: 1px solid var(--line); background: #f2f3ef; border-radius: 8px; overflow: hidden; }
+.thread-strip { margin: 0 0 18px; max-width: 720px; border: 1px solid var(--line); background: #edf1ec; border-radius: 8px; overflow: hidden; }
 .thread-title { height: 30px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--mut); border-bottom: 1px solid var(--line); }
 .thread-list { display: flex; flex-direction: column; }
 .thread-item { width: 100%; min-height: 44px; padding: 7px 11px; border: 0; border-bottom: 1px solid rgba(210, 213, 206, 0.82); background: transparent; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; cursor: pointer; }
 .thread-item:last-child { border-bottom: 0; }
-.thread-item:hover:not(:disabled) { background: #e9ece8; }
-.thread-item.current { background: #dfe5df; cursor: default; }
+.thread-item:hover:not(:disabled) { background: #e4ebe4; }
+.thread-item.current { background: #d8e3d8; cursor: default; }
 .thread-item.unread .thread-from { color: var(--ink); font-weight: 700; }
 .thread-dot { width: 6px; height: 6px; border-radius: 99px; background: #aeb3ab; }
 .thread-item.current .thread-dot { background: var(--seal); }
@@ -334,14 +344,25 @@ input, textarea, select { font-family: inherit; }
 .addr-item.on { background: var(--bg-chip); }
 .addr-name { font-size: 12.5px; font-weight: 600; color: var(--ink-3); }
 .addr-mail { font-family: var(--mono); font-size: 11px; color: var(--mut); }
+.addr-preview {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px; padding-left: 2px; min-height: 22px;
+}
+.addr-chip {
+  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 1px solid var(--border-2); background: var(--bg-chip); color: var(--ink-3);
+  border-radius: 999px; padding: 3px 8px; font-family: var(--mono); font-size: 10.5px;
+}
+.addr-chip.muted { font-family: var(--sans); color: var(--mut); }
+.addr-count { color: var(--mut-3); font-size: 11px; }
 
 /* HTML 正文 */
 .body-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-bottom: 8px; }
-.body-note { font-size: 11px; color: var(--amber); }
+.body-note { font-size: 11px; color: var(--warn); }
 .html-body-wrap { display: flex; flex-direction: column; gap: 8px; }
 .img-blocked-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  font-size: 11.5px; color: var(--amber); background: #f3eee0; border: 1px solid var(--amber-border);
+  font-size: 11.5px; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-border);
   border-radius: 9px; padding: 8px 12px;
 }
 .html-body { width: 100%; border: none; background: #fff; border-radius: 6px; min-height: 120px; }
@@ -352,7 +373,7 @@ input, textarea, select { font-family: inherit; }
 .risk-banner .title { font-size: 13.5px; font-weight: 700; }
 .risk-banner .msg { font-size: 12.5px; opacity: 0.92; margin-top: 4px; line-height: 1.55; text-wrap: pretty; }
 .risk-banner .actions { display: flex; gap: 9px; margin-top: 13px; }
-.risk-banner.amber { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.risk-banner.amber { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
 .risk-banner.red { background: var(--red-bg); border-color: #f2d7d0; color: var(--red); }
 .risk-banner.red-strong { background: var(--red-bg-strong); border-color: #f0c8bf; color: var(--red); }
 .risk-banner .btn-solid {
@@ -367,12 +388,12 @@ input, textarea, select { font-family: inherit; }
 /* 一键信任：发件人旁的小按钮 + 确认卡 */
 .trust-chip {
   margin-top: 6px; height: 24px; padding: 0 10px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--amber-border); background: #f3eee0; color: var(--amber);
+  border: 1px solid var(--amber-border); background: var(--amber-bg); color: var(--amber);
   font-size: 11px; font-weight: 600;
 }
-.trust-chip:hover { background: #e9e4d6; }
+.trust-chip:hover { background: #dde5dc; }
 .trust-confirm {
-  border: 1px solid var(--amber-border); background: #f3eee0; border-radius: 12px;
+  border: 1px solid var(--amber-border); background: var(--amber-bg); border-radius: 12px;
   padding: 16px 18px; margin-bottom: 22px; color: var(--amber);
 }
 .trust-confirm .title { font-size: 13.5px; font-weight: 700; color: var(--ink-2); }
@@ -513,7 +534,7 @@ input, textarea, select { font-family: inherit; }
 .keys-sub { margin: 8px 0 28px; font-size: 13.5px; color: var(--mut); max-width: 560px; line-height: 1.6; }
 .keys-hero {
   border: 1px solid var(--border-3); border-radius: 16px; padding: 24px;
-  background: linear-gradient(135deg, #f0f2ee, #fafaf7); margin-bottom: 22px;
+  background: linear-gradient(135deg, #eef2ed, #f8faf7); margin-bottom: 22px;
   display: flex; align-items: center; gap: 18px;
 }
 .keys-hero .seal-lg {
@@ -525,14 +546,14 @@ input, textarea, select { font-family: inherit; }
 }
 .section-label { font-size: 12px; font-weight: 700; color: var(--mut-3); letter-spacing: 0.5px; margin: 0 0 12px; }
 .card-list { border: 1px solid var(--border-2); border-radius: 12px; overflow: hidden; background: #fff; }
-.card-row { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid #e8e8e3; }
+.card-row { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--border-soft); }
 .card-row:last-child { border-bottom: none; }
 .pill { font-size: 11.5px; font-weight: 600; border-radius: 7px; padding: 4px 11px; white-space: nowrap; }
 .pill.jade { color: var(--jade); background: var(--jade-bg); }
 .pill.gray { color: var(--gray); background: var(--gray-bg); }
 .pill.red { color: var(--red); background: var(--red-bg); }
 .dashed-add {
-  height: 42px; border: 1.5px dashed #c5c8c0; background: transparent; border-radius: 12px;
+  height: 42px; border: 1.5px dashed #bfc8be; background: transparent; border-radius: 12px;
   font-size: 12.5px; font-weight: 600; color: var(--mut); cursor: pointer; width: 100%;
 }
 .dashed-add:hover { border-color: var(--gold); color: var(--ink-3); }
