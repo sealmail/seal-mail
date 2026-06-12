@@ -134,6 +134,7 @@ function MailApp() {
   const [messages, setMessages] = useState<EmailMeta[]>([]);
   const [inboxMetas, setInboxMetas] = useState<EmailMeta[]>([]);
   const [selected, setSelected] = useState<EmailFull | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [thread, setThread] = useState<EmailMeta[]>([]);
   const [view, setView] = useState<"mail" | "keys">("mail");
   const [search, setSearch] = useState("");
@@ -173,6 +174,18 @@ function MailApp() {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const fetchSeq = useRef(0);
+  const selectSeq = useRef(0);
+  const clearSelection = useCallback(() => {
+    selectSeq.current += 1;
+    setSelected(null);
+    setSelectedKey(null);
+    setThread([]);
+  }, []);
+  const retainSelection = useCallback((metas: EmailMeta[]) => {
+    const visible = new Set(metas.map(mailKey));
+    setSelected((prev) => (prev && visible.has(mailKey(prev.meta)) ? prev : null));
+    setSelectedKey((prev) => (prev && visible.has(prev) ? prev : null));
+  }, []);
 
   const accounts = state?.accounts ?? [];
   const trusted = state?.trusted ?? [];
@@ -212,14 +225,13 @@ function MailApp() {
   useEffect(() => {
     if (!accountId) return;
     setFolder("INBOX");
-    setSelected(null);
-    setThread([]);
+    clearSelection();
     setListError(null);
     refreshFolders(accountId).catch((e) => {
       setFolders(BUILTIN_FOLDERS);
       setListError(String(e));
     });
-  }, [accountId, refreshFolders]);
+  }, [accountId, clearSelection, refreshFolders]);
 
   // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
   const PAGE = 200;
@@ -238,7 +250,7 @@ function MailApp() {
         setTotal(pages.reduce((sum, p) => sum + p.total, 0));
         setInboxMetas(metas);
         setMessages(metas);
-        setSelected((prev) => (prev && metas.some((m) => mailKey(m) === mailKey(prev.meta)) ? prev : null));
+        retainSelection(metas);
         return;
       }
       const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
@@ -249,9 +261,9 @@ function MailApp() {
       let metas = folder === RISK_FOLDER ? res.metas.filter(isRisky) : res.metas;
       metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
       setMessages(metas);
-      setSelected((prev) => (prev && metas.some((m) => mailKey(m) === mailKey(prev.meta)) ? prev : null));
+      retainSelection(metas);
     },
-    [accountId, accounts, folder]
+    [accountId, accounts, folder, retainSelection]
   );
 
   const backfillOlderToTarget = useCallback(
@@ -369,18 +381,22 @@ function MailApp() {
 
   // ── 选中邮件 ──
   async function selectMail(m: EmailMeta, opts: { markRead?: boolean } = {}) {
+    const key = mailKey(m);
+    const seq = ++selectSeq.current;
+    setSelectedKey(key);
+    setSelected(null);
+    setThread([]);
+    setView("mail");
+    if (opts.markRead !== false && m.unread) {
+      api.setRead(m.accountId, m.folder, m.uid, true).catch(() => {});
+      setMessages((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
+      setInboxMetas((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
+    }
     try {
       const full = await api.getMessage(m.accountId, m.folder, m.uid);
-      setSelected(full);
-      setThread([]);
-      setView("mail");
-      if (opts.markRead !== false && m.unread) {
-        api.setRead(m.accountId, m.folder, m.uid, true).catch(() => {});
-        setMessages((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
-        setInboxMetas((ms) => ms.map((x) => (mailKey(x) === mailKey(m) ? { ...x, unread: false } : x)));
-      }
+      if (seq === selectSeq.current) setSelected(full);
     } catch (e) {
-      setListError(String(e));
+      if (seq === selectSeq.current) setListError(String(e));
     }
   }
 
@@ -412,22 +428,17 @@ function MailApp() {
       setThread([]);
       return;
     }
-    let cancelled = false;
-    api
-      .listThread(selected.meta.accountId, selected.meta.folder, selected.meta.threadId)
-      .then((rows) => {
-        if (!cancelled) setThread(rows);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setThread([]);
-          console.error("读取会话线程失败", e);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected?.meta.accountId, selected?.meta.folder, selected?.meta.threadId, selected?.meta.uid]);
+    setThread(
+      messages
+        .filter(
+          (m) =>
+            m.accountId === selected.meta.accountId &&
+            m.folder === selected.meta.folder &&
+            m.threadId === selected.meta.threadId
+        )
+        .sort((a, b) => a.timestamp - b.timestamp)
+    );
+  }, [messages, selected?.meta.accountId, selected?.meta.folder, selected?.meta.threadId]);
 
   // ── 搜索（本地过滤：发件人/主题/摘要/地址）+ 未读/星标过滤 ──
   const shownMessages = useMemo(() => {
@@ -447,9 +458,9 @@ function MailApp() {
 
   useEffect(() => {
     if (view !== "mail" || folder === DRAFTS_FOLDER || loading || shownMessages.length === 0) return;
-    const selectedVisible = selected && shownMessages.some((m) => mailKey(m) === mailKey(selected.meta));
+    const selectedVisible = selectedKey && shownMessages.some((m) => mailKey(m) === selectedKey);
     if (!selectedVisible) selectMail(shownMessages[0], { markRead: false });
-  }, [folder, loading, selected, shownMessages, view]);
+  }, [folder, loading, selectedKey, shownMessages, view]);
 
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
@@ -513,8 +524,7 @@ function MailApp() {
     if (!selected) return;
     try {
       await api.moveMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid, target);
-      setSelected(null);
-      setThread([]);
+      clearSelection();
       loadMessages();
     } catch (e) {
       setListError(String(e));
@@ -525,8 +535,7 @@ function MailApp() {
     if (!selected) return;
     try {
       await api.archiveMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid);
-      setSelected(null);
-      setThread([]);
+      clearSelection();
       loadMessages();
       refreshFolders(accountId).catch(() => {});
     } catch (e) {
@@ -552,8 +561,7 @@ function MailApp() {
     setConfirmDelete(false);
     try {
       await api.deleteMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid, permanent);
-      setSelected(null);
-      setThread([]);
+      clearSelection();
       loadMessages();
       // 第一次软删除可能刚在服务器上创建了回收站目录，刷新目录列表
       if (!permanent) refreshFolders(accountId).catch(() => {});
@@ -643,9 +651,9 @@ function MailApp() {
         e.preventDefault();
         const down = e.key === "ArrowDown" || e.key === "j";
         if (shownMessages.length === 0) return;
-        const idx = selected ? shownMessages.findIndex((m) => mailKey(m) === mailKey(selected.meta)) : -1;
+        const idx = selectedKey ? shownMessages.findIndex((m) => mailKey(m) === selectedKey) : -1;
         const next = idx < 0 ? 0 : Math.min(shownMessages.length - 1, Math.max(0, idx + (down ? 1 : -1)));
-        if (shownMessages[next] && (!selected || mailKey(shownMessages[next]) !== mailKey(selected.meta))) {
+        if (shownMessages[next] && mailKey(shownMessages[next]) !== selectedKey) {
           selectMail(shownMessages[next]);
         }
       }
@@ -673,7 +681,10 @@ function MailApp() {
       const refreshed = await api
         .getMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid)
         .catch(() => null);
-      if (refreshed) setSelected(refreshed);
+      if (refreshed) {
+        setSelected(refreshed);
+        setSelectedKey(mailKey(refreshed.meta));
+      }
     } catch (e) {
       setListError(String(e));
     }
@@ -786,6 +797,7 @@ function MailApp() {
             }}
             onSelectFolder={(f) => {
               setFolder(f);
+              clearSelection();
               setView("mail");
             }}
             onOpenKeys={() => setView("keys")}
@@ -832,7 +844,7 @@ function MailApp() {
                 width={listWidth}
                 title={folderTitle}
                 messages={shownMessages}
-                selectedKey={selected ? mailKey(selected.meta) : null}
+                selectedKey={selectedKey}
                 accountLabels={folder === UNIFIED_FOLDER ? accountLabels : undefined}
                 loading={loading}
                 syncing={syncing}

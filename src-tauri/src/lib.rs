@@ -545,16 +545,20 @@ fn get_message(
     folder: String,
     uid: u32,
 ) -> Result<EmailFull, String> {
-    let mut s = state.inner.lock().unwrap();
     let key = StoreData::cache_key(&account_id, &folder, uid);
-    if let Some(full) = s.mail_cache.get(&key) {
-        return Ok(full.clone());
-    }
-    let account = s.account(&account_id)?;
-    let trusted = s.trusted_for_verify(&account);
-    let row = db::get_raw(&s.db, &account_id, &folder, uid)?
-        .ok_or("邮件不在本地缓存中，请刷新列表")?;
+    let (trusted, row) = {
+        let s = state.inner.lock().unwrap();
+        if let Some(full) = s.mail_cache.get(&key) {
+            return Ok(full.clone());
+        }
+        let account = s.account(&account_id)?;
+        let trusted = s.trusted_for_verify(&account);
+        let row = db::get_raw(&s.db, &account_id, &folder, uid)?
+            .ok_or("邮件不在本地缓存中，请刷新列表")?;
+        (trusted, row)
+    };
     let full = mail::parse_email(&row.raw, uid, &account_id, &folder, row.unread, row.flagged, &trusted)?;
+    let mut s = state.inner.lock().unwrap();
     s.mail_cache.insert(key, full.clone());
     Ok(full)
 }
