@@ -111,7 +111,7 @@ export function Sidebar(p: Props) {
       <div style={{ flex: 1 }} />
       <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
         <span className="icon">⊟</span>
-        <span className="label">身份与密钥</span>
+        <span className="label">设置</span>
         {p.identity && <span className="key-status" title={p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"} />}
       </button>
     </div>

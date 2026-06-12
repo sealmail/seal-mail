@@ -53,8 +53,10 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
 
   const style = parsed.createElement("style");
   style.textContent = `
+    html { background: transparent; }
     body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-           font-size: 13.5px; line-height: 1.65; color: #2A2E36; word-break: break-word; }
+           font-size: 13.5px; line-height: 1.65; color: #2A2E36; word-break: break-word;
+           background: transparent; }
     img { max-width: 100%; height: auto; }
     img[data-blocked] { min-width: 36px; min-height: 20px; background: #F1EDE3; border: 1px dashed #C7C1B2; }
     a { color: #1E6B49; }
