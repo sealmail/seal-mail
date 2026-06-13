@@ -13,6 +13,7 @@ import { Onboarding } from "./components/Onboarding";
 import { ProfileSlideOver } from "./components/ProfileSlideOver";
 import { RiskModal } from "./components/RiskModal";
 import { DraftsPane } from "./components/DraftsPane";
+import { TextBody } from "./components/TextBody";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { Seal } from "./components/Seal";
 import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
@@ -33,8 +34,8 @@ function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.uid}`;
 }
 
-function defaultShowHtml(bodyHtml: string | null | undefined) {
-  return !!bodyHtml?.trim();
+function defaultShowHtml(mail: EmailFull) {
+  return mail.verify.status === "verified" && !mail.meta.risk && !!mail.bodyHtml?.trim();
 }
 
 function clamp(n: number, min: number, max: number) {
@@ -144,7 +145,7 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
 
   const hasHtml = !!mail.bodyHtml;
   const signed = mail.verify.status !== "unsigned";
-  const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(mail.bodyHtml));
+  const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(mail));
 
   return (
     <div className="popout-shell">
@@ -168,7 +169,7 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
             </button>
           </div>
         )}
-        {showHtml ? <HtmlBody html={mail.bodyHtml as string} /> : <div className="msg-body">{mail.bodyText || "(无正文)"}</div>}
+        {showHtml ? <HtmlBody html={mail.bodyHtml as string} /> : <TextBody text={mail.bodyText} />}
       </div>
     </div>
   );

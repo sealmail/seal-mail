@@ -1,14 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternalUrl } from "../url";
 
-/** 整体移除的危险标签（脚本、外部加载、表单提交） */
-const REMOVE_TAGS = "script,iframe,object,embed,form,base,meta,link,applet,frame,frameset,audio,video";
+/** 整体移除的危险标签（脚本、外部加载、表单提交、可联网样式/SVG） */
+const REMOVE_TAGS = "script,iframe,object,embed,form,base,meta,link,style,svg,math,applet,frame,frameset,audio,video";
+
+const RESOURCE_ATTRS = new Set(["src", "srcset", "poster", "background", "data"]);
+
+function isRemoteUrl(value: string) {
+  return /^(https?:)?\/\//i.test(value.trim());
+}
+
+function isSvgDataUrl(value: string) {
+  return /^data:image\/svg\+xml/i.test(value.trim());
+}
 
 /**
  * 邮件 HTML 消毒：
  * - 去掉脚本/iframe/表单等危险标签与全部 on* 事件属性
  * - 去掉 javascript:/vbscript:/data:text/html 协议链接
- * - allowRemote=false 时阻断 http(s) 图片与 style 里的远程 url()（防追踪像素）
+ * - allowRemote=false 时阻断 http(s) 资源属性与 style 里的远程 url()（防追踪像素）
  * - cid: 内嵌图片暂不支持，移除避免裂图请求
  */
 export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: string; blocked: number } {
@@ -27,16 +37,25 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
         (v.startsWith("javascript:") || v.startsWith("vbscript:") || v.startsWith("data:text/html"))
       ) {
         el.removeAttribute(attr.name);
+      } else if (!allowRemote && RESOURCE_ATTRS.has(n) && isRemoteUrl(attr.value)) {
+        blocked++;
+        el.removeAttribute(attr.name);
+        el.setAttribute("data-blocked", "1");
+      } else if (!allowRemote && (n === "href" || n === "xlink:href") && el.tagName !== "A" && isRemoteUrl(attr.value)) {
+        blocked++;
+        el.removeAttribute(attr.name);
       } else if (n === "style" && !allowRemote && /url\s*\(/i.test(attr.value)) {
         blocked++;
         el.setAttribute("style", attr.value.replace(/url\s*\([^)]*\)/gi, "none"));
       } else if (n === "srcset" && !allowRemote) {
         el.removeAttribute(attr.name);
+      } else if ((n === "src" || n === "href" || n === "xlink:href") && isSvgDataUrl(attr.value)) {
+        el.removeAttribute(attr.name);
       }
     }
     if (el.tagName === "IMG") {
       const src = el.getAttribute("src") ?? "";
-      if (/^(https?:)?\/\//i.test(src)) {
+      if (isRemoteUrl(src)) {
         if (!allowRemote) {
           blocked++;
           el.removeAttribute("src");
@@ -102,8 +121,7 @@ export function HtmlBody(p: Props) {
         const a = (ev.target as HTMLElement | null)?.closest?.("a");
         if (!a) return;
         ev.preventDefault();
-        const href = a.getAttribute("href");
-        if (href && /^https?:/i.test(href)) void openUrl(href);
+        void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
       },
       true
     );

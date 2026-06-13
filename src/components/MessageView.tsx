@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
+import { TextBody } from "./TextBody";
 import { saveAttachment } from "../api";
 import { buildChecks, riskBanner, statusText, TONE_COLOR } from "../trust";
 import type { EmailFull, EmailMeta, FolderInfo } from "../types";
@@ -36,6 +37,53 @@ function defaultShowHtml(bodyHtml: string | null | undefined) {
   return !!bodyHtml?.trim();
 }
 
+const RISKY_ATTACHMENT_EXTS = new Set([
+  "apk",
+  "app",
+  "bat",
+  "cmd",
+  "com",
+  "command",
+  "desktop",
+  "dmg",
+  "docm",
+  "exe",
+  "hta",
+  "iso",
+  "jar",
+  "js",
+  "jse",
+  "lnk",
+  "msi",
+  "pkg",
+  "pptm",
+  "ps1",
+  "reg",
+  "scpt",
+  "scr",
+  "sh",
+  "terminal",
+  "vbs",
+  "workflow",
+  "wsf",
+  "xlsm",
+]);
+
+function attachmentWarning(name: string) {
+  const normalized = name.replace(/[\u202a-\u202e\u2066-\u2069]/g, "");
+  const parts = normalized.toLowerCase().split(".").filter(Boolean);
+  const ext = parts.at(-1) ?? "";
+  const hasHiddenDirection = normalized !== name;
+  const risky = RISKY_ATTACHMENT_EXTS.has(ext);
+  const doubleExt = parts.length >= 3 && RISKY_ATTACHMENT_EXTS.has(ext);
+  if (!risky && !doubleExt && !hasHiddenDirection) return null;
+  const reasons = [];
+  if (risky) reasons.push(`扩展名 .${ext} 可能是可执行文件`);
+  if (doubleExt) reasons.push("文件名包含多重扩展名");
+  if (hasHiddenDirection) reasons.push("文件名包含可能伪装扩展名的控制字符");
+  return `这个附件有风险：${reasons.join("，")}。\n\n只在确认来源可信时保存。`;
+}
+
 export function MessageView(p: Props) {
   // 一键信任确认卡：换邮件时收起
   const [trustConfirm, setTrustConfirm] = useState(false);
@@ -58,6 +106,8 @@ export function MessageView(p: Props) {
 
   async function downloadAttachment(i: number, name: string) {
     if (!p.mail) return;
+    const warning = attachmentWarning(name);
+    if (warning && !window.confirm(warning)) return;
     const path = await saveFileDialog({ defaultPath: name, title: "保存附件" });
     if (!path) return;
     setAttachState((s) => ({ ...s, [i]: "保存中…" }));
@@ -302,7 +352,8 @@ export function MessageView(p: Props) {
         {(() => {
           const hasHtml = !!m.bodyHtml;
           const signed = m.verify.status !== "unsigned";
-          const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(m.bodyHtml));
+          const safeDefaultHtml = m.verify.status === "verified" && !m.meta.risk && defaultShowHtml(m.bodyHtml);
+          const showHtml = hasHtml && (htmlMode ?? safeDefaultHtml);
           return (
             <>
               {hasHtml && (
@@ -318,7 +369,7 @@ export function MessageView(p: Props) {
               {showHtml ? (
                 <HtmlBody html={m.bodyHtml as string} />
               ) : (
-                <div className="msg-body">{m.bodyText || "(无正文)"}</div>
+                <TextBody text={m.bodyText} />
               )}
             </>
           );
