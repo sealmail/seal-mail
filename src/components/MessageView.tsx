@@ -72,7 +72,7 @@ const RISKY_ATTACHMENT_EXTS = new Set([
 function attachmentWarning(name: string) {
   const normalized = name.replace(/[\u202a-\u202e\u2066-\u2069]/g, "");
   const parts = normalized.toLowerCase().split(".").filter(Boolean);
-  const ext = parts.at(-1) ?? "";
+  const ext = parts.length > 0 ? parts[parts.length - 1] : "";
   const hasHiddenDirection = normalized !== name;
   const risky = RISKY_ATTACHMENT_EXTS.has(ext);
   const doubleExt = parts.length >= 3 && RISKY_ATTACHMENT_EXTS.has(ext);
