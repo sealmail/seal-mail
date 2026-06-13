@@ -1,4 +1,5 @@
 import type { UIEvent } from "react";
+import { CATEGORY_LABEL, CATEGORY_TAG, classifyMail, type MailCategory } from "../mailCategory";
 import { Seal } from "./Seal";
 import { TRUST_LABEL } from "../trust";
 import type { EmailMeta } from "../types";
@@ -13,12 +14,15 @@ interface Props {
   syncing: boolean;
   error: string | null;
   filterMode: "all" | "unread" | "flagged";
+  categoryMode: MailCategory;
+  categoryCounts: Record<MailCategory, number>;
   unreadCount: number;
   loadedCount: number;
   totalCount: number;
   hasMore: boolean;
   loadingMore: boolean;
   onFilterMode: (m: "all" | "unread" | "flagged") => void;
+  onCategoryMode: (m: MailCategory) => void;
   onMarkAllRead: () => void;
   onToggleFlag: (m: EmailMeta) => void;
   onLoadMore: () => void;
@@ -74,6 +78,14 @@ export function MailList(p: Props) {
         </div>
         <span className="list-count">{p.hasMore ? "可继续加载" : "已缓存"}</span>
       </div>
+      <div className="list-categorybar">
+        {(["all", "personal", "business", "ads"] as const).map((c) => (
+          <button className={`category-seg${p.categoryMode === c ? " on" : ""}`} key={c} onClick={() => p.onCategoryMode(c)}>
+            {CATEGORY_LABEL[c]}
+            <span>{p.categoryCounts[c]}</span>
+          </button>
+        ))}
+      </div>
       <div className="list-scroll" onScroll={handleScroll}>
         {p.loading && <div className="empty-pane">正在读取本地缓存…</div>}
         {!p.loading && p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
@@ -95,6 +107,7 @@ export function MailList(p: Props) {
         {!p.loading &&
           p.messages.map((m) => {
             const selected = `${m.accountId}/${m.folder}/${m.uid}` === p.selectedKey;
+            const category = classifyMail(m);
             return (
               <div
                 key={`${m.accountId}/${m.folder}/${m.uid}`}
@@ -128,6 +141,7 @@ export function MailList(p: Props) {
                     <span className={`tag ${m.trust}`}>{TRUST_LABEL[m.trust]}</span>
                     {p.accountLabels?.[m.accountId] && <span className="tag lang">{p.accountLabels[m.accountId]}</span>}
                     {m.risk && <span className="tag risk">⚠ 高风险</span>}
+                    <span className={`tag category ${category}`}>{CATEGORY_TAG[category]}</span>
                     <span className="tag lang">{m.lang}</span>
                     {m.hasAttach && <span className="tag lang">📎</span>}
                   </div>

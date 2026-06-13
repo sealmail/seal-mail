@@ -16,6 +16,7 @@ import { DraftsPane } from "./components/DraftsPane";
 import { TextBody } from "./components/TextBody";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { Seal } from "./components/Seal";
+import { classifyMail, type MailCategory } from "./mailCategory";
 import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
 
@@ -196,6 +197,7 @@ function MailApp() {
   const [view, setView] = useState<"mail" | "keys">("mail");
   const [search, setSearch] = useState("");
   const [filterMode, setFilterMode] = useState<"all" | "unread" | "flagged">("all");
+  const [categoryMode, setCategoryMode] = useState<MailCategory>("all");
   const [total, setTotal] = useState(0);
   const [syncing, setSyncing] = useState(false);
   // 界面缩放（Cmd+/-/0），WebKit 支持非标准 zoom 属性
@@ -497,6 +499,7 @@ function MailApp() {
   const shownMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = messages;
+    if (categoryMode !== "all") list = list.filter((m) => classifyMail(m) === categoryMode);
     if (filterMode === "unread") list = list.filter((m) => m.unread || (selectedKey !== null && mailKey(m) === selectedKey));
     if (filterMode === "flagged") list = list.filter((m) => m.flagged);
     if (!q) return list;
@@ -507,16 +510,30 @@ function MailApp() {
         m.subject.toLowerCase().includes(q) ||
         m.preview.toLowerCase().includes(q)
     );
-  }, [messages, search, filterMode, selectedKey]);
+  }, [messages, search, categoryMode, filterMode, selectedKey]);
 
   useEffect(() => {
-    if (view !== "mail" || folder === DRAFTS_FOLDER || loading || shownMessages.length === 0) return;
-    if (!selectedKey) selectMail(shownMessages[0], { markRead: false });
+    if (view !== "mail" || folder === DRAFTS_FOLDER || loading) return;
+    if (shownMessages.length === 0) {
+      setSelected(null);
+      setSelectedKey(null);
+      return;
+    }
+    if (!selectedKey || !shownMessages.some((m) => mailKey(m) === selectedKey)) {
+      selectMail(shownMessages[0], { markRead: false });
+    }
   }, [folder, loading, selectedKey, shownMessages, view]);
 
   const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
   const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
+  const categoryCounts = useMemo(() => {
+    const counts: Record<MailCategory, number> = { all: messages.length, personal: 0, business: 0, ads: 0 };
+    messages.forEach((m) => {
+      counts[classifyMail(m)]++;
+    });
+    return counts;
+  }, [messages]);
 
   function markLocal(keys: string[], unread: boolean) {
     const set = new Set(keys);
@@ -912,12 +929,15 @@ function MailApp() {
                 syncing={syncing}
                 error={listError}
                 filterMode={filterMode}
+                categoryMode={categoryMode}
+                categoryCounts={categoryCounts}
                 unreadCount={listUnread}
                 loadedCount={shownMessages.length}
                 totalCount={folder === RISK_FOLDER ? messages.length : total}
                 hasMore={folder !== RISK_FOLDER && (loadedRef.current < total || !olderExhausted)}
                 loadingMore={loadingMore}
                 onFilterMode={setFilterMode}
+                onCategoryMode={setCategoryMode}
                 onMarkAllRead={handleMarkAllRead}
                 onToggleFlag={handleToggleFlag}
                 onLoadMore={handleLoadMore}
