@@ -95,6 +95,10 @@ function useZoomShortcuts() {
   return { zoom, setZoom };
 }
 
+function emitZoomShortcut(delta: number) {
+  window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
+}
+
 function PaneResizer({
   title,
   onStart,
@@ -150,8 +154,16 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
   const signed = mail.verify.status !== "unsigned";
   const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(mail));
 
+  function onPopoutKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const delta = zoomDeltaForKey(e.nativeEvent);
+    if (delta === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    emitZoomShortcut(delta);
+  }
+
   return (
-    <div className="popout-shell">
+    <div className="popout-shell" tabIndex={-1} onKeyDownCapture={onPopoutKeyDown}>
       <div className="popout-head">
         <div className="popout-subject">{mail.meta.subject}</div>
         <div className="popout-from">
@@ -172,7 +184,7 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
             </button>
           </div>
         )}
-        {showHtml ? <HtmlBody html={mail.bodyHtml as string} /> : <TextBody text={mail.bodyText} />}
+        {showHtml ? <HtmlBody html={mail.bodyHtml as string} onZoomShortcut={emitZoomShortcut} /> : <TextBody text={mail.bodyText} />}
       </div>
     </div>
   );
@@ -215,6 +227,7 @@ function MailApp() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [olderExhausted, setOlderExhausted] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [loadMoreNotice, setLoadMoreNotice] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const [composeOpen, setComposeOpen] = useState(false);
@@ -296,6 +309,7 @@ function MailApp() {
   const PAGE = 200;
   const AUTO_CACHE_TARGET = 1000;
   const AUTO_BACKFILL_ROUNDS = 4;
+  const MANUAL_FILTER_LOAD_ROUNDS = 4;
   const loadedRef = useRef(0);
   const sidebarDragBase = useRef(sidebarWidth);
   const listDragBase = useRef(listWidth);
@@ -392,26 +406,43 @@ function MailApp() {
   useEffect(() => {
     loadedRef.current = 0;
     setOlderExhausted(false);
+    setLoadMoreNotice(null);
     loadMessages();
   }, [loadMessages]);
 
   async function handleLoadMore() {
     if (loadingMore) return;
     setLoadingMore(true);
+    setLoadMoreNotice(null);
     try {
-      if (loadedRef.current < total) {
-        await loadCached(loadedRef.current + PAGE);
-        return;
+      const startedLoaded = loadedRef.current;
+      const isFilteredView = categoryMode !== "all" || filterMode !== "all" || search.trim() !== "";
+      const rounds = isFilteredView ? MANUAL_FILTER_LOAD_ROUNDS : 1;
+      let exhausted = false;
+      for (let round = 0; round < rounds; round += 1) {
+        const beforeRoundLoaded = loadedRef.current;
+        if (loadedRef.current < total) {
+          await loadCached(loadedRef.current + PAGE);
+        } else {
+          const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+          if (folder === UNIFIED_FOLDER) {
+            const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
+            exhausted = results.every((r) => r.added === 0);
+            if (exhausted) setOlderExhausted(true);
+          } else {
+            const res = await api.syncOlderMessages(accountId, realFolder);
+            exhausted = res.added === 0;
+            if (exhausted) setOlderExhausted(true);
+          }
+          await loadCached(loadedRef.current + PAGE);
+        }
+        if (!isFilteredView || exhausted || loadedRef.current === beforeRoundLoaded) break;
       }
-      const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-      if (folder === UNIFIED_FOLDER) {
-        const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
-        if (results.every((r) => r.added === 0)) setOlderExhausted(true);
-      } else {
-        const res = await api.syncOlderMessages(accountId, realFolder);
-        if (res.added === 0) setOlderExhausted(true);
+      if (exhausted) {
+        setLoadMoreNotice("没有更早的邮件了");
+      } else if (isFilteredView && loadedRef.current > startedLoaded) {
+        setLoadMoreNotice("已继续加载缓存；如果当前分类没有新增，说明更早邮件不属于这个筛选。");
       }
-      await loadCached(loadedRef.current + PAGE);
     } catch (e) {
       setListError(String(e));
     } finally {
@@ -512,6 +543,10 @@ function MailApp() {
         m.preview.toLowerCase().includes(q)
     );
   }, [messages, search, categoryMode, filterMode, selectedKey]);
+
+  useEffect(() => {
+    setLoadMoreNotice(null);
+  }, [accountId, folder, search, categoryMode, filterMode]);
 
   useEffect(() => {
     if (view !== "mail" || folder === DRAFTS_FOLDER || loading) return;
@@ -929,6 +964,7 @@ function MailApp() {
                 loading={loading}
                 syncing={syncing}
                 error={listError}
+                notice={loadMoreNotice}
                 filterMode={filterMode}
                 categoryMode={categoryMode}
                 categoryCounts={categoryCounts}

@@ -13,6 +13,7 @@ interface Props {
   loading: boolean;
   syncing: boolean;
   error: string | null;
+  notice?: string | null;
   filterMode: "all" | "unread" | "flagged";
   categoryMode: MailCategory;
   categoryCounts: Record<MailCategory, number>;
@@ -79,7 +80,7 @@ export function MailList(p: Props) {
         <span className="list-count">{p.hasMore ? "可继续加载" : "已缓存"}</span>
       </div>
       <div className="list-categorybar">
-        {(["all", "personal", "business", "ads"] as const).map((c) => (
+        {(["personal", "business", "ads", "all"] as const).map((c) => (
           <button className={`category-seg${p.categoryMode === c ? " on" : ""}`} key={c} onClick={() => p.onCategoryMode(c)}>
             {CATEGORY_LABEL[c]}
             <span>{p.categoryCounts[c]}</span>
@@ -89,6 +90,7 @@ export function MailList(p: Props) {
       <div className="list-scroll" onScroll={handleScroll}>
         {p.loading && <div className="empty-pane">正在读取本地缓存…</div>}
         {!p.loading && p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
+        {!p.loading && !p.error && p.notice && <div className="list-notice-bar">{p.notice}</div>}
         {!p.loading && p.error && p.messages.length === 0 && (
           <div className="empty-pane">
             <div style={{ fontSize: 20 }}>⚠</div>

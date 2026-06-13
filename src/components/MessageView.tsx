@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { AppIcon } from "./AppIcon";
 import { HtmlBody } from "./HtmlBody";
@@ -91,6 +91,7 @@ export function MessageView(p: Props) {
   const [copied, setCopied] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [verifyPinned, setVerifyPinned] = useState(false);
+  const [threadExpanded, setThreadExpanded] = useState(false);
   /** 正文视图：null=自动（未签名邮件优先 HTML；签名邮件显示被签名的纯文本） */
   const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
   /** 附件下载状态：index → 状态文案 */
@@ -101,6 +102,7 @@ export function MessageView(p: Props) {
     setCopied(false);
     setVerifyOpen(false);
     setVerifyPinned(false);
+    setThreadExpanded(false);
     setHtmlMode(null);
     setAttachState({});
   }, [uid]);
@@ -294,24 +296,37 @@ export function MessageView(p: Props) {
               <span>{p.thread.length} 封</span>
             </div>
             <div className="thread-list">
-              {p.thread.map((item) => {
-                const current = item.uid === m.meta.uid && item.folder === m.meta.folder;
-                return (
-                  <button
-                    key={`${item.accountId}/${item.folder}/${item.uid}`}
-                    className={`thread-item${current ? " current" : ""}${item.unread ? " unread" : ""}`}
-                    onClick={() => !current && p.onOpenThreadMail(item)}
-                    disabled={current}
-                  >
-                    <span className="thread-dot" />
-                    <span className="thread-main">
-                      <span className="thread-from">{item.fromName}</span>
-                      <span className="thread-preview">{item.preview || item.subject}</span>
-                    </span>
-                    <span className="thread-time">{item.dateDisplay}</span>
-                  </button>
-                );
-              })}
+              {(() => {
+                const collapsed = p.thread.length > 3 && !threadExpanded;
+                const visibleThread = collapsed ? [p.thread[0], ...p.thread.slice(-2)] : p.thread;
+                const hiddenCount = p.thread.length - visibleThread.length;
+                return visibleThread.map((item, index) => {
+                  const showExpand = collapsed && index === 1;
+                  const current = item.uid === m.meta.uid && item.folder === m.meta.folder;
+                  return (
+                    <Fragment key={`${item.accountId}/${item.folder}/${item.uid}`}>
+                      {showExpand && (
+                        <button className="thread-more" key="thread-more" onClick={() => setThreadExpanded(true)}>
+                          展开中间 {hiddenCount} 封
+                        </button>
+                      )}
+                      <button
+                        key={`${item.accountId}/${item.folder}/${item.uid}`}
+                        className={`thread-item${current ? " current" : ""}${item.unread ? " unread" : ""}`}
+                        onClick={() => !current && p.onOpenThreadMail(item)}
+                        disabled={current}
+                      >
+                        <span className="thread-dot" />
+                        <span className="thread-main">
+                          <span className="thread-from">{item.fromName}</span>
+                          <span className="thread-preview">{item.preview || item.subject}</span>
+                        </span>
+                        <span className="thread-time">{item.dateDisplay}</span>
+                      </button>
+                    </Fragment>
+                  );
+                });
+              })()}
             </div>
           </div>
         )}

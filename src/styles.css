@@ -325,6 +325,10 @@ input, textarea, select { font-family: inherit; }
   font-size: 11px; color: var(--amber); background: var(--amber-bg); border-bottom: 1px solid var(--amber-border);
   padding: 6px 14px; line-height: 1.5;
 }
+.list-notice-bar {
+  font-size: 11px; color: var(--mut); background: var(--bg-chip); border-bottom: 1px solid var(--border-soft);
+  padding: 6px 14px; line-height: 1.5;
+}
 .star-btn {
   width: 20px; height: 20px; border: none; border-radius: 6px; background: transparent;
   cursor: pointer; padding: 0; font-size: 13px; color: #adb2aa; line-height: 1; flex-shrink: 0;
@@ -445,6 +449,12 @@ input, textarea, select { font-family: inherit; }
 .thread-item:hover:not(:disabled) { background: #e4ebe4; }
 .thread-item.current { background: #d8e3d8; cursor: default; }
 .thread-item.unread .thread-from { color: var(--ink); font-weight: 700; }
+.thread-more {
+  width: 100%; height: 32px; border: 0; border-bottom: 1px solid rgba(210, 213, 206, 0.82);
+  background: #e6ece6; color: var(--mut); cursor: pointer;
+  font-size: 11.5px; font-weight: 600;
+}
+.thread-more:hover { background: #dde7dd; color: var(--ink-3); }
 .thread-dot { width: 6px; height: 6px; border-radius: 99px; background: #aeb3ab; }
 .thread-item.current .thread-dot { background: var(--seal); }
 .thread-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }

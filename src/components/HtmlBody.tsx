@@ -72,22 +72,30 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
 
   const style = parsed.createElement("style");
   style.textContent = `
-    html { background: transparent; }
+    html { width: 100% !important; min-width: 0 !important; background: transparent !important; overflow-x: hidden; }
+    *, *::before, *::after { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
            font-size: 13.5px; line-height: 1.65; color: #2A2E36; word-break: break-word;
-           background: transparent; }
-    img { max-width: 100%; height: auto; }
-    img[data-blocked] { min-width: 36px; min-height: 20px; background: #F1EDE3; border: 1px dashed #C7C1B2; }
+           width: 100% !important; min-width: 0 !important; background: transparent !important; overflow-x: hidden; }
+    table { max-width: 100% !important; }
+    td, th, div, p, section, article { max-width: 100%; }
+    img { max-width: 100% !important; height: auto; }
+    img[data-blocked] {
+      display: none !important; width: 0 !important; height: 0 !important;
+      min-width: 0 !important; min-height: 0 !important; margin: 0 !important;
+      border: 0 !important; padding: 0 !important;
+    }
     a { color: #1E6B49; }
     blockquote { border-left: 3px solid #E8E3D8; margin: 8px 0; padding: 2px 12px; color: #6E6A5F; }
     pre { white-space: pre-wrap; }
   `;
-  parsed.head.insertBefore(style, parsed.head.firstChild);
+  parsed.head.appendChild(style);
   return { doc: "<!doctype html>" + parsed.documentElement.outerHTML, blocked };
 }
 
 interface Props {
   html: string;
+  onZoomShortcut?: (delta: number) => void;
 }
 
 function zoomDeltaForKey(e: KeyboardEvent) {
@@ -155,7 +163,9 @@ export function HtmlBody(p: Props) {
       const delta = zoomDeltaForKey(ev);
       if (delta === null) return;
       ev.preventDefault();
+      p.onZoomShortcut?.(delta);
       window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
+      window.parent?.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
     };
     d.addEventListener("click", onClick, true);
     d.addEventListener("keydown", onKeydown, true);
