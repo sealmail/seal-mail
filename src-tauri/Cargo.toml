@@ -1,6 +1,6 @@
 [package]
 name = "sealmail"
-version = "0.1.5"
+version = "0.1.6"
 description = "SealMail 信印 — 可信邮件客户端"
 authors = ["SealMail"]
 edition = "2021"

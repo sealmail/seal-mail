@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { AppIcon } from "./AppIcon";
 import { Seal } from "./Seal";
 import { getCloseBehavior, getNotifyNewMail, setCloseBehavior, setNotifyNewMail, useLocalKey } from "../api";
 import { LedgerBindModal } from "./LedgerBindModal";
@@ -171,7 +172,7 @@ export function KeysView(p: Props) {
         </p>
 
         <div className="keys-hero">
-          <div className="seal-lg">印</div>
+          <AppIcon className="keys-hero-icon" />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)" }}>我的签名身份</div>
             <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "#1E6B49", marginTop: 3 }}>
@@ -284,17 +285,7 @@ export function KeysView(p: Props) {
         </div>
         <div className="card-list" style={{ padding: "16px 18px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div
-              style={{
-                width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-                background: "radial-gradient(circle at 36% 30%, #4ca67e, #1b5840)",
-                boxShadow: "0 0 0 1.5px var(--gold)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: "var(--serif)", fontSize: 19, color: "rgba(255,255,255,.92)",
-              }}
-            >
-              印
-            </div>
+            <AppIcon className="about-icon" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-2)" }}>SealMail 信印</div>
               {updated ? (

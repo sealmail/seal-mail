@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { AppIcon } from "./AppIcon";
 import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
 import { TextBody } from "./TextBody";
@@ -123,7 +124,7 @@ export function MessageView(p: Props) {
     return (
       <div className="msg-pane">
         <div className="empty-pane">
-          <div style={{ fontSize: 26, color: "var(--mut-4)" }}>印</div>
+          <AppIcon className="empty-icon" alt="" />
           选择一封邮件查看内容与验证结果
         </div>
       </div>

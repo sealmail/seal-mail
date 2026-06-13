@@ -96,6 +96,11 @@ input, textarea, select { font-family: inherit; }
   display: flex; align-items: center; justify-content: center;
   font-family: var(--serif); font-size: 11px; color: rgba(255, 255, 255, 0.92);
 }
+.app-icon {
+  display: block;
+  object-fit: contain;
+  user-select: none;
+}
 .brand-name { font-weight: 600; font-size: 13.5px; color: var(--ink-2); letter-spacing: 0.2px; }
 .brand-cn { font-family: var(--serif); font-size: 13px; color: var(--mut); }
 
@@ -352,6 +357,11 @@ input, textarea, select { font-family: inherit; }
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 12px; color: var(--mut-2); font-size: 12.5px; padding: 30px; text-align: center; line-height: 1.6;
 }
+.empty-icon {
+  width: 34px;
+  height: 34px;
+  opacity: 0.62;
+}
 
 /* ─── 邮件正文 ─── */
 .msg-pane { flex: 1; min-width: 420px; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
@@ -599,12 +609,16 @@ input, textarea, select { font-family: inherit; }
   background: linear-gradient(135deg, #eef2ed, #f8faf7); margin-bottom: 22px;
   display: flex; align-items: center; gap: 18px;
 }
-.keys-hero .seal-lg {
+.keys-hero-icon {
   width: 64px; height: 64px; border-radius: 16px;
-  background: radial-gradient(circle at 36% 30%, #4ca67e, #1b5840);
-  box-shadow: 0 0 0 2.5px var(--gold), inset 0 2px 4px rgba(255, 255, 255, 0.4), inset 0 -3px 6px rgba(0, 0, 0, 0.3);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-size: 34px; color: rgba(255, 255, 255, 0.92); flex-shrink: 0;
+  flex-shrink: 0;
+  filter: drop-shadow(0 8px 18px rgba(33, 71, 52, 0.16));
+}
+.about-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  flex-shrink: 0;
 }
 .section-label { font-size: 12px; font-weight: 700; color: var(--mut-3); letter-spacing: 0.5px; margin: 0 0 12px; }
 .card-list { border: 1px solid var(--border-2); border-radius: 12px; overflow: hidden; background: #fff; }
@@ -673,12 +687,9 @@ input, textarea, select { font-family: inherit; }
   padding: 40px;
 }
 .onboard-card { max-width: 560px; width: 100%; }
-.onboard-seal {
+.onboard-icon {
   width: 64px; height: 64px; border-radius: 16px; margin-bottom: 22px;
-  background: radial-gradient(circle at 36% 30%, #4ca67e, #1b5840);
-  box-shadow: 0 0 0 2.5px var(--gold), inset 0 2px 4px rgba(255, 255, 255, 0.4), inset 0 -3px 6px rgba(0, 0, 0, 0.3);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-size: 34px; color: rgba(255, 255, 255, 0.92);
+  filter: drop-shadow(0 9px 20px rgba(33, 71, 52, 0.18));
 }
 .onboard-card h1 { margin: 0; font-size: 26px; font-weight: 700; color: var(--ink); }
 .onboard-card .lead { margin: 10px 0 28px; font-size: 14px; color: var(--mut); line-height: 1.7; }

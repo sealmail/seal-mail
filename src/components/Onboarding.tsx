@@ -1,5 +1,6 @@
 import { shortFpr } from "../trust";
 import type { IdentityInfo } from "../types";
+import { AppIcon } from "./AppIcon";
 
 interface Props {
   identity: IdentityInfo | null;
@@ -19,7 +20,7 @@ export function Onboarding(p: Props) {
   return (
     <div className="onboard">
       <div className="onboard-card">
-        <div className="onboard-seal">印</div>
+        <AppIcon className="onboard-icon" />
         <h1>欢迎使用 SealMail 信印</h1>
         <p className="lead">
           一个通用邮件客户端，外加一层"证明邮件可信"的能力。
