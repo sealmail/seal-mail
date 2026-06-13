@@ -3,6 +3,7 @@
    地址/指纹/哈希一律 IBM Plex Mono，UI 用 IBM Plex Sans，印章字 IBM Plex Serif */
 
 :root {
+  --sealmail-zoom: 1;
   --bg: #f6f7f5;
   --bg-warm: #eef0ed;
   --bg-side: #ecefeb;
@@ -48,13 +49,24 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { margin: 0; }
+html {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
 body {
+  width: calc(100vw / var(--sealmail-zoom));
+  height: calc(100vh / var(--sealmail-zoom));
   font-family: var(--sans);
   background: var(--bg);
   color: var(--ink-2);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+#root {
+  width: 100%;
+  height: 100%;
 }
 button { font-family: inherit; }
 input, textarea, select { font-family: inherit; }
@@ -75,7 +87,7 @@ input, textarea, select { font-family: inherit; }
 }
 
 /* ─── 布局 ─── */
-.app { display: flex; flex-direction: column; height: 100vh; background: var(--bg); }
+.app { display: flex; flex-direction: column; width: 100%; height: 100%; background: var(--bg); }
 
 .titlebar {
   height: 46px;
@@ -746,7 +758,7 @@ input, textarea, select { font-family: inherit; }
 
 /* 独立邮件窗口 */
 .popout-shell {
-  height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink-2);
+  width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--bg); color: var(--ink-2);
 }
 .popout-head {
   flex-shrink: 0; padding: 22px 28px 18px; border-bottom: 1px solid var(--border);
