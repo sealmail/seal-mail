@@ -162,7 +162,16 @@ input, textarea, select { font-family: inherit; }
 .sidebar {
   width: 228px; flex-shrink: 0;
   background: var(--bg-side);
-  display: flex; flex-direction: column; padding: 14px 12px; gap: 4px; overflow-y: auto;
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.sidebar-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px; padding: 14px 12px 10px;
+}
+.sidebar-footer {
+  flex-shrink: 0; padding: 10px 12px 14px;
+  border-top: 1px solid rgba(118, 128, 112, 0.16);
+  background: var(--bg-side);
 }
 .identity-chip {
   text-align: left; border: 1px solid var(--border-3); background: #fff;
@@ -412,17 +421,20 @@ input, textarea, select { font-family: inherit; }
 .thread-preview { font-size: 11.5px; color: var(--mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-time { font-size: 11px; color: var(--mut-3); white-space: nowrap; }
 
-.attach-row { margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap; }
+.attach-row { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
 .attach {
   display: flex; align-items: center; gap: 10px; border: 1px solid var(--border-2);
-  border-radius: 9px; padding: 10px 14px; background: #fff;
+  border-radius: 9px; padding: 10px 12px; background: #fff; max-width: min(100%, 420px);
 }
 .attach .ext {
   width: 30px; height: 30px; border-radius: 6px; background: var(--bg-chip);
-  display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--mut); font-weight: 600;
+  display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--mut); font-weight: 600; flex-shrink: 0;
 }
-.attach .name { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.attach-main { min-width: 0; flex: 1; }
+.attach .name { font-size: 12px; font-weight: 600; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach .info { font-size: 10.5px; color: var(--mut-3); }
+.attach-state { margin-left: 6px; color: var(--jade); }
+.attach-save { height: 28px; padding: 0 12px; font-size: 11px; flex-shrink: 0; }
 
 /* 写信附件 chip */
 .attach-chip {

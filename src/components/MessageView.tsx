@@ -266,6 +266,25 @@ export function MessageView(p: Props) {
               )}
             </div>
           )}
+          {m.attachments.length > 0 && (
+            <div className="attach-row">
+              {m.attachments.map((a, i) => (
+                <div className="attach" key={i}>
+                  <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
+                  <div className="attach-main">
+                    <div className="name">{a.name}</div>
+                    <div className="info">
+                      {fmtSize(a.size)} · {a.mime}
+                      {attachState[i] && <span className="attach-state">{attachState[i]}</span>}
+                    </div>
+                  </div>
+                  <button className="btn-ghost attach-save" onClick={() => downloadAttachment(i, a.name)}>
+                    保存
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {p.thread.length > 1 && (
@@ -375,30 +394,6 @@ export function MessageView(p: Props) {
             </>
           );
         })()}
-
-        {m.attachments.length > 0 && (
-          <div className="attach-row">
-            {m.attachments.map((a, i) => (
-              <div className="attach" key={i}>
-                <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
-                <div>
-                  <div className="name">{a.name}</div>
-                  <div className="info">
-                    {fmtSize(a.size)} · {a.mime}
-                    {attachState[i] && <span style={{ marginLeft: 6 }}>{attachState[i]}</span>}
-                  </div>
-                </div>
-                <button
-                  className="btn-ghost"
-                  style={{ height: 26, padding: "0 10px", fontSize: 11 }}
-                  onClick={() => downloadAttachment(i, a.name)}
-                >
-                  保存
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

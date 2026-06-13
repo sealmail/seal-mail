@@ -46,74 +46,77 @@ interface Props {
 export function Sidebar(p: Props) {
   return (
     <div className="sidebar" style={{ width: p.width }}>
-      <div className="side-label">邮箱</div>
-      {p.folders.map((f) => {
-        const active = p.view === "mail" && p.currentFolder === f.name;
-        const isInbox = f.name === "INBOX";
-        const isRisk = f.name === RISK_FOLDER;
-        const deletable = !f.role && ![UNIFIED_FOLDER, "INBOX", RISK_FOLDER, DRAFTS_FOLDER].includes(f.name);
-        const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : f.name === DRAFTS_FOLDER ? p.draftCount : 0;
-        return (
-          <div key={f.name} className="side-row">
-            <button
-              className={`side-item${active ? " active" : ""}${deletable ? " has-action" : ""}`}
-              onClick={() => p.onSelectFolder(f.name)}
-            >
-              <span className="icon">{folderIcon(f.name, f.display)}</span>
-              <span className="label">{f.display}</span>
-              {count > 0 && <span className={`count${isRisk ? " red" : ""}`}>{count}</span>}
-            </button>
-            {deletable && (
+      <div className="sidebar-scroll">
+        <div className="side-label">邮箱</div>
+        {p.folders.map((f) => {
+          const active = p.view === "mail" && p.currentFolder === f.name;
+          const isInbox = f.name === "INBOX";
+          const isRisk = f.name === RISK_FOLDER;
+          const deletable = !f.role && ![UNIFIED_FOLDER, "INBOX", RISK_FOLDER, DRAFTS_FOLDER].includes(f.name);
+          const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : f.name === DRAFTS_FOLDER ? p.draftCount : 0;
+          return (
+            <div key={f.name} className="side-row">
               <button
-                className="side-action"
-                title={`删除目录 ${f.display}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  p.onDeleteFolder(f);
-                }}
+                className={`side-item${active ? " active" : ""}${deletable ? " has-action" : ""}`}
+                onClick={() => p.onSelectFolder(f.name)}
               >
-                ×
+                <span className="icon">{folderIcon(f.name, f.display)}</span>
+                <span className="label">{f.display}</span>
+                {count > 0 && <span className={`count${isRisk ? " red" : ""}`}>{count}</span>}
               </button>
-            )}
+              {deletable && (
+                <button
+                  className="side-action"
+                  title={`删除目录 ${f.display}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onDeleteFolder(f);
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          );
+        })}
+        <button className="side-add" onClick={p.onNewFolder}>
+          + 新建目录
+        </button>
+
+        <div style={{ height: 10 }} />
+        <div className="side-label">整理</div>
+        <button className="side-item" onClick={p.onOpenFilters}>
+          <span className="icon">⧉</span>
+          <span className="label">过滤规则</span>
+        </button>
+
+        <div style={{ height: 10 }} />
+        <div className="side-label">已连接账户</div>
+        {p.accounts.map((a) => (
+          <div
+            key={a.id}
+            className={`account-row${a.id === p.currentAccountId ? " active" : ""}`}
+            onClick={() => p.onSelectAccount(a.id)}
+          >
+            <div className="dot" style={{ background: a.id === p.currentAccountId ? "var(--jade)" : "var(--mut-4)" }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="addr">{a.email}</div>
+              <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>
+            </div>
           </div>
-        );
-      })}
-      <button className="side-add" onClick={p.onNewFolder}>
-        + 新建目录
-      </button>
+        ))}
+        <button className="side-add" onClick={p.onAddAccount}>
+          + 添加账户
+        </button>
+      </div>
 
-      <div style={{ height: 10 }} />
-      <div className="side-label">整理</div>
-      <button className="side-item" onClick={p.onOpenFilters}>
-        <span className="icon">⧉</span>
-        <span className="label">过滤规则</span>
-      </button>
-
-      <div style={{ height: 10 }} />
-      <div className="side-label">已连接账户</div>
-      {p.accounts.map((a) => (
-        <div
-          key={a.id}
-          className={`account-row${a.id === p.currentAccountId ? " active" : ""}`}
-          onClick={() => p.onSelectAccount(a.id)}
-        >
-          <div className="dot" style={{ background: a.id === p.currentAccountId ? "var(--jade)" : "var(--mut-4)" }} />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="addr">{a.email}</div>
-            <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>
-          </div>
-        </div>
-      ))}
-      <button className="side-add" onClick={p.onAddAccount}>
-        + 添加账户
-      </button>
-
-      <div style={{ flex: 1 }} />
-      <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
-        <span className="icon">⊟</span>
-        <span className="label">设置</span>
-        {p.identity && <span className="key-status" title={p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"} />}
-      </button>
+      <div className="sidebar-footer">
+        <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
+          <span className="icon">⊟</span>
+          <span className="label">设置</span>
+          {p.identity && <span className="key-status" title={p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"} />}
+        </button>
+      </div>
     </div>
   );
 }
