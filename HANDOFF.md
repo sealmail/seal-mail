@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-13（v14：修复缩放后 HTML 邮件正文滚动高度）
+> 最后更新：2026-06-13（v15：修复独立邮件窗口正文未居中）
 
 ## 项目定位
 
@@ -177,6 +177,12 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] Cmd/Ctrl +/-/0 缩放后广播 `sealmail-zoom-change`，让 HTML 邮件 iframe 重新测量高度
 - [x] HTML 邮件 iframe 按正文真实高度展开，不再用未缩放的 `window.innerHeight` 截断内容
 - [x] iframe 监听窗口 resize、字体加载、图片加载和 ResizeObserver，避免放大字体后底部内容滚不到
+
+### v15（独立邮件窗口阅读列居中 / v0.1.9）
+- [x] 独立邮件窗口内的工具栏、HTML iframe、纯文本正文统一使用居中的阅读列宽
+- [x] 覆盖纯文本正文原本的 `max-width: 640px` 靠左布局，减少宽窗口右侧空白
+- [x] HTML 模式 iframe 不再铺满整窗宽度，避免邮件背景在右侧形成大块白边
+- [x] 默认展示策略改为：只要邮件包含 HTML 正文，就默认使用 HTML 模式，用户仍可切换纯文本
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）

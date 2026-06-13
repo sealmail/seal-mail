@@ -372,8 +372,7 @@ export function MessageView(p: Props) {
         {(() => {
           const hasHtml = !!m.bodyHtml;
           const signed = m.verify.status !== "unsigned";
-          const safeDefaultHtml = m.verify.status === "verified" && !m.meta.risk && defaultShowHtml(m.bodyHtml);
-          const showHtml = hasHtml && (htmlMode ?? safeDefaultHtml);
+          const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(m.bodyHtml));
           return (
             <>
               {hasHtml && (

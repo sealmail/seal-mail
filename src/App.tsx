@@ -35,7 +35,7 @@ function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
 }
 
 function defaultShowHtml(mail: EmailFull) {
-  return mail.verify.status === "verified" && !mail.meta.risk && !!mail.bodyHtml?.trim();
+  return !!mail.bodyHtml?.trim();
 }
 
 function clamp(n: number, min: number, max: number) {

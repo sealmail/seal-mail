@@ -743,3 +743,12 @@ input, textarea, select { font-family: inherit; }
 .popout-body {
   flex: 1; min-height: 0; overflow-y: auto; padding: 24px 34px 40px;
 }
+.popout-body > .body-toolbar,
+.popout-body > .html-body-wrap,
+.popout-body > .msg-body {
+  width: min(100%, 980px);
+  max-width: none;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
