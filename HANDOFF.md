@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-12（v13：UI 配色中性化——接近 Codex 的灰白底、低饱和绿色强调）
+> 最后更新：2026-06-13（v14：修复缩放后 HTML 邮件正文滚动高度）
 
 ## 项目定位
 
@@ -172,6 +172,11 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] 侧栏、标题栏、列表、阅读窗、线程条、弹层、设置页、欢迎页等大面积背景/边框/hover/active 色统一去黄
 - [x] 组件内联颜色同步改为 CSS 变量（写信弹窗、账户/OAuth、Ledger、身份密钥、档案、风险弹窗、验证栏等）
 - [x] 保留风险红、签名金、可信绿的语义色，但降低大面积黄色占比
+
+### v14（缩放滚动修复 / v0.1.8）
+- [x] Cmd/Ctrl +/-/0 缩放后广播 `sealmail-zoom-change`，让 HTML 邮件 iframe 重新测量高度
+- [x] HTML 邮件 iframe 按正文真实高度展开，不再用未缩放的 `window.innerHeight` 截断内容
+- [x] iframe 监听窗口 resize、字体加载、图片加载和 ResizeObserver，避免放大字体后底部内容滚不到
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）

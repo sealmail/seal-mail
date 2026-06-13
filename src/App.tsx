@@ -60,6 +60,7 @@ function useZoomShortcuts() {
   useEffect(() => {
     (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
     localStorage.setItem("sealmail.zoom", String(zoom));
+    window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
   }, [zoom]);
 
   useEffect(() => {

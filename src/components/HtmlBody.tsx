@@ -103,39 +103,78 @@ function zoomDeltaForKey(e: KeyboardEvent) {
 export function HtmlBody(p: Props) {
   const [allowRemote, setAllowRemote] = useState(false);
   const ref = useRef<HTMLIFrameElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => setAllowRemote(false), [p.html]);
 
   const { doc, blocked } = useMemo(() => sanitizeEmailHtml(p.html, allowRemote), [p.html, allowRemote]);
 
   function onLoad() {
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+
     const frame = ref.current;
     const d = frame?.contentDocument;
     if (!frame || !d) return;
-    const max = Math.max(360, window.innerHeight - frame.getBoundingClientRect().top - 34);
-    frame.style.height = `${Math.min(d.documentElement.scrollHeight + 12, max)}px`;
+
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const nextHeight = Math.max(
+          120,
+          d.documentElement.scrollHeight,
+          d.body?.scrollHeight ?? 0,
+          d.documentElement.offsetHeight,
+          d.body?.offsetHeight ?? 0
+        );
+        frame.style.height = `${nextHeight + 12}px`;
+      });
+    };
+
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("sealmail-zoom-change", measure);
+    d.fonts?.ready.then(measure).catch(() => undefined);
+    d.querySelectorAll("img").forEach((img) => {
+      img.addEventListener("load", measure);
+      img.addEventListener("error", measure);
+    });
+    const observer = new ResizeObserver(measure);
+    observer.observe(d.documentElement);
+    if (d.body) observer.observe(d.body);
+
     // 链接一律交给系统浏览器打开
-    d.addEventListener(
-      "click",
-      (ev) => {
-        const a = (ev.target as HTMLElement | null)?.closest?.("a");
-        if (!a) return;
-        ev.preventDefault();
-        void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
-      },
-      true
-    );
-    d.addEventListener(
-      "keydown",
-      (ev) => {
-        const delta = zoomDeltaForKey(ev);
-        if (delta === null) return;
-        ev.preventDefault();
-        window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
-      },
-      true
-    );
+    const onClick = (ev: MouseEvent) => {
+      const a = (ev.target as HTMLElement | null)?.closest?.("a");
+      if (!a) return;
+      ev.preventDefault();
+      void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
+    };
+    const onKeydown = (ev: KeyboardEvent) => {
+      const delta = zoomDeltaForKey(ev);
+      if (delta === null) return;
+      ev.preventDefault();
+      window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
+    };
+    d.addEventListener("click", onClick, true);
+    d.addEventListener("keydown", onKeydown, true);
+
+    cleanupRef.current = () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("sealmail-zoom-change", measure);
+      d.querySelectorAll("img").forEach((img) => {
+        img.removeEventListener("load", measure);
+        img.removeEventListener("error", measure);
+      });
+      d.removeEventListener("click", onClick, true);
+      d.removeEventListener("keydown", onKeydown, true);
+    };
   }
+
+  useEffect(() => () => cleanupRef.current?.(), []);
 
   return (
     <div className="html-body-wrap">
