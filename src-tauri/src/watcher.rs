@@ -6,7 +6,7 @@
 
 use crate::models::*;
 use crate::store::AppState;
-use crate::{imap_client, oauth, pop3_client};
+use crate::{imap_client, mail, oauth, pop3_client};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -49,13 +49,19 @@ pub fn ensure_watchers(app: &AppHandle) {
     }
 }
 
-fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32) {
+#[derive(Clone, Debug)]
+struct MailNotice {
+    from: String,
+    subject: String,
+}
+
+fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec<MailNotice>) {
     let _ = app.emit("new-mail", serde_json::json!({ "accountId": account_id }));
-    notify_new_mail(app, account_id, new_count);
+    notify_new_mail(app, account_id, new_count, &notices);
 }
 
 /// 窗口未聚焦且偏好开启时弹系统通知横幅
-fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32) {
+fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &[MailNotice]) {
     use tauri_plugin_notification::NotificationExt;
     let (enabled, email) = {
         let state = app.state::<AppState>();
@@ -78,20 +84,61 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32) {
     if focused {
         return; // 正在看着应用就不用打扰了
     }
-    let body = if new_count > 1 {
-        format!("{} 收到 {} 封新邮件", email, new_count)
+    let (title, body) = if notices.len() == 1 {
+        let n = &notices[0];
+        (
+            truncate_for_notice(&n.subject, 80),
+            format!("{} · {}", truncate_for_notice(&n.from, 80), email),
+        )
+    } else if !notices.is_empty() {
+        let mut lines = notices
+            .iter()
+            .take(3)
+            .map(|n| {
+                format!(
+                    "{}：{}",
+                    truncate_for_notice(&n.from, 32),
+                    truncate_for_notice(&n.subject, 48)
+                )
+            })
+            .collect::<Vec<_>>();
+        if new_count as usize > lines.len() {
+            lines.push(format!("还有 {} 封", new_count as usize - lines.len()));
+        }
+        (format!("收到 {} 封新邮件", new_count), lines.join("\n"))
+    } else if new_count > 1 {
+        (format!("收到 {} 封新邮件", new_count), email)
     } else {
-        format!("{} 收到新邮件", email)
+        ("收到新邮件".to_string(), email)
     };
-    if let Err(e) = app
-        .notification()
-        .builder()
-        .title("SealMail 信印")
-        .body(body)
-        .show()
-    {
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
         eprintln!("[watcher] 系统通知发送失败: {}", e);
     }
+}
+
+fn truncate_for_notice(s: &str, max_chars: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn notice_from_raw(raw: &[u8]) -> Option<MailNotice> {
+    let meta = mail::parse_email(raw, 0, "", "INBOX", true, false, &[])
+        .ok()?
+        .meta;
+    let from = if meta.from_name == meta.from_addr || meta.from_addr.is_empty() {
+        meta.from_name
+    } else {
+        format!("{} <{}>", meta.from_name, meta.from_addr)
+    };
+    Some(MailNotice {
+        from,
+        subject: meta.subject,
+    })
 }
 
 /// 取账户凭据（OAuth 令牌临近过期则阻塞刷新并回写）。
@@ -158,7 +205,10 @@ fn idle_session(
 ) -> Result<(), String> {
     let mut sess = imap_client::connect(account, secret)?;
     let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-    check_exists(app, account_id, mb.exists, last_exists);
+    let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
+    check_exists(app, account_id, mb.exists, last_exists, || {
+        fetch_imap_notices(account, secret, new_count)
+    });
     for _ in 0..IDLE_ROUNDS_PER_CONN {
         if !account_exists(app, account_id) {
             let _ = sess.logout();
@@ -170,19 +220,51 @@ fn idle_session(
             .wait_with_timeout(IDLE_ROUND)
             .map_err(|e| e.to_string())?;
         let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-        check_exists(app, account_id, mb.exists, last_exists);
+        let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
+        check_exists(app, account_id, mb.exists, last_exists, || {
+            fetch_imap_notices(account, secret, new_count)
+        });
     }
     let _ = sess.logout();
     Ok(())
 }
 
-fn check_exists(app: &AppHandle, account_id: &str, exists: u32, last: &mut Option<u32>) {
+fn check_exists<F>(
+    app: &AppHandle,
+    account_id: &str,
+    exists: u32,
+    last: &mut Option<u32>,
+    fetch_notices: F,
+) where
+    F: FnOnce() -> Vec<MailNotice>,
+{
     if let Some(prev) = *last {
         if exists > prev {
-            emit_new_mail(app, account_id, exists - prev);
+            emit_new_mail(app, account_id, exists - prev, fetch_notices());
         }
     }
     *last = Some(exists);
+}
+
+fn fetch_imap_notices(
+    account: &Account,
+    secret: &AccountSecret,
+    new_count: u32,
+) -> Vec<MailNotice> {
+    match imap_client::fetch_latest(account, secret, "INBOX", new_count.min(3)) {
+        Ok(mails) => {
+            let mut notices = mails
+                .iter()
+                .filter_map(|m| notice_from_raw(&m.raw))
+                .collect::<Vec<_>>();
+            notices.reverse();
+            notices
+        }
+        Err(e) => {
+            eprintln!("[watcher] {} 拉取通知邮件详情失败: {}", account.id, e);
+            Vec::new()
+        }
+    }
 }
 
 fn watch_pop3(app: &AppHandle, account_id: &str) {
@@ -195,7 +277,32 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                 match pop3_client::Pop3Client::connect(&account, &secret) {
                     Ok(mut c) => {
                         match c.message_count() {
-                            Ok(n) => check_exists(app, account_id, n, &mut last),
+                            Ok(n) => {
+                                let notices = if let Some(prev) = last {
+                                    if n > prev {
+                                        let start = prev + 1;
+                                        (start..=n)
+                                            .rev()
+                                            .take(3)
+                                            .filter_map(|seq| match c.retrieve(seq) {
+                                                Ok(raw) => notice_from_raw(&raw),
+                                                Err(e) => {
+                                                    eprintln!(
+                                                        "[watcher] {} 拉取 POP3 通知邮件详情失败 seq={}: {}",
+                                                        account_id, seq, e
+                                                    );
+                                                    None
+                                                }
+                                            })
+                                            .collect()
+                                    } else {
+                                        Vec::new()
+                                    }
+                                } else {
+                                    Vec::new()
+                                };
+                                check_exists(app, account_id, n, &mut last, || notices);
+                            }
                             Err(e) => eprintln!("[watcher] {} POP3 STAT 失败: {}", account_id, e),
                         }
                         c.quit();

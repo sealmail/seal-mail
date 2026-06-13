@@ -460,6 +460,51 @@ pub fn fetch_older(
     Ok(mails)
 }
 
+/// 拉取目录里最新的若干封邮件原文。用于系统通知展示“是什么邮件”。
+pub fn fetch_latest(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    count: u32,
+) -> Result<Vec<RawMail>, String> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let mut sess = connect(account, secret)?;
+    let mailbox = sess
+        .select(folder)
+        .map_err(|e| format!("无法打开目录 {}: {}", folder, e))?;
+    if mailbox.exists == 0 {
+        let _ = sess.logout();
+        return Ok(Vec::new());
+    }
+    let start = mailbox
+        .exists
+        .saturating_sub(count.saturating_sub(1))
+        .max(1);
+    let fetches = sess
+        .fetch(
+            format!("{}:{}", start, mailbox.exists),
+            "(UID FLAGS BODY.PEEK[])",
+        )
+        .map_err(|e| format!("拉取最新邮件失败: {}", e))?;
+    let mut mails = Vec::new();
+    for f in fetches.iter() {
+        let (Some(uid), Some(raw)) = (f.uid, f.body()) else {
+            continue;
+        };
+        let (unread, flagged) = flags_of(f);
+        mails.push(RawMail {
+            uid,
+            unread,
+            flagged,
+            raw: raw.to_vec(),
+        });
+    }
+    let _ = sess.logout();
+    Ok(mails)
+}
+
 pub fn set_flagged(
     account: &Account,
     secret: &AccountSecret,
