@@ -9,7 +9,7 @@ use crate::store::AppState;
 use crate::{imap_client, mail, oauth, pop3_client};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 单轮 IDLE 等待时长；到时会重新 EXAMINE 校对一次再继续
@@ -66,8 +66,8 @@ pub struct NotificationMailTarget {
     message_id: Option<String>,
 }
 
-fn pending_notification_target() -> &'static Mutex<Option<NotificationMailTarget>> {
-    static PENDING: OnceLock<Mutex<Option<NotificationMailTarget>>> = OnceLock::new();
+fn pending_notification_target() -> &'static Mutex<Option<(Instant, NotificationMailTarget)>> {
+    static PENDING: OnceLock<Mutex<Option<(Instant, NotificationMailTarget)>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
@@ -128,12 +128,15 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
         ("收到新邮件".to_string(), email)
     };
     if let Some(n) = notices.first() {
-        *pending_notification_target().lock().unwrap() = Some(NotificationMailTarget {
-            account_id: account_id.to_string(),
-            folder: "INBOX".to_string(),
-            uid: n.uid,
-            message_id: n.message_id.clone(),
-        });
+        *pending_notification_target().lock().unwrap() = Some((
+            Instant::now(),
+            NotificationMailTarget {
+                account_id: account_id.to_string(),
+                folder: "INBOX".to_string(),
+                uid: n.uid,
+                message_id: n.message_id.clone(),
+            },
+        ));
     }
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         eprintln!("[watcher] 系统通知发送失败: {}", e);
@@ -141,7 +144,11 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
 }
 
 pub fn emit_pending_notification_open(app: &AppHandle) {
-    let target = pending_notification_target().lock().unwrap().take();
+    let target = pending_notification_target()
+        .lock()
+        .unwrap()
+        .take()
+        .and_then(|(created_at, target)| (created_at.elapsed() <= Duration::from_secs(5 * 60)).then_some(target));
     let Some(target) = target else {
         return;
     };

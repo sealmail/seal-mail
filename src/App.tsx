@@ -623,12 +623,21 @@ function MailApp() {
     }
   }, [folder, loading, selectedKey, shownMessages, view]);
 
-  const riskCount = useMemo(() => inboxMetas.filter(isRisky).length, [inboxMetas]);
+  const riskUnread = useMemo(() => inboxMetas.filter((m) => m.unread && isRisky(m)).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
   const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
   const categoryCounts = useMemo(() => {
     const counts: Record<MailCategory, number> = { all: messages.length, personal: 0, business: 0, ads: 0 };
     messages.forEach((m) => {
+      counts[classifyMail(m)]++;
+    });
+    return counts;
+  }, [messages]);
+  const categoryUnreadCounts = useMemo(() => {
+    const counts: Record<MailCategory, number> = { all: 0, personal: 0, business: 0, ads: 0 };
+    messages.forEach((m) => {
+      if (!m.unread) return;
+      counts.all++;
       counts[classifyMail(m)]++;
     });
     return counts;
@@ -961,7 +970,7 @@ function MailApp() {
             currentAccountId={accountId}
             folders={folders}
             currentFolder={folder}
-            riskCount={riskCount}
+            riskCount={riskUnread}
             inboxUnread={inboxUnread}
             draftCount={drafts.filter((d) => d.accountId === accountId).length}
             view={view}
@@ -1031,6 +1040,7 @@ function MailApp() {
                 filterMode={filterMode}
                 categoryMode={categoryMode}
                 categoryCounts={categoryCounts}
+                categoryUnreadCounts={categoryUnreadCounts}
                 unreadCount={listUnread}
                 loadedCount={shownMessages.length}
                 totalCount={folder === RISK_FOLDER ? messages.length : total}

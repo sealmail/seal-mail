@@ -17,6 +17,7 @@ interface Props {
   filterMode: "all" | "unread" | "flagged";
   categoryMode: MailCategory;
   categoryCounts: Record<MailCategory, number>;
+  categoryUnreadCounts: Record<MailCategory, number>;
   unreadCount: number;
   loadedCount: number;
   totalCount: number;
@@ -84,6 +85,7 @@ export function MailList(p: Props) {
           <button className={`category-seg${p.categoryMode === c ? " on" : ""}`} key={c} onClick={() => p.onCategoryMode(c)}>
             {CATEGORY_LABEL[c]}
             <span>{p.categoryCounts[c]}</span>
+            {p.categoryUnreadCounts[c] > 0 && <b className="category-unread">{p.categoryUnreadCounts[c]}</b>}
           </button>
         ))}
       </div>

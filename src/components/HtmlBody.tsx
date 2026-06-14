@@ -51,6 +51,8 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
         el.removeAttribute(attr.name);
       } else if ((n === "src" || n === "href" || n === "xlink:href") && isSvgDataUrl(attr.value)) {
         el.removeAttribute(attr.name);
+      } else if (n === "bgcolor" || n === "background") {
+        el.removeAttribute(attr.name);
       }
     }
     if (el.tagName === "IMG") {
@@ -77,6 +79,13 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
     body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
            font-size: 13.5px; line-height: 1.65; color: #2A2E36; word-break: break-word;
            width: 100% !important; min-width: 0 !important; background: transparent !important; overflow-x: hidden; }
+    body > :first-child { margin-top: 0 !important; }
+    body > :last-child { margin-bottom: 0 !important; }
+    body, center, table, tbody, thead, tfoot, tr, td, th, div, section, article, main {
+      background-color: transparent !important;
+      background-image: none !important;
+    }
+    [width] { max-width: 100% !important; }
     table { max-width: 100% !important; }
     td, th, div, p, section, article { max-width: 100%; }
     img { max-width: 100% !important; height: auto; }
@@ -116,6 +125,7 @@ export function HtmlBody(p: Props) {
   useEffect(() => setAllowRemote(false), [p.html]);
 
   const { doc, blocked } = useMemo(() => sanitizeEmailHtml(p.html, allowRemote), [p.html, allowRemote]);
+  const frameKey = useMemo(() => `${allowRemote ? "remote" : "safe"}-${doc.length}-${p.html.length}`, [allowRemote, doc, p.html]);
 
   function onLoad() {
     cleanupRef.current?.();
@@ -196,7 +206,7 @@ export function HtmlBody(p: Props) {
           </button>
         </div>
       )}
-      <iframe ref={ref} className="html-body" sandbox="allow-same-origin" srcDoc={doc} onLoad={onLoad} title="邮件正文" />
+      <iframe key={frameKey} ref={ref} className="html-body" sandbox="allow-same-origin" srcDoc={doc} onLoad={onLoad} title="邮件正文" />
     </div>
   );
 }
