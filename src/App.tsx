@@ -35,6 +35,13 @@ function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.uid}`;
 }
 
+type NotificationMailTarget = {
+  accountId: string;
+  folder: string;
+  uid?: number | null;
+  messageId?: string | null;
+};
+
 function defaultShowHtml(mail: EmailFull) {
   return !!mail.bodyHtml?.trim();
 }
@@ -509,6 +516,62 @@ function MailApp() {
       setListError(String(e));
     }
   }
+
+  async function openNotificationMail(target: NotificationMailTarget) {
+    const targetFolder = target.folder || "INBOX";
+    setAccountId(target.accountId);
+    setFolder(targetFolder);
+    setSearch("");
+    setFilterMode("all");
+    setCategoryMode("all");
+    setView("mail");
+    setListError(null);
+    setLoading(true);
+    setSyncing(true);
+    try {
+      await refreshFolders(target.accountId).catch(() => {});
+      await api.syncMessages(target.accountId, targetFolder).catch((e) => {
+        console.warn("同步通知邮件失败，尝试从本地缓存打开", e);
+      });
+      const res = await api.listCached(target.accountId, targetFolder, 0, Math.max(loadedRef.current, PAGE));
+      const metas = [...res.metas].sort((a, b) => b.timestamp - a.timestamp);
+      loadedRef.current = metas.length;
+      setTotal(res.total);
+      if (targetFolder === "INBOX") setInboxMetas(metas);
+      setMessages(metas);
+      retainSelection(metas);
+
+      const meta =
+        target.uid != null
+          ? metas.find((m) => m.uid === target.uid)
+          : metas.find((m) => target.messageId && m.messageId === target.messageId);
+      if (meta) {
+        await selectMail(meta);
+      } else if (target.uid != null) {
+        const full = await api.getMessage(target.accountId, targetFolder, target.uid);
+        if (full.meta.unread) api.setRead(target.accountId, targetFolder, target.uid, true).catch(() => {});
+        setSelectedKey(mailKey(full.meta));
+        setSelected(full.meta.unread ? { ...full, meta: { ...full.meta, unread: false } } : full);
+        setThread([]);
+      } else {
+        setListError("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。");
+      }
+    } catch (e) {
+      setListError(`打开通知邮件失败：${e}`);
+    } finally {
+      setLoading(false);
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    const unlisten = listen<NotificationMailTarget>("open-notification-mail", (e) => {
+      openNotificationMail(e.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [accountId, refreshFolders, retainSelection]);
 
   useEffect(() => {
     if (!selected) {

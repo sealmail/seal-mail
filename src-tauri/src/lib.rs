@@ -1444,6 +1444,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
+            if matches!(
+                _event,
+                tauri::RunEvent::Reopen { .. } | tauri::RunEvent::Opened { .. }
+            ) {
+                watcher::emit_pending_notification_open(_app);
+            }
             // macOS：窗口隐藏后点程序坞图标重新打开
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {

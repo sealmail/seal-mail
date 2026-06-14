@@ -51,8 +51,24 @@ pub fn ensure_watchers(app: &AppHandle) {
 
 #[derive(Clone, Debug)]
 struct MailNotice {
-    from: String,
+    uid: Option<u32>,
+    message_id: Option<String>,
     subject: String,
+    preview: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationMailTarget {
+    account_id: String,
+    folder: String,
+    uid: Option<u32>,
+    message_id: Option<String>,
+}
+
+fn pending_notification_target() -> &'static Mutex<Option<NotificationMailTarget>> {
+    static PENDING: OnceLock<Mutex<Option<NotificationMailTarget>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(None))
 }
 
 fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec<MailNotice>) {
@@ -88,7 +104,7 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
         let n = &notices[0];
         (
             truncate_for_notice(&n.subject, 80),
-            format!("{} · {}", truncate_for_notice(&n.from, 80), email),
+            truncate_for_notice(&n.preview, 140),
         )
     } else if !notices.is_empty() {
         let mut lines = notices
@@ -97,8 +113,8 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
             .map(|n| {
                 format!(
                     "{}：{}",
-                    truncate_for_notice(&n.from, 32),
-                    truncate_for_notice(&n.subject, 48)
+                    truncate_for_notice(&n.subject, 36),
+                    truncate_for_notice(&n.preview, 44)
                 )
             })
             .collect::<Vec<_>>();
@@ -111,9 +127,30 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
     } else {
         ("收到新邮件".to_string(), email)
     };
+    if let Some(n) = notices.first() {
+        *pending_notification_target().lock().unwrap() = Some(NotificationMailTarget {
+            account_id: account_id.to_string(),
+            folder: "INBOX".to_string(),
+            uid: n.uid,
+            message_id: n.message_id.clone(),
+        });
+    }
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         eprintln!("[watcher] 系统通知发送失败: {}", e);
     }
+}
+
+pub fn emit_pending_notification_open(app: &AppHandle) {
+    let target = pending_notification_target().lock().unwrap().take();
+    let Some(target) = target else {
+        return;
+    };
+    if let Some(window) = app.webview_windows().values().next() {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit("open-notification-mail", target);
 }
 
 fn truncate_for_notice(s: &str, max_chars: usize) -> String {
@@ -126,18 +163,15 @@ fn truncate_for_notice(s: &str, max_chars: usize) -> String {
     out
 }
 
-fn notice_from_raw(raw: &[u8]) -> Option<MailNotice> {
-    let meta = mail::parse_email(raw, 0, "", "INBOX", true, false, &[])
+fn notice_from_raw(raw: &[u8], uid: Option<u32>) -> Option<MailNotice> {
+    let meta = mail::parse_email(raw, uid.unwrap_or(0), "", "INBOX", true, false, &[])
         .ok()?
         .meta;
-    let from = if meta.from_name == meta.from_addr || meta.from_addr.is_empty() {
-        meta.from_name
-    } else {
-        format!("{} <{}>", meta.from_name, meta.from_addr)
-    };
     Some(MailNotice {
-        from,
+        uid,
+        message_id: meta.message_id,
         subject: meta.subject,
+        preview: meta.preview,
     })
 }
 
@@ -255,7 +289,7 @@ fn fetch_imap_notices(
         Ok(mails) => {
             let mut notices = mails
                 .iter()
-                .filter_map(|m| notice_from_raw(&m.raw))
+                .filter_map(|m| notice_from_raw(&m.raw, Some(m.uid)))
                 .collect::<Vec<_>>();
             notices.reverse();
             notices
@@ -285,7 +319,7 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                                             .rev()
                                             .take(3)
                                             .filter_map(|seq| match c.retrieve(seq) {
-                                                Ok(raw) => notice_from_raw(&raw),
+                                                Ok(raw) => notice_from_raw(&raw, None),
                                                 Err(e) => {
                                                     eprintln!(
                                                         "[watcher] {} 拉取 POP3 通知邮件详情失败 seq={}: {}",
