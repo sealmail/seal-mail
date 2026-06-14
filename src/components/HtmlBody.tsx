@@ -140,13 +140,7 @@ export function HtmlBody(p: Props) {
     const measure = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const contentWidth = Math.max(
-          0,
-          d.body?.scrollWidth ?? 0,
-          d.body?.offsetWidth ?? 0,
-          ...Array.from(d.body?.children ?? []).map((el) => Math.ceil((el as HTMLElement).getBoundingClientRect().right))
-        );
-        frame.style.width = contentWidth > 0 ? `${Math.min(contentWidth, frame.parentElement?.clientWidth ?? contentWidth)}px` : "100%";
+        frame.style.width = "100%";
         const nextHeight = Math.max(
           120,
           d.documentElement.scrollHeight,

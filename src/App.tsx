@@ -721,6 +721,47 @@ function MailApp() {
     }
   }
 
+  function preferredBlockFolder() {
+    return (
+      folders.find((f) => f.role === "junk") ??
+      folders.find((f) => /垃圾|junk|spam/i.test(`${f.display} ${f.name}`)) ??
+      folders.find((f) => f.role === "trash") ??
+      folders.find((f) => /已删除|回收站|trash|deleted/i.test(`${f.display} ${f.name}`))
+    );
+  }
+
+  async function handleBlockSender() {
+    if (!selected) return;
+    const target = preferredBlockFolder();
+    if (!target) {
+      setListError("没有找到垃圾邮件或已删除邮件目录，请先创建一个目录后再屏蔽发件人。");
+      return;
+    }
+    const email = selected.meta.fromAddr.trim().toLowerCase();
+    try {
+      const rules = await api.saveFilter({
+        id: "",
+        name: `屏蔽 ${email}`,
+        accountId: selected.meta.accountId,
+        field: "from",
+        op: "contains",
+        value: email,
+        targetFolder: target.name,
+        markRead: true,
+        enabled: true,
+      });
+      setState((s) => (s ? { ...s, filters: rules } : s));
+      if (selected.meta.folder !== target.name) {
+        await api.moveMessage(selected.meta.accountId, selected.meta.folder, selected.meta.uid, target.name);
+      }
+      clearSelection();
+      loadMessages();
+      refreshFolders(accountId).catch(() => {});
+    } catch (e) {
+      setListError(String(e));
+    }
+  }
+
   // 当前选中邮件所在目录是否是回收站（回收站内删除 = 物理删除，需确认）
   const selectedInTrash = !!selected && folders.find((f) => f.name === selected.meta.folder)?.role === "trash";
   const selectedInArchive = !!selected && folders.find((f) => f.name === selected.meta.folder)?.role === "archive";
@@ -1082,6 +1123,7 @@ function MailApp() {
                 onOpenProfile={() => setProfileOpen(true)}
                 onMarkUnread={handleMarkUnread}
                 onToggleFlag={() => selected && handleToggleFlag(selected.meta)}
+                onBlockSender={handleBlockSender}
               />
             </>
           )}

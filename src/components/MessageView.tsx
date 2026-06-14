@@ -26,6 +26,7 @@ interface Props {
   onOpenProfile: () => void;
   onMarkUnread: () => void;
   onToggleFlag: () => void;
+  onBlockSender: () => void;
 }
 
 function fmtSize(n: number) {
@@ -245,6 +246,9 @@ export function MessageView(p: Props) {
                 </button>
                 <button className="btn-ghost" onClick={p.onMarkUnread} title="标为未读">
                   标为未读
+                </button>
+                <button className="btn-ghost" onClick={p.onBlockSender} title="后续来自该邮箱的邮件移入垃圾邮件">
+                  屏蔽发件人
                 </button>
                 <button className="btn-ghost" onClick={p.onDelete} title="删除">
                   删除
