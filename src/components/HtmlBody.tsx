@@ -104,15 +104,16 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
 
 interface Props {
   html: string;
-  onZoomShortcut?: (delta: number) => void;
 }
 
-function zoomDeltaForKey(e: KeyboardEvent) {
+type ZoomShortcut = { kind: "step"; delta: number } | { kind: "reset" };
+
+function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   const meta = e.metaKey || e.ctrlKey;
   if (!meta || e.altKey) return null;
-  if (e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd") return 0.1;
-  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return -0.1;
-  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return 0;
+  if (e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd") return { kind: "step", delta: 0.1 };
+  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return { kind: "step", delta: -0.1 };
+  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return { kind: "reset" };
   return null;
 }
 
@@ -139,6 +140,13 @@ export function HtmlBody(p: Props) {
     const measure = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        const contentWidth = Math.max(
+          0,
+          d.body?.scrollWidth ?? 0,
+          d.body?.offsetWidth ?? 0,
+          ...Array.from(d.body?.children ?? []).map((el) => Math.ceil((el as HTMLElement).getBoundingClientRect().right))
+        );
+        frame.style.width = contentWidth > 0 ? `${Math.min(contentWidth, frame.parentElement?.clientWidth ?? contentWidth)}px` : "100%";
         const nextHeight = Math.max(
           120,
           d.documentElement.scrollHeight,
@@ -170,12 +178,11 @@ export function HtmlBody(p: Props) {
       void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
     };
     const onKeydown = (ev: KeyboardEvent) => {
-      const delta = zoomDeltaForKey(ev);
-      if (delta === null) return;
+      const shortcut = zoomShortcutForKey(ev);
+      if (!shortcut) return;
       ev.preventDefault();
-      p.onZoomShortcut?.(delta);
-      window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
-      window.parent?.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
+      window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
+      window.parent?.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
     };
     d.addEventListener("click", onClick, true);
     d.addEventListener("keydown", onKeydown, true);

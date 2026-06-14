@@ -50,12 +50,14 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-function zoomDeltaForKey(e: KeyboardEvent) {
+type ZoomShortcut = { kind: "step"; delta: number } | { kind: "reset" };
+
+function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   const meta = e.metaKey || e.ctrlKey;
   if (!meta || e.altKey) return null;
-  if (e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd") return 0.1;
-  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return -0.1;
-  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return 0;
+  if (e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd") return { kind: "step", delta: 0.1 };
+  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return { kind: "step", delta: -0.1 };
+  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return { kind: "reset" };
   return null;
 }
 
@@ -73,22 +75,22 @@ function useZoomShortcuts() {
   }, [zoom]);
 
   useEffect(() => {
-    function applyZoomDelta(delta: number) {
-      if (delta === 0) setZoom(1);
-      else setZoom((z) => clamp(Math.round((z + delta) * 10) / 10, 0.7, 1.6));
+    function applyZoomShortcut(shortcut: ZoomShortcut) {
+      if (shortcut.kind === "reset") setZoom(1);
+      else setZoom((z) => clamp(Math.round((z + shortcut.delta) * 10) / 10, 0.7, 1.6));
     }
 
     function onKey(e: KeyboardEvent) {
-      const delta = zoomDeltaForKey(e);
-      if (delta === null) return;
+      const shortcut = zoomShortcutForKey(e);
+      if (!shortcut) return;
       e.preventDefault();
       e.stopPropagation();
-      applyZoomDelta(delta);
+      applyZoomShortcut(shortcut);
     }
 
     function onFrameShortcut(e: Event) {
-      const delta = (e as CustomEvent<number>).detail;
-      if (typeof delta === "number") applyZoomDelta(delta);
+      const shortcut = (e as CustomEvent<ZoomShortcut>).detail;
+      if (shortcut?.kind === "reset" || shortcut?.kind === "step") applyZoomShortcut(shortcut);
     }
 
     window.addEventListener("keydown", onKey, true);
@@ -102,8 +104,8 @@ function useZoomShortcuts() {
   return { zoom, setZoom };
 }
 
-function emitZoomShortcut(delta: number) {
-  window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: delta }));
+function emitZoomShortcut(shortcut: ZoomShortcut) {
+  window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
 }
 
 function PaneResizer({
@@ -162,11 +164,11 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
   const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(mail));
 
   function onPopoutKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    const delta = zoomDeltaForKey(e.nativeEvent);
-    if (delta === null) return;
+    const shortcut = zoomShortcutForKey(e.nativeEvent);
+    if (!shortcut) return;
     e.preventDefault();
     e.stopPropagation();
-    emitZoomShortcut(delta);
+    emitZoomShortcut(shortcut);
   }
 
   return (
@@ -191,7 +193,7 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
             </button>
           </div>
         )}
-        {showHtml ? <HtmlBody html={mail.bodyHtml as string} onZoomShortcut={emitZoomShortcut} /> : <TextBody text={mail.bodyText} />}
+        {showHtml ? <HtmlBody html={mail.bodyHtml as string} /> : <TextBody text={mail.bodyText} />}
       </div>
     </div>
   );
@@ -780,8 +782,8 @@ function MailApp() {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
       // 缩放任何时候都可用
-      const zoomDelta = zoomDeltaForKey(e);
-      if (zoomDelta !== null) {
+      const zoomShortcut = zoomShortcutForKey(e);
+      if (zoomShortcut) {
         e.preventDefault();
         return;
       }
