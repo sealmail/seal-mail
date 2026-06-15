@@ -38,6 +38,7 @@ interface Props {
   onSelectFolder: (name: string) => void;
   onOpenKeys: () => void;
   onAddAccount: () => void;
+  onRemoveAccount: (account: Account) => void;
   onNewFolder: () => void;
   onDeleteFolder: (folder: FolderInfo) => void;
   onOpenFilters: () => void;
@@ -93,16 +94,27 @@ export function Sidebar(p: Props) {
         <div style={{ height: 10 }} />
         <div className="side-label">已连接账户</div>
         {p.accounts.map((a) => (
-          <div
-            key={a.id}
-            className={`account-row${a.id === p.currentAccountId ? " active" : ""}`}
-            onClick={() => p.onSelectAccount(a.id)}
-          >
-            <div className="dot" style={{ background: a.id === p.currentAccountId ? "var(--jade)" : "var(--mut-4)" }} />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="addr">{a.email}</div>
-              <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>
+          <div key={a.id} className="account-row-wrap">
+            <div
+              className={`account-row${a.id === p.currentAccountId ? " active" : ""}`}
+              onClick={() => p.onSelectAccount(a.id)}
+            >
+              <div className="dot" style={{ background: a.id === p.currentAccountId ? "var(--jade)" : "var(--mut-4)" }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="addr">{a.email}</div>
+                <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>
+              </div>
             </div>
+            <button
+              className="account-action"
+              title={`删除账户 ${a.email}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onRemoveAccount(a);
+              }}
+            >
+              ×
+            </button>
           </div>
         ))}
         <button className="side-add" onClick={p.onAddAccount}>

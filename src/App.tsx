@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
 import { AccountModal } from "./components/AccountModal";
@@ -17,7 +18,7 @@ import { TextBody } from "./components/TextBody";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { Seal } from "./components/Seal";
 import { classifyMail, type MailCategory } from "./mailCategory";
-import type { AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
+import type { Account, AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
 import "./styles.css";
 
 function isRisky(m: EmailMeta) {
@@ -68,10 +69,27 @@ function useZoomShortcuts() {
   });
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--sealmail-zoom", String(zoom));
-    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+    let cancelled = false;
+
+    async function applyZoom() {
+      try {
+        await getCurrentWebview().setZoom(zoom);
+        if (cancelled) return;
+        document.documentElement.style.setProperty("--sealmail-zoom", "1");
+        (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = "";
+      } catch {
+        if (cancelled) return;
+        document.documentElement.style.setProperty("--sealmail-zoom", String(zoom));
+        (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+      }
+      window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
+    }
+
     localStorage.setItem("sealmail.zoom", String(zoom));
-    window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
+    void applyZoom();
+    return () => {
+      cancelled = true;
+    };
   }, [zoom]);
 
   useEffect(() => {
@@ -253,6 +271,8 @@ function MailApp() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<FolderInfo | null>(null);
   const [deleteFolderErr, setDeleteFolderErr] = useState<string | null>(null);
+  const [accountToRemove, setAccountToRemove] = useState<Account | null>(null);
+  const [removeAccountErr, setRemoveAccountErr] = useState<string | null>(null);
 
   const fetchSeq = useRef(0);
   const selectSeq = useRef(0);
@@ -826,6 +846,7 @@ function MailApp() {
       const zoomShortcut = zoomShortcutForKey(e);
       if (zoomShortcut) {
         e.preventDefault();
+        emitZoomShortcut(zoomShortcut);
         return;
       }
       if (anyModalOpen || !hasAccounts) return;
@@ -943,6 +964,33 @@ function MailApp() {
     }
   }
 
+  async function handleRemoveAccount() {
+    if (!accountToRemove) return;
+    setRemoveAccountErr(null);
+    try {
+      await api.removeAccount(accountToRemove.id);
+      const nextState = await api.getState();
+      setState(nextState);
+      setAccountToRemove(null);
+      clearSelection();
+      setMessages([]);
+      setInboxMetas([]);
+      setThread([]);
+      setTotal(0);
+      setSearch("");
+      setListError(null);
+      setFolder("INBOX");
+      setView("mail");
+
+      const nextAccount =
+        nextState.accounts.find((a) => a.id !== accountToRemove.id) ?? nextState.accounts[0];
+      setAccountId(nextAccount?.id ?? "");
+      if (!nextAccount) setFolders(BUILTIN_FOLDERS);
+    } catch (e) {
+      setRemoveAccountErr(String(e));
+    }
+  }
+
   const ledgerMode = state?.identity.mode === "ledger";
   const accountLabels = useMemo(
     () => Object.fromEntries(accounts.map((a) => [a.id, a.email])),
@@ -1029,6 +1077,10 @@ function MailApp() {
             }}
             onOpenKeys={() => setView("keys")}
             onAddAccount={() => setAccountModal(true)}
+            onRemoveAccount={(account) => {
+              setRemoveAccountErr(null);
+              setAccountToRemove(account);
+            }}
             onNewFolder={() => setNewFolderOpen(true)}
             onDeleteFolder={(f) => {
               setDeleteFolderErr(null);
@@ -1232,6 +1284,40 @@ function MailApp() {
                 onClick={handleDeleteFolder}
               >
                 删除目录
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {accountToRemove && (
+        <div className="overlay" onClick={() => setAccountToRemove(null)}>
+          <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span className="title">删除账户</span>
+              <button className="modal-close" onClick={() => setAccountToRemove(null)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
+              将从本机移除账户 <b style={{ color: "var(--ink-2)" }}>{accountToRemove.email}</b> 的配置和登录凭据。
+              这不会删除邮箱服务器上的邮件。
+              {removeAccountErr && (
+                <div className="form-error" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
+                  {removeAccountErr}
+                </div>
+              )}
+            </div>
+            <div className="modal-foot">
+              <button className="btn-ghost" style={{ height: 40 }} onClick={() => setAccountToRemove(null)}>
+                取消
+              </button>
+              <button
+                className="btn-primary"
+                style={{ height: 40, background: "#9A2C1D" }}
+                onClick={handleRemoveAccount}
+              >
+                删除账户
               </button>
             </div>
           </div>

@@ -246,7 +246,8 @@ input, textarea, select { font-family: inherit; }
   box-shadow: 0 0 0 3px rgba(8, 116, 67, 0.1); flex-shrink: 0;
 }
 
-.account-row { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 10px; border-radius: 8px; cursor: pointer; }
+.account-row-wrap { position: relative; display: flex; align-items: stretch; }
+.account-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 34px 4px 10px; border-radius: 8px; cursor: pointer; }
 .account-row:hover { background: #e1e6e0; }
 .account-row.active { background: var(--bg-active-deep); }
 .account-row .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -255,6 +256,20 @@ input, textarea, select { font-family: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .account-row .sys { font-size: 10px; color: var(--mut-3); }
+.account-action {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 23px; height: 23px; border: 1px solid transparent; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--mut-3); cursor: pointer;
+  font-size: 15px; line-height: 1; opacity: 0; pointer-events: none;
+}
+.account-row-wrap:hover .account-action,
+.account-row.active + .account-action {
+  opacity: 1; pointer-events: auto;
+}
+.account-action:hover {
+  background: var(--red-bg); border-color: var(--red-bg-strong); color: var(--red);
+}
 
 .side-add {
   height: 32px; border: 1.5px dashed #bfc8be; background: transparent; border-radius: 8px;

@@ -176,7 +176,6 @@ export function HtmlBody(p: Props) {
       if (!shortcut) return;
       ev.preventDefault();
       window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
-      window.parent?.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
     };
     d.addEventListener("click", onClick, true);
     d.addEventListener("keydown", onKeydown, true);
