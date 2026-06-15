@@ -108,6 +108,18 @@ interface Props {
 
 type ZoomShortcut = { kind: "step"; delta: number } | { kind: "reset" };
 
+function currentZoom() {
+  const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
+  return Number.isFinite(z) && z > 0 ? z : 1;
+}
+
+function applyFrameZoom(d: Document, zoom: number) {
+  d.documentElement.style.setProperty("--sealmail-frame-zoom", String(zoom));
+  if (!d.body) return;
+  (d.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+  d.body.style.setProperty("width", `calc(100% / ${zoom})`, "important");
+}
+
 function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   const meta = e.metaKey || e.ctrlKey;
   if (!meta || e.altKey) return null;
@@ -152,9 +164,15 @@ export function HtmlBody(p: Props) {
       });
     };
 
+    applyFrameZoom(d, currentZoom());
     measure();
     window.addEventListener("resize", measure);
-    window.addEventListener("sealmail-zoom-change", measure);
+    const onZoomChange = (ev: Event) => {
+      const zoom = (ev as CustomEvent<number>).detail;
+      applyFrameZoom(d, Number.isFinite(zoom) && zoom > 0 ? zoom : currentZoom());
+      measure();
+    };
+    window.addEventListener("sealmail-zoom-change", onZoomChange);
     d.fonts?.ready.then(measure).catch(() => undefined);
     d.querySelectorAll("img").forEach((img) => {
       img.addEventListener("load", measure);
@@ -184,7 +202,7 @@ export function HtmlBody(p: Props) {
       cancelAnimationFrame(raf);
       observer.disconnect();
       window.removeEventListener("resize", measure);
-      window.removeEventListener("sealmail-zoom-change", measure);
+      window.removeEventListener("sealmail-zoom-change", onZoomChange);
       d.querySelectorAll("img").forEach((img) => {
         img.removeEventListener("load", measure);
         img.removeEventListener("error", measure);

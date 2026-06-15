@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
 import { AccountModal } from "./components/AccountModal";
@@ -52,6 +51,8 @@ function clamp(n: number, min: number, max: number) {
 }
 
 type ZoomShortcut = { kind: "step"; delta: number } | { kind: "reset" };
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2.4;
 
 function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   const meta = e.metaKey || e.ctrlKey;
@@ -65,37 +66,20 @@ function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
 function useZoomShortcuts() {
   const [zoom, setZoom] = useState(() => {
     const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
-    return Number.isFinite(z) && z >= 0.7 && z <= 1.6 ? z : 1;
+    return Number.isFinite(z) && z >= MIN_ZOOM && z <= MAX_ZOOM ? z : 1;
   });
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function applyZoom() {
-      try {
-        await getCurrentWebview().setZoom(zoom);
-        if (cancelled) return;
-        document.documentElement.style.setProperty("--sealmail-zoom", "1");
-        (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = "";
-      } catch {
-        if (cancelled) return;
-        document.documentElement.style.setProperty("--sealmail-zoom", String(zoom));
-        (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
-      }
-      window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
-    }
-
+    document.documentElement.style.setProperty("--sealmail-zoom", String(zoom));
+    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
     localStorage.setItem("sealmail.zoom", String(zoom));
-    void applyZoom();
-    return () => {
-      cancelled = true;
-    };
+    window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
   }, [zoom]);
 
   useEffect(() => {
     function applyZoomShortcut(shortcut: ZoomShortcut) {
       if (shortcut.kind === "reset") setZoom(1);
-      else setZoom((z) => clamp(Math.round((z + shortcut.delta) * 10) / 10, 0.7, 1.6));
+      else setZoom((z) => clamp(Math.round((z + shortcut.delta) * 10) / 10, MIN_ZOOM, MAX_ZOOM));
     }
 
     function onKey(e: KeyboardEvent) {
@@ -120,10 +104,6 @@ function useZoomShortcuts() {
   }, []);
 
   return { zoom, setZoom };
-}
-
-function emitZoomShortcut(shortcut: ZoomShortcut) {
-  window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
 }
 
 function PaneResizer({
@@ -181,16 +161,8 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
   const signed = mail.verify.status !== "unsigned";
   const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(mail));
 
-  function onPopoutKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    const shortcut = zoomShortcutForKey(e.nativeEvent);
-    if (!shortcut) return;
-    e.preventDefault();
-    e.stopPropagation();
-    emitZoomShortcut(shortcut);
-  }
-
   return (
-    <div className="popout-shell" tabIndex={-1} onKeyDownCapture={onPopoutKeyDown}>
+    <div className="popout-shell">
       <div className="popout-head">
         <div className="popout-subject">{mail.meta.subject}</div>
         <div className="popout-from">
@@ -842,13 +814,6 @@ function MailApp() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
-      // 缩放任何时候都可用
-      const zoomShortcut = zoomShortcutForKey(e);
-      if (zoomShortcut) {
-        e.preventDefault();
-        emitZoomShortcut(zoomShortcut);
-        return;
-      }
       if (anyModalOpen || !hasAccounts) return;
       if (meta && e.key.toLowerCase() === "n") {
         e.preventDefault();
