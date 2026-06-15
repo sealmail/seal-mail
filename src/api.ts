@@ -72,9 +72,10 @@ export async function oauthPollDevice(
 export async function oauthBeginBrowser(
   provider: OAuthProvider,
   clientId: string,
+  clientSecret?: string,
   loginHint?: string,
 ): Promise<BrowserFlowStart> {
-  return invoke("oauth_begin_browser", { provider, clientId, loginHint: loginHint ?? null });
+  return invoke("oauth_begin_browser", { provider, clientId, clientSecret: clientSecret ?? null, loginHint: loginHint ?? null });
 }
 
 export async function oauthFinishBrowser(flowId: string): Promise<OAuthTokens> {

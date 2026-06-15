@@ -20,6 +20,9 @@ pub const DEFAULT_MS_CLIENT_ID: &str = "9e5f94bc-e8a4-4e73-b8be-63364c29d753";
 fn default_google_client_id() -> &'static str {
     option_env!("GOOGLE_OAUTH_CLIENT_ID").unwrap_or("")
 }
+fn default_google_client_secret() -> &'static str {
+    option_env!("GOOGLE_OAUTH_CLIENT_SECRET").unwrap_or("")
+}
 const MS_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode";
 const MS_TOKEN_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 const MS_SCOPES: &str = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access";
@@ -151,6 +154,7 @@ struct PendingBrowserFlow {
     listener: TcpListener,
     provider: OAuthProvider,
     client_id: String,
+    client_secret: Option<String>,
     redirect_uri: String,
     code_verifier: String,
     state: String,
@@ -273,6 +277,7 @@ pub async fn begin_device_flow(
 pub fn begin_browser_flow(
     provider: OAuthProvider,
     client_id: &str,
+    client_secret: Option<&str>,
     login_hint: Option<&str>,
 ) -> Result<BrowserFlowStart, String> {
     if provider != OAuthProvider::Google {
@@ -286,6 +291,13 @@ pub fn begin_browser_flow(
     if client_id.is_empty() {
         return Err("Gmail OAuth2 需要填写 Google Cloud Desktop OAuth Client ID".into());
     }
+    let client_secret = client_secret
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let s = default_google_client_secret();
+            (!s.is_empty()).then_some(s)
+        });
 
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|e| format!("启动 Google 登录本机回调失败: {e}"))?;
@@ -326,6 +338,7 @@ pub fn begin_browser_flow(
             listener,
             provider,
             client_id: client_id.to_string(),
+            client_secret: client_secret.map(str::to_string),
             redirect_uri,
             code_verifier,
             state,
@@ -411,24 +424,30 @@ pub async fn finish_browser_flow(flow_id: &str) -> Result<OAuthTokens, String> {
     }
     let code = parse_query_param(&path, "code").ok_or("Google 登录回调缺少授权码")?;
 
-    let v = form_post(
-        flow.provider,
-        &[
-            ("client_id", flow.client_id.as_str()),
-            ("code", code.as_str()),
-            ("code_verifier", flow.code_verifier.as_str()),
-            ("grant_type", "authorization_code"),
-            ("redirect_uri", flow.redirect_uri.as_str()),
-        ],
-        flow.provider.token_url(),
-    )
+    let mut params = vec![
+        ("client_id", flow.client_id.as_str()),
+        ("code", code.as_str()),
+        ("code_verifier", flow.code_verifier.as_str()),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", flow.redirect_uri.as_str()),
+    ];
+    if let Some(secret) = &flow.client_secret {
+        params.push(("client_secret", secret.as_str()));
+    }
+    let v = form_post(flow.provider, &params, flow.provider.token_url())
     .await?;
     if v.get("error").is_some() {
         let msg = format!("Google 授权失败: {}", ms_error(&v));
         write_callback_page(&mut stream, false, &msg);
         return Err(msg);
     }
-    let tokens = parse_tokens(&v, &flow.client_id, None, None, flow.provider)?;
+    let tokens = parse_tokens(
+        &v,
+        &flow.client_id,
+        flow.client_secret.as_deref(),
+        None,
+        flow.provider,
+    )?;
     write_callback_page(&mut stream, true, "Google 已完成授权。");
     Ok(tokens)
 }

@@ -29,6 +29,7 @@ export function AccountModal(p: Props) {
   // OAuth2 设备码授权状态（Exchange Online / Outlook.com 已强制 OAuth2）
   const [authMode, setAuthMode] = useState<"password" | "oauth2">(preset.oauth ? "oauth2" : "password");
   const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [device, setDevice] = useState<DeviceFlowStart | null>(null);
   const [tokens, setTokens] = useState<OAuthTokens | null>(null);
   // 轮询代际：+1 即作废正在跑的轮询循环（取消/重开/关闭弹窗）
@@ -50,6 +51,7 @@ export function AccountModal(p: Props) {
     setSmtpSecurity(pr.smtpSecurity);
     setAuthMode(pr.oauth ? "oauth2" : "password");
     setClientId("");
+    setClientSecret("");
     cancelDeviceFlow();
     setTokens(null);
     setOk(null);
@@ -68,7 +70,7 @@ export function AccountModal(p: Props) {
     const gen = ++pollGen.current;
     try {
       if (oauthProvider === "google") {
-        const flow = await oauthBeginBrowser(oauthProvider, clientId.trim(), email.trim() || undefined);
+        const flow = await oauthBeginBrowser(oauthProvider, clientId.trim(), clientSecret.trim() || undefined, email.trim() || undefined);
         if (pollGen.current !== gen) return;
         await openUrl(flow.authUrl);
         const oauth = await oauthFinishBrowser(flow.flowId);
@@ -256,7 +258,7 @@ export function AccountModal(p: Props) {
                   <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.5 }}>
                     将打开浏览器，在 {oauthLoginHost} 输入代码完成登录。
                     {oauthProvider === "google"
-                      ? "Gmail 使用系统浏览器完成 Google 登录；发布版可内置 Google OAuth Client ID，本地开发时也可在这里手填覆盖。"
+                      ? "Gmail 使用系统浏览器完成 Google 登录；发布版可内置 Google OAuth Client ID/Secret，本地开发时也可在这里手填覆盖。"
                       : "组织若禁止第三方应用，可在下方填入自己注册的 Azure 应用 Client ID。"}
                   </div>
                   <input
@@ -265,6 +267,15 @@ export function AccountModal(p: Props) {
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
                   />
+                  {oauthProvider === "google" && (
+                    <input
+                      className="input mono"
+                      type="password"
+                      placeholder="Google Desktop OAuth Client Secret（可留空，使用构建内置值）"
+                      value={clientSecret}
+                      onChange={(e) => setClientSecret(e.target.value)}
+                    />
+                  )}
                 </>
               )}
             </div>

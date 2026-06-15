@@ -179,10 +179,16 @@ async fn oauth_poll_device(
 fn oauth_begin_browser(
     provider: String,
     client_id: String,
+    client_secret: Option<String>,
     login_hint: Option<String>,
 ) -> Result<oauth::BrowserFlowStart, String> {
     let provider = oauth::OAuthProvider::parse(&provider)?;
-    oauth::begin_browser_flow(provider, &client_id, login_hint.as_deref())
+    oauth::begin_browser_flow(
+        provider,
+        &client_id,
+        client_secret.as_deref(),
+        login_hint.as_deref(),
+    )
 }
 
 #[tauri::command]
