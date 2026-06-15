@@ -36,6 +36,10 @@ Push a `v*` tag to trigger the GitHub Actions release workflow: it builds macOS 
 GitHub Release. Apple signing/notarization activates automatically when the
 `APPLE_*` repo secrets are configured. CI (tests + type check) runs on every push/PR.
 
+For Gmail "Sign in with Google" in release builds, configure this optional repo secret:
+
+- `GOOGLE_OAUTH_CLIENT_ID`: the Google Cloud **Desktop app** OAuth client ID used for Gmail OAuth2 / XOAUTH2. If absent, local development can still enter a client ID in the Gmail account form.
+
 ## Getting started
 
 ```bash

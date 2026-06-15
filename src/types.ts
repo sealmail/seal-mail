@@ -21,6 +21,8 @@ export interface OAuthTokens {
   refreshToken: string;
   expiresAt: number;
   clientId: string;
+  clientSecret?: string | null;
+  provider: OAuthProvider;
 }
 
 export interface DeviceFlowStart {
@@ -35,6 +37,11 @@ export interface DeviceFlowStart {
 }
 
 export type DevicePoll = { status: "pending" } | { status: "ok"; tokens: OAuthTokens };
+
+export interface BrowserFlowStart {
+  flowId: string;
+  authUrl: string;
+}
 
 export interface AccountSecret {
   password: string;
@@ -193,8 +200,9 @@ export interface ProviderPreset {
   key: string;
   label: string;
   note?: string;
-  /** 支持 Microsoft OAuth2 设备码授权（Exchange Online / Outlook.com 已强制） */
+  /** 支持 OAuth2 设备码授权 */
   oauth?: boolean;
+  oauthProvider?: OAuthProvider;
   protocol: "imap" | "pop3";
   incomingHost: string;
   incomingPort: number;
@@ -203,12 +211,15 @@ export interface ProviderPreset {
   smtpSecurity: "ssl" | "starttls";
 }
 
+export type OAuthProvider = "microsoft" | "google";
+
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     key: "exchange-online",
     label: "Exchange Online / Outlook · Office 365",
     note: "微软已停用 IMAP/SMTP 密码登录，请使用 OAuth2 授权（点击下方按钮用 Microsoft 账户登录）",
     oauth: true,
+    oauthProvider: "microsoft",
     protocol: "imap",
     incomingHost: "outlook.office365.com",
     incomingPort: 993,
@@ -230,7 +241,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     key: "gmail",
     label: "Gmail / Google Workspace",
-    note: "需开启两步验证并使用应用专用密码",
+    note: "Google 已不支持普通密码登录第三方客户端，请使用 OAuth2 授权登录；也可改用应用专用密码",
+    oauth: true,
+    oauthProvider: "google",
     protocol: "imap",
     incomingHost: "imap.gmail.com",
     incomingPort: 993,

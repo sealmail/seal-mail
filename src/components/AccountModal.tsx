@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { addAccount, oauthBeginDevice, oauthPollDevice, testConnection } from "../api";
+import { addAccount, oauthBeginBrowser, oauthBeginDevice, oauthFinishBrowser, oauthPollDevice, testConnection } from "../api";
 import { PROVIDER_PRESETS } from "../types";
-import type { Account, AccountSecret, DeviceFlowStart, OAuthTokens } from "../types";
+import type { Account, AccountSecret, DeviceFlowStart, OAuthProvider, OAuthTokens } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -35,6 +35,11 @@ export function AccountModal(p: Props) {
   const pollGen = useRef(0);
   useEffect(() => () => void pollGen.current++, []);
 
+  const oauthProvider: OAuthProvider = preset.oauthProvider ?? "microsoft";
+  const oauthBrand = oauthProvider === "google" ? "Google" : "Microsoft";
+  const oauthLoginHost = oauthProvider === "google" ? "accounts.google.com" : "microsoft.com/devicelogin";
+  const oauthClientIdLabel = oauthProvider === "google" ? "Google Desktop OAuth Client ID" : "Azure 应用 Client ID";
+
   function applyPreset(key: string) {
     const pr = PROVIDER_PRESETS.find((x) => x.key === key)!;
     setPresetKey(key);
@@ -44,6 +49,7 @@ export function AccountModal(p: Props) {
     setSmtpPort(pr.smtpPort);
     setSmtpSecurity(pr.smtpSecurity);
     setAuthMode(pr.oauth ? "oauth2" : "password");
+    setClientId("");
     cancelDeviceFlow();
     setTokens(null);
     setOk(null);
@@ -61,7 +67,17 @@ export function AccountModal(p: Props) {
     setTokens(null);
     const gen = ++pollGen.current;
     try {
-      const d = await oauthBeginDevice(clientId.trim() || undefined);
+      if (oauthProvider === "google") {
+        const flow = await oauthBeginBrowser(oauthProvider, clientId.trim(), email.trim() || undefined);
+        if (pollGen.current !== gen) return;
+        await openUrl(flow.authUrl);
+        const oauth = await oauthFinishBrowser(flow.flowId);
+        if (pollGen.current !== gen) return;
+        setTokens(oauth);
+        setOk("Google 授权成功，现在可以测试连接并保存账户");
+        return;
+      }
+      const d = await oauthBeginDevice(oauthProvider, clientId.trim() || undefined);
       if (pollGen.current !== gen) return;
       setDevice(d);
       await openUrl(d.verificationUri);
@@ -69,12 +85,12 @@ export function AccountModal(p: Props) {
       while (pollGen.current === gen) {
         await new Promise((r) => setTimeout(r, intervalMs));
         if (pollGen.current !== gen) return;
-        const res = await oauthPollDevice(d.clientId, d.deviceCode);
+        const res = await oauthPollDevice(oauthProvider, d.clientId, null, d.deviceCode);
         if (pollGen.current !== gen) return;
         if (res.status === "ok") {
           setTokens(res.tokens);
           setDevice(null);
-          setOk("Microsoft 授权成功，现在可以测试连接并保存账户");
+          setOk(`${oauthBrand} 授权成功，现在可以测试连接并保存账户`);
           return;
         }
       }
@@ -109,7 +125,7 @@ export function AccountModal(p: Props) {
 
   function validate(): string | null {
     if (!email.includes("@")) return "请填写正确的邮箱地址";
-    if (authMode === "oauth2" && !tokens) return "请先点击「用 Microsoft 账户授权」完成登录";
+    if (authMode === "oauth2" && !tokens) return `请先点击「用 ${oauthBrand} 账户授权」完成登录`;
     if (authMode === "password" && !password) return "请填写密码 / 授权码";
     if (!incomingHost.trim() || !smtpHost.trim()) return "请填写服务器地址";
     return null;
@@ -193,8 +209,8 @@ export function AccountModal(p: Props) {
                   setOk(null);
                 }}
               >
-                <option value="oauth2">OAuth2 授权登录（微软现已强制，推荐）</option>
-                <option value="password">密码 / 应用密码（多数租户已被微软禁用）</option>
+                <option value="oauth2">OAuth2 授权登录（推荐）</option>
+                <option value="password">密码 / 应用密码</option>
               </select>
             </div>
           )}
@@ -206,7 +222,7 @@ export function AccountModal(p: Props) {
             >
               {tokens ? (
                 <>
-                  <div className="form-ok">✓ 已获得 Microsoft 授权（令牌只保存在本机）</div>
+                  <div className="form-ok">✓ 已获得 {oauthBrand} 授权（令牌只保存在本机）</div>
                   <button className="btn-ghost" style={{ height: 34, alignSelf: "flex-start" }} onClick={startDeviceFlow}>
                     重新授权
                   </button>
@@ -214,7 +230,7 @@ export function AccountModal(p: Props) {
               ) : device ? (
                 <>
                   <div style={{ fontSize: 12, color: "#6F6A5E" }}>
-                    已在浏览器打开 Microsoft 登录页面，请输入以下代码并用 <b>{email || "你的邮箱"}</b> 登录：
+                    已在浏览器打开 {oauthBrand} 登录页面，请输入以下代码并用 <b>{email || "你的邮箱"}</b> 登录：
                   </div>
                   <div
                     className="mono"
@@ -235,15 +251,17 @@ export function AccountModal(p: Props) {
               ) : (
                 <>
                   <button className="btn-primary" style={{ height: 40 }} onClick={startDeviceFlow}>
-                    用 Microsoft 账户授权
+                    用 {oauthBrand} 账户授权
                   </button>
                   <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.5 }}>
-                    将打开浏览器，在 microsoft.com/devicelogin 输入代码完成登录。组织若禁止第三方应用，可在下方填入自己注册的
-                    Azure 应用 Client ID。
+                    将打开浏览器，在 {oauthLoginHost} 输入代码完成登录。
+                    {oauthProvider === "google"
+                      ? "Gmail 使用系统浏览器完成 Google 登录；发布版可内置 Google OAuth Client ID，本地开发时也可在这里手填覆盖。"
+                      : "组织若禁止第三方应用，可在下方填入自己注册的 Azure 应用 Client ID。"}
                   </div>
                   <input
                     className="input mono"
-                    placeholder="Client ID（可留空，默认使用通用邮件客户端 ID）"
+                    placeholder={`${oauthClientIdLabel}（可留空${oauthProvider === "google" ? "，使用构建内置值" : "，默认使用通用邮件客户端 ID"}）`}
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
                   />
@@ -306,8 +324,8 @@ export function AccountModal(p: Props) {
           {ok && <div className="form-ok">{ok}</div>}
 
           <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.6 }}>
-            密码与 OAuth 令牌只保存在本机（应用配置目录，权限 600），不会上传。Exchange Online / Outlook.com
-            已被微软强制使用 OAuth2，请选择「用 Microsoft 账户授权」。
+            密码与 OAuth 令牌只保存在本机（应用配置目录，权限 600），不会上传。Gmail 和 Exchange Online / Outlook.com
+            均推荐使用 OAuth2；若选择密码方式，请填写对应服务商生成的应用专用密码或授权码。
           </div>
         </div>
         <div className="modal-foot">

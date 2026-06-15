@@ -4,6 +4,7 @@ import type {
   AccountSecret,
   AppStateView,
   ApplyResult,
+  BrowserFlowStart,
   Contact,
   Draft,
   DeviceFlowStart,
@@ -14,6 +15,8 @@ import type {
   FolderInfo,
   IdentityInfo,
   LedgerAccountRow,
+  OAuthProvider,
+  OAuthTokens,
   SendResult,
   TrustedContact,
 } from "./types";
@@ -52,13 +55,30 @@ export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
   return invoke("set_notify_new_mail", { enabled });
 }
 
-// ── OAuth2（Microsoft 设备码授权）──
-export async function oauthBeginDevice(clientId?: string): Promise<DeviceFlowStart> {
-  return invoke("oauth_begin_device", { clientId: clientId ?? null });
+// ── OAuth2（设备码授权）──
+export async function oauthBeginDevice(provider: OAuthProvider, clientId?: string): Promise<DeviceFlowStart> {
+  return invoke("oauth_begin_device", { provider, clientId: clientId ?? null });
 }
 
-export async function oauthPollDevice(clientId: string, deviceCode: string): Promise<DevicePoll> {
-  return invoke("oauth_poll_device", { clientId, deviceCode });
+export async function oauthPollDevice(
+  provider: OAuthProvider,
+  clientId: string,
+  clientSecret: string | null,
+  deviceCode: string,
+): Promise<DevicePoll> {
+  return invoke("oauth_poll_device", { provider, clientId, clientSecret, deviceCode });
+}
+
+export async function oauthBeginBrowser(
+  provider: OAuthProvider,
+  clientId: string,
+  loginHint?: string,
+): Promise<BrowserFlowStart> {
+  return invoke("oauth_begin_browser", { provider, clientId, loginHint: loginHint ?? null });
+}
+
+export async function oauthFinishBrowser(flowId: string): Promise<OAuthTokens> {
+  return invoke("oauth_finish_browser", { flowId });
 }
 
 // ── 账户 ──

@@ -147,22 +147,47 @@ fn set_notify_new_mail(state: State<'_, AppState>, enabled: bool) -> Result<bool
     Ok(enabled)
 }
 
-// ───────────────────────── oauth2 (Microsoft 设备码) ─────────────────────────
+// ───────────────────────── oauth2 (设备码) ─────────────────────────
 
 #[tauri::command]
-async fn oauth_begin_device(client_id: Option<String>) -> Result<oauth::DeviceFlowStart, String> {
+async fn oauth_begin_device(
+    provider: String,
+    client_id: Option<String>,
+) -> Result<oauth::DeviceFlowStart, String> {
+    let provider = oauth::OAuthProvider::parse(&provider)?;
     let cid = client_id
         .filter(|c| !c.trim().is_empty())
-        .unwrap_or_else(|| oauth::DEFAULT_MS_CLIENT_ID.to_string());
-    oauth::begin_device_flow(cid.trim()).await
+        .unwrap_or_else(|| match provider {
+            oauth::OAuthProvider::Microsoft => oauth::DEFAULT_MS_CLIENT_ID.to_string(),
+            oauth::OAuthProvider::Google => String::new(),
+        });
+    oauth::begin_device_flow(provider, cid.trim()).await
 }
 
 #[tauri::command]
 async fn oauth_poll_device(
+    provider: String,
     client_id: String,
+    client_secret: Option<String>,
     device_code: String,
 ) -> Result<oauth::DevicePoll, String> {
-    oauth::poll_device(&client_id, &device_code).await
+    let provider = oauth::OAuthProvider::parse(&provider)?;
+    oauth::poll_device_for(provider, &client_id, client_secret.as_deref(), &device_code).await
+}
+
+#[tauri::command]
+fn oauth_begin_browser(
+    provider: String,
+    client_id: String,
+    login_hint: Option<String>,
+) -> Result<oauth::BrowserFlowStart, String> {
+    let provider = oauth::OAuthProvider::parse(&provider)?;
+    oauth::begin_browser_flow(provider, &client_id, login_hint.as_deref())
+}
+
+#[tauri::command]
+async fn oauth_finish_browser(flow_id: String) -> Result<oauth::OAuthTokens, String> {
+    oauth::finish_browser_flow(&flow_id).await
 }
 
 /// 取账户凭据；OAuth2 账户的 access_token 临近过期时先刷新并回写 secrets.json
@@ -1405,6 +1430,8 @@ pub fn run() {
             check_for_update,
             oauth_begin_device,
             oauth_poll_device,
+            oauth_begin_browser,
+            oauth_finish_browser,
             ledger_get_addresses,
             bind_ledger,
             use_local_key,

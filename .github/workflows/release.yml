@@ -13,6 +13,9 @@ name: Release
 #
 # Optional Apple signing/notarization secrets (skipped when absent):
 #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+#
+# Optional OAuth client id baked into release builds:
+#   GOOGLE_OAUTH_CLIENT_ID                 — Google Cloud Desktop OAuth client ID for Gmail Sign in with Google
 on:
   push:
     tags:
@@ -95,6 +98,7 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
         run: |
           set -euo pipefail
           if [ -z "$TAURI_UPDATER_PUBKEY" ] || [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
@@ -182,6 +186,7 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
         run: |
           set -euo pipefail
           if [ -z "$TAURI_UPDATER_PUBKEY" ] || [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
