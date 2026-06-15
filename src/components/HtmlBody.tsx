@@ -74,11 +74,11 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
 
   const style = parsed.createElement("style");
   style.textContent = `
-    html { width: 100% !important; min-width: 0 !important; background: transparent !important; overflow-x: hidden; }
+    html { width: 100% !important; min-width: 0 !important; background: #f6f7f5 !important; overflow-x: hidden; }
     *, *::before, *::after { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
            font-size: 13.5px; line-height: 1.65; color: #2A2E36; word-break: break-word;
-           width: 100% !important; min-width: 0 !important; background: transparent !important; overflow-x: hidden; }
+           width: 100% !important; min-width: 0 !important; background: #f6f7f5 !important; overflow-x: hidden; }
     body > :first-child { margin-top: 0 !important; }
     body > :last-child { margin-bottom: 0 !important; }
     body, center, table, tbody, thead, tfoot, tr, td, th, div, section, article, main {
