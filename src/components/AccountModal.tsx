@@ -29,7 +29,6 @@ export function AccountModal(p: Props) {
   // OAuth2 设备码授权状态（Exchange Online / Outlook.com 已强制 OAuth2）
   const [authMode, setAuthMode] = useState<"password" | "oauth2">(preset.oauth ? "oauth2" : "password");
   const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
   const [device, setDevice] = useState<DeviceFlowStart | null>(null);
   const [tokens, setTokens] = useState<OAuthTokens | null>(null);
   // 轮询代际：+1 即作废正在跑的轮询循环（取消/重开/关闭弹窗）
@@ -39,7 +38,6 @@ export function AccountModal(p: Props) {
   const oauthProvider: OAuthProvider = preset.oauthProvider ?? "microsoft";
   const oauthBrand = oauthProvider === "google" ? "Google" : "Microsoft";
   const oauthLoginHost = oauthProvider === "google" ? "accounts.google.com" : "microsoft.com/devicelogin";
-  const oauthClientIdLabel = oauthProvider === "google" ? "Google Desktop OAuth Client ID" : "Azure 应用 Client ID";
 
   function applyPreset(key: string) {
     const pr = PROVIDER_PRESETS.find((x) => x.key === key)!;
@@ -51,7 +49,6 @@ export function AccountModal(p: Props) {
     setSmtpSecurity(pr.smtpSecurity);
     setAuthMode(pr.oauth ? "oauth2" : "password");
     setClientId("");
-    setClientSecret("");
     cancelDeviceFlow();
     setTokens(null);
     setOk(null);
@@ -70,7 +67,7 @@ export function AccountModal(p: Props) {
     const gen = ++pollGen.current;
     try {
       if (oauthProvider === "google") {
-        const flow = await oauthBeginBrowser(oauthProvider, clientId.trim(), clientSecret.trim() || undefined, email.trim() || undefined);
+        const flow = await oauthBeginBrowser(oauthProvider, "", undefined, email.trim() || undefined);
         if (pollGen.current !== gen) return;
         await openUrl(flow.authUrl);
         const oauth = await oauthFinishBrowser(flow.flowId);
@@ -258,22 +255,15 @@ export function AccountModal(p: Props) {
                   <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.5 }}>
                     将打开浏览器，在 {oauthLoginHost} 输入代码完成登录。
                     {oauthProvider === "google"
-                      ? "Gmail 使用系统浏览器完成 Google 登录；发布版可内置 Google OAuth Client ID/Secret，本地开发时也可在这里手填覆盖。"
+                      ? "Gmail 使用系统浏览器完成 Google 登录；发布版会使用构建时内置的 Google OAuth Client ID/Secret。"
                       : "组织若禁止第三方应用，可在下方填入自己注册的 Azure 应用 Client ID。"}
                   </div>
-                  <input
-                    className="input mono"
-                    placeholder={`${oauthClientIdLabel}（可留空${oauthProvider === "google" ? "，使用构建内置值" : "，默认使用通用邮件客户端 ID"}）`}
-                    value={clientId}
-                    onChange={(e) => setClientId(e.target.value)}
-                  />
-                  {oauthProvider === "google" && (
+                  {oauthProvider === "microsoft" && (
                     <input
                       className="input mono"
-                      type="password"
-                      placeholder="Google Desktop OAuth Client Secret（可留空，使用构建内置值）"
-                      value={clientSecret}
-                      onChange={(e) => setClientSecret(e.target.value)}
+                      placeholder="Azure 应用 Client ID（可留空，默认使用通用邮件客户端 ID）"
+                      value={clientId}
+                      onChange={(e) => setClientId(e.target.value)}
                     />
                   )}
                 </>
