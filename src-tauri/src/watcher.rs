@@ -19,6 +19,7 @@ const IDLE_ROUND: Duration = Duration::from_secs(4 * 60);
 const IDLE_ROUNDS_PER_CONN: u32 = 6;
 const POP3_POLL: Duration = Duration::from_secs(120);
 const RETRY_DELAY: Duration = Duration::from_secs(30);
+const NOTIFICATION_OPEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 fn running() -> &'static Mutex<HashSet<String>> {
     static R: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -165,7 +166,7 @@ pub fn emit_pending_notification_open(app: &AppHandle) {
         .lock()
         .unwrap()
         .take()
-        .and_then(|(created_at, target)| (created_at.elapsed() <= Duration::from_secs(5 * 60)).then_some(target));
+        .and_then(|(created_at, target)| (created_at.elapsed() <= NOTIFICATION_OPEN_TTL).then_some(target));
     let Some(target) = target else {
         return;
     };
