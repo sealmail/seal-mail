@@ -211,7 +211,7 @@ export function MessageView(p: Props) {
             </div>
             <div className="msg-side">
               <span className="msg-date">{m.meta.dateDisplay}</span>
-              <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <div className="msg-actions">
                 <button className="btn-ghost" onClick={p.onReply}>
                   回复
                 </button>

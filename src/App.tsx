@@ -219,8 +219,8 @@ function MailApp() {
     return Number.isFinite(n) ? clamp(n, 176, 280) : 228;
   });
   const [listWidth, setListWidth] = useState(() => {
-    const n = Number(localStorage.getItem("sealmail.listWidth") ?? 348);
-    return Number.isFinite(n) ? clamp(n, 300, 480) : 348;
+    const n = Number(localStorage.getItem("sealmail.listWidth") ?? 380);
+    return Number.isFinite(n) ? clamp(n, 320, 520) : 380;
   });
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -1090,6 +1090,7 @@ function MailApp() {
             <>
               <MailList
                 width={listWidth}
+                title={folders.find((f) => f.name === folder)?.display ?? folder}
                 messages={shownMessages}
                 selectedKey={selectedKey}
                 accountLabels={folder === UNIFIED_FOLDER ? accountLabels : undefined}
@@ -1120,7 +1121,7 @@ function MailApp() {
                 onStart={() => {
                   listDragBase.current = listWidth;
                 }}
-                onDrag={(dx) => setListWidth(clamp(listDragBase.current + dx, 300, 480))}
+                onDrag={(dx) => setListWidth(clamp(listDragBase.current + dx, 320, 520))}
               />
               <MessageView
                 mail={selected}

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openExternalUrl } from "../url";
 
-/** 整体移除的危险标签（脚本、外部加载、表单提交、可联网样式/SVG） */
-const REMOVE_TAGS = "script,iframe,object,embed,form,base,meta,link,style,svg,math,applet,frame,frameset,audio,video";
+/** 整体移除的危险标签（脚本、外部加载、表单提交、SVG） */
+const REMOVE_TAGS = "script,iframe,object,embed,form,base,meta,link,svg,math,applet,frame,frameset,audio,video";
 
 const RESOURCE_ATTRS = new Set(["src", "srcset", "poster", "background", "data"]);
 
@@ -14,11 +14,18 @@ function isSvgDataUrl(value: string) {
   return /^data:image\/svg\+xml/i.test(value.trim());
 }
 
+function sanitizeCss(css: string, allowRemote: boolean) {
+  let next = css.replace(/@import[^;]+;?/gi, "");
+  next = next.replace(/-moz-binding\s*:[^;]+;?/gi, "");
+  if (!allowRemote) next = next.replace(/url\s*\([^)]*\)/gi, "none");
+  return next;
+}
+
 /**
  * 邮件 HTML 消毒：
  * - 去掉脚本/iframe/表单等危险标签与全部 on* 事件属性
  * - 去掉 javascript:/vbscript:/data:text/html 协议链接
- * - allowRemote=false 时阻断 http(s) 资源属性与 style 里的远程 url()（防追踪像素）
+ * - 保留邮件自身 CSS/背景色，allowRemote=false 时阻断 CSS url() 和 http(s) 资源属性（防追踪像素）
  * - cid: 内嵌图片暂不支持，移除避免裂图请求
  */
 export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: string; blocked: number } {
@@ -44,16 +51,21 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
       } else if (!allowRemote && (n === "href" || n === "xlink:href") && el.tagName !== "A" && isRemoteUrl(attr.value)) {
         blocked++;
         el.removeAttribute(attr.name);
-      } else if (n === "style" && !allowRemote && /url\s*\(/i.test(attr.value)) {
-        blocked++;
-        el.setAttribute("style", attr.value.replace(/url\s*\([^)]*\)/gi, "none"));
+      } else if (n === "style") {
+        const sanitized = sanitizeCss(attr.value, allowRemote);
+        if (sanitized !== attr.value) blocked++;
+        el.setAttribute("style", sanitized);
       } else if (n === "srcset" && !allowRemote) {
         el.removeAttribute(attr.name);
       } else if ((n === "src" || n === "href" || n === "xlink:href") && isSvgDataUrl(attr.value)) {
         el.removeAttribute(attr.name);
-      } else if (n === "bgcolor" || n === "background") {
-        el.removeAttribute(attr.name);
       }
+    }
+    if (el.tagName === "STYLE") {
+      const before = el.textContent ?? "";
+      const after = sanitizeCss(before, allowRemote);
+      if (after !== before) blocked++;
+      el.textContent = after;
     }
     if (el.tagName === "IMG") {
       const src = el.getAttribute("src") ?? "";
@@ -74,17 +86,11 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
 
   const style = parsed.createElement("style");
   style.textContent = `
-    html { width: 100% !important; min-width: 0 !important; background: #f6f7f5 !important; overflow-x: hidden; }
+    html { width: 100% !important; min-width: 0 !important; overflow-x: auto; }
     *, *::before, *::after { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-           font-size: 13.5px; line-height: 1.65; color: #2A2E36; word-break: break-word;
-           width: 100% !important; min-width: 0 !important; background: #f6f7f5 !important; overflow-x: hidden; }
+    body { margin: 0; width: 100% !important; min-width: 0 !important; overflow-x: auto; }
     body > :first-child { margin-top: 0 !important; }
     body > :last-child { margin-bottom: 0 !important; }
-    body, center, table, tbody, thead, tfoot, tr, td, th, div, section, article, main {
-      background-color: transparent !important;
-      background-image: none !important;
-    }
     [width] { max-width: 100% !important; }
     table { max-width: 100% !important; }
     td, th, div, p, section, article { max-width: 100%; }

@@ -51,6 +51,7 @@ export function MailList(p: Props) {
   return (
     <div className="list-pane" style={{ width: p.width }}>
       <div className="list-head">
+        <div className="title">{p.title ?? "邮件"}</div>
         <span className="meta">
           {p.syncing && <span className="sync-dot" title="同步中" />}
           <span className="cache-count" title="当前筛选显示 / 本地已缓存">
