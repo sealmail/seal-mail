@@ -19,6 +19,7 @@ function folderIcon(name: string, display: string) {
   if (d.includes("junk") || d.includes("spam") || display.includes("垃圾")) return "⊘";
   if (d.includes("trash") || d.includes("deleted") || display.includes("已删除")) return "□";
   if (d.includes("archive") || display.includes("归档")) return "▣";
+  if (d.includes("notification") || d.includes("notice") || display.includes("通知")) return "🔔";
   return "▢";
 }
 

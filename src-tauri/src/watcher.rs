@@ -8,9 +8,10 @@ use crate::models::*;
 use crate::store::AppState;
 use crate::{imap_client, mail, oauth, pop3_client};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 
 /// 单轮 IDLE 等待时长；到时会重新 EXAMINE 校对一次再继续
 const IDLE_ROUND: Duration = Duration::from_secs(4 * 60);
@@ -138,9 +139,25 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
             },
         ));
     }
-    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+    let mut builder = app.notification().builder().title(title).body(body);
+    if let Some(icon) = notification_icon_path(app) {
+        builder = builder.icon(icon);
+    }
+    if let Err(e) = builder.show() {
         eprintln!("[watcher] 系统通知发送失败: {}", e);
     }
+}
+
+fn notification_icon_path(app: &AppHandle) -> Option<String> {
+    app.path()
+        .resolve("icons/icon.png", BaseDirectory::Resource)
+        .ok()
+        .filter(|p| p.exists())
+        .or_else(|| {
+            let dev_icon = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons/icon.png");
+            dev_icon.exists().then_some(dev_icon)
+        })
+        .and_then(|p| p.to_str().map(str::to_owned))
 }
 
 pub fn emit_pending_notification_open(app: &AppHandle) {
