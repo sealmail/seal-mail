@@ -169,12 +169,19 @@ pub fn emit_pending_notification_open(app: &AppHandle) {
     let Some(target) = target else {
         return;
     };
-    if let Some(window) = app.webview_windows().values().next() {
+    reveal_main_window(app);
+    let _ = app.emit("open-notification-mail", target);
+}
+
+pub fn reveal_main_window(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
+
+    if let Some(window) = app.get_webview_window("main").or_else(|| app.webview_windows().values().next().cloned()) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
-    let _ = app.emit("open-notification-mail", target);
 }
 
 fn truncate_for_notice(s: &str, max_chars: usize) -> String {

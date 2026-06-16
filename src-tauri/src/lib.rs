@@ -1496,11 +1496,7 @@ pub fn run() {
                     watcher::emit_pending_notification_open(_app);
                 }
                 if let tauri::RunEvent::Reopen { .. } = _event {
-                    if let Some(window) = _app.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    watcher::reveal_main_window(_app);
                 }
             }
         });
