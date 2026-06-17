@@ -178,6 +178,42 @@ fn decodes_gbk_encoded_word_headers() {
 }
 
 #[test]
+fn decodes_nested_legacy_chinese_body_with_attachments() {
+    let (body, _, _) = GB18030.encode("爱乐评留言回复\r\n你于2025年6月17日收到一条新回复。\r\n");
+    let body_b64 = STANDARD.encode(body);
+    let raw = format!(
+        concat!(
+            "From: huax1234 <huax1234@163.com>\r\n",
+            "To: molin@example.com\r\n",
+            "Subject: =?GBK?B?u6rAtLz+yrLDtA==?=\r\n",
+            "Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n",
+            "--outer\r\n",
+            "Content-Type: multipart/alternative; boundary=\"alt\"\r\n\r\n",
+            "--alt\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            "{}\r\n",
+            "--alt--\r\n",
+            "--outer\r\n",
+            "Content-Type: image/jpeg; name=\"screenshot.jpg\"\r\n",
+            "Content-Disposition: attachment; filename=\"screenshot.jpg\"\r\n",
+            "Content-Transfer-Encoding: base64\r\n\r\n",
+            "/9j/4AAQSkZJRg==\r\n",
+            "--outer--\r\n"
+        ),
+        body_b64
+    )
+    .into_bytes();
+
+    let mail = parse_email(&raw, 22, "acc1", "INBOX", true, false, &[]).unwrap();
+    assert!(mail.body_text.contains("爱乐评留言回复"));
+    assert!(mail.body_text.contains("2025年6月17日"));
+    assert!(!mail.body_text.contains('\u{FFFD}'));
+    assert_eq!(mail.meta.preview, "爱乐评留言回复");
+    assert_eq!(mail.attachments.len(), 1);
+}
+
+#[test]
 fn parses_conversation_headers() {
     let raw = MessageBuilder::new()
         .from(("Aria", "aria@example.com"))

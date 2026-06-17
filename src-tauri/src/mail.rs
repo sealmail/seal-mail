@@ -316,9 +316,9 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn fallback_body(raw: &[u8], want_html: bool) -> Option<String> {
-    let (headers, body) = split_message(raw)?;
+fn find_body_part(headers: &[u8], body: &[u8], want_html: bool) -> Option<String> {
     let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
+    let content_type_lower = content_type.to_ascii_lowercase();
     if let Some(boundary) = header_param(&content_type, "boundary") {
         let marker = format!("--{}", boundary);
         let marker = marker.as_bytes();
@@ -341,15 +341,29 @@ fn fallback_body(raw: &[u8], want_html: bool) -> Option<String> {
             let Some((part_headers, part_body)) = split_message(part) else {
                 continue;
             };
-            let part_type = header_value_ascii(part_headers, "Content-Type").unwrap_or_default();
-            let is_html = part_type.to_ascii_lowercase().contains("text/html");
-            let is_text =
-                part_type.is_empty() || part_type.to_ascii_lowercase().contains("text/plain");
-            if (want_html && is_html) || (!want_html && is_text) {
-                return Some(body_from_part(part_headers, part_body));
+            if let Some(found) = find_body_part(part_headers, part_body, want_html) {
+                return Some(found);
             }
         }
         None
+    } else {
+        let is_html = content_type_lower.contains("text/html");
+        let is_text = content_type_lower.is_empty() || content_type_lower.contains("text/plain");
+        if (want_html && is_html) || (!want_html && is_text) {
+            return Some(body_from_part(headers, body));
+        }
+        None
+    }
+}
+
+fn fallback_body(raw: &[u8], want_html: bool) -> Option<String> {
+    let (headers, body) = split_message(raw)?;
+    if header_value_ascii(headers, "Content-Type")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .starts_with("multipart/")
+    {
+        find_body_part(headers, body, want_html)
     } else {
         Some(body_from_part(headers, body))
     }
