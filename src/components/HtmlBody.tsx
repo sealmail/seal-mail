@@ -135,6 +135,12 @@ function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   return null;
 }
 
+function closestAnchor(target: EventTarget | null): HTMLAnchorElement | null {
+  if (!(target instanceof Node)) return null;
+  const el = target instanceof Element ? target : target.parentElement;
+  return el?.closest?.("a") ?? null;
+}
+
 /** 沙箱 iframe 渲染（无脚本执行；同源仅用于父页面接管链接点击和自适应高度） */
 export function HtmlBody(p: Props) {
   const [allowRemote, setAllowRemote] = useState(false);
@@ -190,18 +196,36 @@ export function HtmlBody(p: Props) {
 
     // 链接一律交给系统浏览器打开
     const onClick = (ev: MouseEvent) => {
-      const a = (ev.target as HTMLElement | null)?.closest?.("a");
+      const a = closestAnchor(ev.target);
       if (!a) return;
       ev.preventDefault();
+      ev.stopPropagation();
+      void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
+    };
+    const onAuxClick = (ev: MouseEvent) => {
+      const a = closestAnchor(ev.target);
+      if (!a) return;
+      ev.preventDefault();
+      ev.stopPropagation();
       void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
     };
     const onKeydown = (ev: KeyboardEvent) => {
+      if (ev.key === "Enter") {
+        const a = closestAnchor(ev.target);
+        if (a) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          void openExternalUrl(a.getAttribute("href"), { label: a.textContent });
+          return;
+        }
+      }
       const shortcut = zoomShortcutForKey(ev);
       if (!shortcut) return;
       ev.preventDefault();
       window.dispatchEvent(new CustomEvent("sealmail-zoom-delta", { detail: shortcut }));
     };
     d.addEventListener("click", onClick, true);
+    d.addEventListener("auxclick", onAuxClick, true);
     d.addEventListener("keydown", onKeydown, true);
 
     cleanupRef.current = () => {
@@ -214,6 +238,7 @@ export function HtmlBody(p: Props) {
         img.removeEventListener("error", measure);
       });
       d.removeEventListener("click", onClick, true);
+      d.removeEventListener("auxclick", onAuxClick, true);
       d.removeEventListener("keydown", onKeydown, true);
     };
   }

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { AppIcon } from "./AppIcon";
 import { HtmlBody } from "./HtmlBody";
@@ -11,6 +11,7 @@ import type { EmailFull, EmailMeta, FolderInfo } from "../types";
 interface Props {
   mail: EmailFull | null;
   thread: EmailMeta[];
+  threadMails: EmailFull[];
   folders: FolderInfo[];
   onOpenThreadMail: (mail: EmailMeta) => void;
   onReply: () => void;
@@ -92,34 +93,41 @@ export function MessageView(p: Props) {
   const [copied, setCopied] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [verifyPinned, setVerifyPinned] = useState(false);
-  const [threadExpanded, setThreadExpanded] = useState(false);
   /** 正文视图：null=自动（未签名邮件优先 HTML；签名邮件显示被签名的纯文本） */
   const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
-  /** 附件下载状态：index → 状态文案 */
-  const [attachState, setAttachState] = useState<Record<number, string>>({});
+  const [threadHtmlModes, setThreadHtmlModes] = useState<Record<string, boolean | null>>({});
+  /** 附件下载状态：mail/index → 状态文案 */
+  const [attachState, setAttachState] = useState<Record<string, string>>({});
+  const selectedCardRef = useRef<HTMLDivElement | null>(null);
   const uid = p.mail?.meta.uid;
   useEffect(() => {
     setTrustConfirm(false);
     setCopied(false);
     setVerifyOpen(false);
     setVerifyPinned(false);
-    setThreadExpanded(false);
     setHtmlMode(null);
+    setThreadHtmlModes({});
     setAttachState({});
   }, [uid]);
 
-  async function downloadAttachment(i: number, name: string) {
-    if (!p.mail) return;
+  useEffect(() => {
+    if (p.threadMails.length > 1) {
+      selectedCardRef.current?.scrollIntoView({ block: "start" });
+    }
+  }, [uid, p.threadMails.length]);
+
+  async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
     if (warning && !window.confirm(warning)) return;
     const path = await saveFileDialog({ defaultPath: name, title: "保存附件" });
     if (!path) return;
-    setAttachState((s) => ({ ...s, [i]: "保存中…" }));
+    const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
+    setAttachState((s) => ({ ...s, [stateKey]: "保存中…" }));
     try {
-      await saveAttachment(p.mail.meta.accountId, p.mail.meta.folder, p.mail.meta.uid, i, path);
-      setAttachState((s) => ({ ...s, [i]: "已保存 ✓" }));
+      await saveAttachment(mail.meta.accountId, mail.meta.folder, mail.meta.uid, i, path);
+      setAttachState((s) => ({ ...s, [stateKey]: "已保存 ✓" }));
     } catch (e) {
-      setAttachState((s) => ({ ...s, [i]: `失败：${e}` }));
+      setAttachState((s) => ({ ...s, [stateKey]: `失败：${e}` }));
     }
   }
 
@@ -140,6 +148,87 @@ export function MessageView(p: Props) {
   const banner = riskBanner(m);
   const moveTargets = p.folders.filter((f) => f.name !== m.meta.folder && f.name !== "__risk__");
   const canTrust = m.verify.status === "signedUnknown";
+  const conversation = p.threadMails.length > 1 ? p.threadMails : [];
+
+  function renderBody(mail: EmailFull, mode: boolean | null, setMode: (next: boolean) => void) {
+    const hasHtml = !!mail.bodyHtml;
+    const signed = mail.verify.status !== "unsigned";
+    const showHtml = hasHtml && (mode ?? defaultShowHtml(mail.bodyHtml));
+    return (
+      <>
+        {hasHtml && (
+          <div className="body-toolbar">
+            {signed && showHtml && <span className="body-note">⚠ 签名校验针对纯文本正文，HTML 版式仅供参考</span>}
+            <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setMode(!showHtml)}>
+              {showHtml ? "查看纯文本" : "查看 HTML 版式"}
+            </button>
+          </div>
+        )}
+        {showHtml ? <HtmlBody html={mail.bodyHtml as string} /> : <TextBody text={mail.bodyText} />}
+      </>
+    );
+  }
+
+  function renderThreadCard(mail: EmailFull) {
+    const key = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}`;
+    const current = key === `${m.meta.accountId}/${m.meta.folder}/${m.meta.uid}`;
+    const mode = threadHtmlModes[key] ?? null;
+    return (
+      <div className={`thread-card${current ? " current" : ""}`} key={key} ref={current ? selectedCardRef : null}>
+        <div className="thread-card-head">
+          <div className="msg-fromline">
+            <Seal trust={mail.meta.trust} size={30} />
+            <div style={{ minWidth: 0 }}>
+              <div className="msg-fromname">{mail.meta.fromName}</div>
+              <div className="msg-addr">{mail.meta.fromAddr}</div>
+            </div>
+          </div>
+          <span className="msg-date">{mail.meta.dateDisplay}</span>
+        </div>
+        {(mail.to.length > 0 || mail.cc.length > 0) && (
+          <div className="msg-rcpts">
+            {mail.to.length > 0 && (
+              <div className="rcpt-line">
+                <span className="rcpt-label">收件人</span>
+                <span className="rcpt-list">{mail.to.join("、")}</span>
+              </div>
+            )}
+            {mail.cc.length > 0 && (
+              <div className="rcpt-line">
+                <span className="rcpt-label">抄送</span>
+                <span className="rcpt-list">{mail.cc.join("、")}</span>
+              </div>
+            )}
+          </div>
+        )}
+        {mail.attachments.length > 0 && (
+          <div className="attach-row">
+            {mail.attachments.map((a, i) => {
+              const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
+              return (
+                <div className="attach" key={i}>
+                  <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
+                  <div className="attach-main">
+                    <div className="name">{a.name}</div>
+                    <div className="info">
+                      {fmtSize(a.size)} · {a.mime}
+                      {attachState[stateKey] && <span className="attach-state">{attachState[stateKey]}</span>}
+                    </div>
+                  </div>
+                  <button className="btn-ghost attach-save" onClick={() => downloadAttachment(mail, i, a.name)}>
+                    保存
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="thread-card-body">
+          {renderBody(mail, mode, (next) => setThreadHtmlModes((s) => ({ ...s, [key]: next })))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="msg-pane">
@@ -256,7 +345,7 @@ export function MessageView(p: Props) {
               </div>
             </div>
           </div>
-          {(m.to.length > 0 || m.cc.length > 0) && (
+          {conversation.length === 0 && (m.to.length > 0 || m.cc.length > 0) && (
             <div className="msg-rcpts">
               {m.to.length > 0 && (
                 <div className="rcpt-line">
@@ -272,68 +361,29 @@ export function MessageView(p: Props) {
               )}
             </div>
           )}
-          {m.attachments.length > 0 && (
+          {conversation.length === 0 && m.attachments.length > 0 && (
             <div className="attach-row">
-              {m.attachments.map((a, i) => (
-                <div className="attach" key={i}>
-                  <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
-                  <div className="attach-main">
-                    <div className="name">{a.name}</div>
-                    <div className="info">
-                      {fmtSize(a.size)} · {a.mime}
-                      {attachState[i] && <span className="attach-state">{attachState[i]}</span>}
+              {m.attachments.map((a, i) => {
+                const stateKey = `${m.meta.accountId}/${m.meta.folder}/${m.meta.uid}/${i}`;
+                return (
+                  <div className="attach" key={i}>
+                    <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
+                    <div className="attach-main">
+                      <div className="name">{a.name}</div>
+                      <div className="info">
+                        {fmtSize(a.size)} · {a.mime}
+                        {attachState[stateKey] && <span className="attach-state">{attachState[stateKey]}</span>}
+                      </div>
                     </div>
+                    <button className="btn-ghost attach-save" onClick={() => downloadAttachment(m, i, a.name)}>
+                      保存
+                    </button>
                   </div>
-                  <button className="btn-ghost attach-save" onClick={() => downloadAttachment(i, a.name)}>
-                    保存
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
-
-        {p.thread.length > 1 && (
-          <div className="thread-strip" aria-label="会话线程">
-            <div className="thread-title">
-              <span>会话</span>
-              <span>{p.thread.length} 封</span>
-            </div>
-            <div className="thread-list">
-              {(() => {
-                const collapsed = p.thread.length > 3 && !threadExpanded;
-                const visibleThread = collapsed ? [p.thread[0], ...p.thread.slice(-2)] : p.thread;
-                const hiddenCount = p.thread.length - visibleThread.length;
-                return visibleThread.map((item, index) => {
-                  const showExpand = collapsed && index === 1;
-                  const current = item.uid === m.meta.uid && item.folder === m.meta.folder;
-                  return (
-                    <Fragment key={`${item.accountId}/${item.folder}/${item.uid}`}>
-                      {showExpand && (
-                        <button className="thread-more" key="thread-more" onClick={() => setThreadExpanded(true)}>
-                          展开中间 {hiddenCount} 封
-                        </button>
-                      )}
-                      <button
-                        key={`${item.accountId}/${item.folder}/${item.uid}`}
-                        className={`thread-item${current ? " current" : ""}${item.unread ? " unread" : ""}`}
-                        onClick={() => !current && p.onOpenThreadMail(item)}
-                        disabled={current}
-                      >
-                        <span className="thread-dot" />
-                        <span className="thread-main">
-                          <span className="thread-from">{item.fromName}</span>
-                          <span className="thread-preview">{item.preview || item.subject}</span>
-                        </span>
-                        <span className="thread-time">{item.dateDisplay}</span>
-                      </button>
-                    </Fragment>
-                  );
-                });
-              })()}
-            </div>
-          </div>
-        )}
 
         {trustConfirm && unknownFpr && (
           <div className="trust-confirm">
@@ -388,30 +438,13 @@ export function MessageView(p: Props) {
           </div>
         )}
 
-        {(() => {
-          const hasHtml = !!m.bodyHtml;
-          const signed = m.verify.status !== "unsigned";
-          const showHtml = hasHtml && (htmlMode ?? defaultShowHtml(m.bodyHtml));
-          return (
-            <>
-              {hasHtml && (
-                <div className="body-toolbar">
-                  {signed && showHtml && (
-                    <span className="body-note">⚠ 签名校验针对纯文本正文，HTML 版式仅供参考</span>
-                  )}
-                  <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setHtmlMode(!showHtml)}>
-                    {showHtml ? "查看纯文本" : "查看 HTML 版式"}
-                  </button>
-                </div>
-              )}
-              {showHtml ? (
-                <HtmlBody html={m.bodyHtml as string} />
-              ) : (
-                <TextBody text={m.bodyText} />
-              )}
-            </>
-          );
-        })()}
+        {conversation.length > 0 ? (
+          <div className="thread-conversation" aria-label={`会话，共 ${conversation.length} 封`}>
+            {conversation.map(renderThreadCard)}
+          </div>
+        ) : (
+          renderBody(m, htmlMode, setHtmlMode)
+        )}
       </div>
     </div>
   );

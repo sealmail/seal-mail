@@ -55,6 +55,8 @@ pub fn ensure_watchers(app: &AppHandle) {
 struct MailNotice {
     uid: Option<u32>,
     message_id: Option<String>,
+    from_name: String,
+    from_addr: String,
     subject: String,
     preview: String,
 }
@@ -105,8 +107,12 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
     let (title, body) = if notices.len() == 1 {
         let n = &notices[0];
         (
-            truncate_for_notice(&n.subject, 80),
-            truncate_for_notice(&n.preview, 140),
+            truncate_for_notice(&format_sender(n), 80),
+            format!(
+                "标题：{}\n正文：{}",
+                truncate_for_notice(&n.subject, 80),
+                truncate_for_notice(&n.preview, 140)
+            ),
         )
     } else if !notices.is_empty() {
         let mut lines = notices
@@ -114,9 +120,10 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
             .take(3)
             .map(|n| {
                 format!(
-                    "{}：{}",
-                    truncate_for_notice(&n.subject, 36),
-                    truncate_for_notice(&n.preview, 44)
+                    "{}｜{}：{}",
+                    truncate_for_notice(&format_sender(n), 24),
+                    truncate_for_notice(&n.subject, 28),
+                    truncate_for_notice(&n.preview, 36)
                 )
             })
             .collect::<Vec<_>>();
@@ -195,6 +202,16 @@ fn truncate_for_notice(s: &str, max_chars: usize) -> String {
     out
 }
 
+fn format_sender(n: &MailNotice) -> String {
+    let name = n.from_name.trim();
+    let addr = n.from_addr.trim();
+    if name.is_empty() || name == addr {
+        addr.to_string()
+    } else {
+        format!("{} <{}>", name, addr)
+    }
+}
+
 fn notice_from_raw(raw: &[u8], uid: Option<u32>) -> Option<MailNotice> {
     let meta = mail::parse_email(raw, uid.unwrap_or(0), "", "INBOX", true, false, &[])
         .ok()?
@@ -202,6 +219,8 @@ fn notice_from_raw(raw: &[u8], uid: Option<u32>) -> Option<MailNotice> {
     Some(MailNotice {
         uid,
         message_id: meta.message_id,
+        from_name: meta.from_name,
+        from_addr: meta.from_addr,
         subject: meta.subject,
         preview: meta.preview,
     })

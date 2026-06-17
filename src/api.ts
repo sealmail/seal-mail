@@ -55,6 +55,10 @@ export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
   return invoke("set_notify_new_mail", { enabled });
 }
 
+export async function openPendingNotificationMail(): Promise<void> {
+  return invoke("open_pending_notification_mail");
+}
+
 // ── OAuth2（设备码授权）──
 export async function oauthBeginDevice(provider: OAuthProvider, clientId?: string): Promise<DeviceFlowStart> {
   return invoke("oauth_begin_device", { provider, clientId: clientId ?? null });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { addPluginListener } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
 import { AccountModal } from "./components/AccountModal";
@@ -33,6 +34,10 @@ const BUILTIN_FOLDERS: FolderInfo[] = [
 
 function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.uid}`;
+}
+
+function threadKey(m: Pick<EmailMeta, "accountId" | "folder" | "threadId" | "messageId" | "uid">) {
+  return `${m.accountId}/${m.folder}/${m.threadId || m.messageId || m.uid}`;
 }
 
 type NotificationMailTarget = {
@@ -206,6 +211,7 @@ function MailApp() {
   const [selected, setSelected] = useState<EmailFull | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [thread, setThread] = useState<EmailMeta[]>([]);
+  const [threadMails, setThreadMails] = useState<EmailFull[]>([]);
   const [view, setView] = useState<"mail" | "keys">("mail");
   const [search, setSearch] = useState("");
   const [filterMode, setFilterMode] = useState<"all" | "unread" | "flagged">("all");
@@ -253,6 +259,7 @@ function MailApp() {
     setSelected(null);
     setSelectedKey(null);
     setThread([]);
+    setThreadMails([]);
   }, []);
   const retainSelection = useCallback((metas: EmailMeta[]) => {
     const visible = new Set(metas.map(mailKey));
@@ -471,6 +478,7 @@ function MailApp() {
     setSelectedKey(key);
     setSelected(null);
     setThread([]);
+    setThreadMails([]);
     setView("mail");
     const shouldMarkRead = opts.markRead !== false && m.unread;
     if (shouldMarkRead) {
@@ -481,7 +489,23 @@ function MailApp() {
     try {
       const full = await api.getMessage(m.accountId, m.folder, m.uid);
       if (seq === selectSeq.current) {
-        setSelected(shouldMarkRead ? { ...full, meta: { ...full.meta, unread: false } } : full);
+        const selectedFull = shouldMarkRead ? { ...full, meta: { ...full.meta, unread: false } } : full;
+        setSelected(selectedFull);
+        const threadMetas = await api.listThread(m.accountId, m.folder, m.threadId);
+        if (seq !== selectSeq.current) return;
+        const normalizedThread = threadMetas.map((item) =>
+          mailKey(item) === key && shouldMarkRead ? { ...item, unread: false } : item
+        );
+        setThread(normalizedThread);
+        const fulls = await Promise.all(
+          normalizedThread.map(async (item) => {
+            if (mailKey(item) === key) return selectedFull;
+            return api.getMessage(item.accountId, item.folder, item.uid);
+          })
+        );
+        if (seq === selectSeq.current) {
+          setThreadMails(fulls.sort((a, b) => a.meta.timestamp - b.meta.timestamp));
+        }
       }
     } catch (e) {
       if (seq === selectSeq.current) setListError(String(e));
@@ -545,8 +569,10 @@ function MailApp() {
         const full = await api.getMessage(target.accountId, targetFolder, target.uid);
         if (full.meta.unread) api.setRead(target.accountId, targetFolder, target.uid, true).catch(() => {});
         setSelectedKey(mailKey(full.meta));
-        setSelected(full.meta.unread ? { ...full, meta: { ...full.meta, unread: false } } : full);
-        setThread([]);
+        const selectedFull = full.meta.unread ? { ...full, meta: { ...full.meta, unread: false } } : full;
+        setSelected(selectedFull);
+        setThread([selectedFull.meta]);
+        setThreadMails([selectedFull]);
       } else {
         setListError("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。");
       }
@@ -568,21 +594,13 @@ function MailApp() {
   }, [accountId, refreshFolders, retainSelection]);
 
   useEffect(() => {
-    if (!selected) {
-      setThread([]);
-      return;
-    }
-    setThread(
-      messages
-        .filter(
-          (m) =>
-            m.accountId === selected.meta.accountId &&
-            m.folder === selected.meta.folder &&
-            m.threadId === selected.meta.threadId
-        )
-        .sort((a, b) => a.timestamp - b.timestamp)
-    );
-  }, [messages, selected?.meta.accountId, selected?.meta.folder, selected?.meta.threadId]);
+    const unlisten = addPluginListener("notification", "actionPerformed", () => {
+      api.openPendingNotificationMail().catch((e) => setListError(String(e)));
+    });
+    return () => {
+      unlisten.then((listener) => listener.unregister());
+    };
+  }, []);
 
   // ── 搜索（本地过滤：发件人/主题/摘要/地址）+ 未读/星标过滤 ──
   const shownMessages = useMemo(() => {
@@ -601,21 +619,37 @@ function MailApp() {
     );
   }, [messages, search, categoryMode, filterMode, selectedKey]);
 
+  const shownThreadMessages = useMemo(() => {
+    return Array.from(
+      shownMessages
+        .reduce((groups, m) => {
+          const key = threadKey(m);
+          const existing = groups.get(key);
+          if (existing) existing.push(m);
+          else groups.set(key, [m]);
+          return groups;
+        }, new Map<string, EmailMeta[]>())
+        .values()
+    )
+      .map((group) => [...group].sort((a, b) => b.timestamp - a.timestamp)[0])
+      .sort((a, b) => b.timestamp - a.timestamp);
+  }, [shownMessages]);
+
   useEffect(() => {
     setLoadMoreNotice(null);
   }, [accountId, folder, search, categoryMode, filterMode]);
 
   useEffect(() => {
     if (view !== "mail" || folder === DRAFTS_FOLDER || loading) return;
-    if (shownMessages.length === 0) {
+    if (shownThreadMessages.length === 0) {
       setSelected(null);
       setSelectedKey(null);
       return;
     }
     if (!selectedKey || !shownMessages.some((m) => mailKey(m) === selectedKey)) {
-      selectMail(shownMessages[0], { markRead: false });
+      selectMail(shownThreadMessages[0], { markRead: false });
     }
-  }, [folder, loading, selectedKey, shownMessages, view]);
+  }, [folder, loading, selectedKey, shownMessages, shownThreadMessages, view]);
 
   const riskUnread = useMemo(() => inboxMetas.filter((m) => m.unread && isRisky(m)).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
@@ -845,11 +879,12 @@ function MailApp() {
       if (e.key === "ArrowDown" || e.key === "j" || e.key === "ArrowUp" || e.key === "k") {
         e.preventDefault();
         const down = e.key === "ArrowDown" || e.key === "j";
-        if (shownMessages.length === 0) return;
-        const idx = selectedKey ? shownMessages.findIndex((m) => mailKey(m) === selectedKey) : -1;
-        const next = idx < 0 ? 0 : Math.min(shownMessages.length - 1, Math.max(0, idx + (down ? 1 : -1)));
-        if (shownMessages[next] && mailKey(shownMessages[next]) !== selectedKey) {
-          selectMail(shownMessages[next]);
+        if (shownThreadMessages.length === 0) return;
+        const currentThread = selected ? threadKey(selected.meta) : null;
+        const idx = currentThread ? shownThreadMessages.findIndex((m) => threadKey(m) === currentThread) : -1;
+        const next = idx < 0 ? 0 : Math.min(shownThreadMessages.length - 1, Math.max(0, idx + (down ? 1 : -1)));
+        if (shownThreadMessages[next] && threadKey(shownThreadMessages[next]) !== currentThread) {
+          selectMail(shownThreadMessages[next]);
         }
       }
     }
@@ -1103,7 +1138,7 @@ function MailApp() {
                 categoryCounts={categoryCounts}
                 categoryUnreadCounts={categoryUnreadCounts}
                 unreadCount={listUnread}
-                loadedCount={shownMessages.length}
+                loadedCount={shownThreadMessages.length}
                 totalCount={folder === RISK_FOLDER ? messages.length : total}
                 hasMore={folder !== RISK_FOLDER && (loadedRef.current < total || !olderExhausted)}
                 loadingMore={loadingMore}
@@ -1126,6 +1161,7 @@ function MailApp() {
               <MessageView
                 mail={selected}
                 thread={thread}
+                threadMails={threadMails}
                 folders={folders}
                 onOpenThreadMail={selectMail}
                 onReply={handleReply}

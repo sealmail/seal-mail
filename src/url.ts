@@ -1,4 +1,4 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 
 interface OpenExternalOptions {
   label?: string | null;
@@ -44,5 +44,5 @@ export async function openExternalUrl(raw: string | null | undefined, options: O
   const url = normalizeExternalUrl(raw);
   if (!url) return;
   if (options.confirm !== false && !shouldOpenExternal(url, options.label)) return;
-  await openUrl(url);
+  await invoke("open_external_url", { url });
 }

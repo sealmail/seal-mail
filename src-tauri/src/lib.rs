@@ -15,7 +15,8 @@ pub mod watcher;
 use models::*;
 use serde::Serialize;
 use store::{AppState, StoreData};
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +36,17 @@ fn gen_id() -> String {
     let mut b = [0u8; 8];
     let _ = getrandom::getrandom(&mut b);
     hex::encode(b)
+}
+
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("只允许打开 http/https 外部链接".into());
+    }
+    app.opener()
+        .open_url(trimmed.to_string(), None::<String>)
+        .map_err(|e| e.to_string())
 }
 
 // ───────────────────────── state / accounts ─────────────────────────
@@ -145,6 +157,11 @@ fn set_notify_new_mail(state: State<'_, AppState>, enabled: bool) -> Result<bool
     s.prefs.notify_new_mail = enabled;
     s.save_prefs()?;
     Ok(enabled)
+}
+
+#[tauri::command]
+fn open_pending_notification_mail(app: AppHandle) {
+    watcher::emit_pending_notification_open(&app);
 }
 
 // ───────────────────────── oauth2 (设备码) ─────────────────────────
@@ -1433,6 +1450,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
+            open_external_url,
             check_for_update,
             oauth_begin_device,
             oauth_poll_device,
@@ -1473,6 +1491,7 @@ pub fn run() {
             set_close_behavior,
             get_notify_new_mail,
             set_notify_new_mail,
+            open_pending_notification_mail,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
