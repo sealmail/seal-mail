@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_mail_server_smoke:
+        description: "Run the optional Docker-backed mail server smoke job"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  BUN_VERSION: "1.3.13"
+
+jobs:
+  core-cli:
+    name: Core + CLI + frontend types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Rust check
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --tests
+
+      - name: Frontend typecheck
+        run: bunx tsc --noEmit
+
+  mail-server-smoke:
+    name: Docker mail server smoke
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_mail_server_smoke
+    services:
+      greenmail:
+        image: greenmail/standalone:2.1.3
+        env:
+          GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.users=test:password@localhost"
+        ports:
+          - 3025:3025
+          - 3143:3143
+          - 3110:3110
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: mail-server-smoke
+
+      - name: Wait for local mail server
+        shell: bash
+        run: |
+          set -euo pipefail
+          for port in 3025 3143 3110; do
+            for i in {1..30}; do
+              if (echo > "/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1; then
+                echo "port $port is ready"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "::error::port $port did not become ready"
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Check local mail server ports
+        working-directory: src-tauri
+        env:
+          SEALMAIL_TEST_MAIL_HOST: localhost
+          SEALMAIL_TEST_SMTP_PORT: "3025"
+          SEALMAIL_TEST_IMAP_PORT: "3143"
+          SEALMAIL_TEST_POP3_PORT: "3110"
+        run: cargo test --test mail_server_smoke -- --ignored

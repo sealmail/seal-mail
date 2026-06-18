@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SealMail Core CLI + GUI 架构设计</title>
+  <style>
+    :root {
+      --ink: #18211d;
+      --muted: #65726c;
+      --line: #d7ded8;
+      --paper: #f7f6f1;
+      --panel: #ffffff;
+      --deep: #18352d;
+      --green: #2f6f5e;
+      --rust: #b85c38;
+      --gold: #b08a3a;
+      --blue: #385f86;
+      --soft-green: #e7f0eb;
+      --soft-rust: #f3e6de;
+      --soft-gold: #f2ead7;
+      --soft-blue: #e3ebf4;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        linear-gradient(180deg, rgba(24, 53, 45, 0.08), rgba(247, 246, 241, 0) 360px),
+        var(--paper);
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 28px 0 72px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 0;
+      background: rgba(247, 246, 241, 0.88);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(215, 222, 216, 0.72);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      font-weight: 750;
+      color: var(--deep);
+      white-space: nowrap;
+    }
+
+    .seal {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--deep);
+      color: #fffdf7;
+      font-family: Georgia, serif;
+      font-size: 18px;
+      box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.22);
+    }
+
+    nav {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    nav a {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 8px 10px;
+      border-radius: 6px;
+    }
+
+    nav a:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .hero {
+      min-height: 430px;
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 36px;
+      align-items: center;
+      padding: 56px 0 44px;
+    }
+
+    .eyebrow {
+      color: var(--rust);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(44px, 7vw, 84px);
+      line-height: 0.96;
+      letter-spacing: 0;
+      color: var(--deep);
+      text-wrap: pretty;
+    }
+
+    .lead {
+      max-width: 680px;
+      margin: 24px 0 0;
+      color: #3d4a44;
+      font-size: clamp(18px, 2vw, 22px);
+      line-height: 1.6;
+      text-wrap: pretty;
+    }
+
+    .hero-panel {
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 24px 60px rgba(24, 33, 29, 0.08);
+    }
+
+    .decision-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .decision {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 13px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf9;
+    }
+
+    .decision .mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--soft-green);
+      color: var(--green);
+      font-weight: 850;
+    }
+
+    .decision:nth-child(2) .mark {
+      background: var(--soft-rust);
+      color: var(--rust);
+    }
+
+    .decision:nth-child(3) .mark {
+      background: var(--soft-blue);
+      color: var(--blue);
+    }
+
+    .decision strong {
+      display: block;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .decision span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    section {
+      margin-top: 34px;
+      padding-top: 28px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+
+    h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--deep);
+      font-size: clamp(28px, 3vw, 44px);
+      letter-spacing: 0;
+    }
+
+    .section-note {
+      max-width: 520px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 15px;
+    }
+
+    .band {
+      background: rgba(255, 255, 255, 0.68);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+    }
+
+    .architecture {
+      display: grid;
+      gap: 16px;
+    }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .lane-label {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      background: #fffdf9;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .lane-label strong {
+      display: block;
+      color: var(--deep);
+      font-size: 16px;
+    }
+
+    .lane-label span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin-top: 6px;
+    }
+
+    .lane-body {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .module {
+      min-height: 126px;
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .module.core {
+      background: var(--soft-green);
+      border-color: #bfd6ca;
+    }
+
+    .module.cli {
+      background: var(--soft-rust);
+      border-color: #dfc8ba;
+    }
+
+    .module.gui {
+      background: var(--soft-blue);
+      border-color: #c8d7e5;
+    }
+
+    .module.system {
+      background: var(--soft-gold);
+      border-color: #dacb9c;
+    }
+
+    .module h3 {
+      margin: 0;
+      font-size: 16px;
+      color: var(--deep);
+    }
+
+    .module p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 13px;
+    }
+
+    .tagrow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 14px;
+    }
+
+    .tag {
+      border: 1px solid rgba(24, 33, 29, 0.12);
+      background: rgba(255, 255, 255, 0.55);
+      border-radius: 999px;
+      padding: 5px 8px;
+      color: #41504a;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow-card {
+      min-height: 150px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf9;
+      position: relative;
+    }
+
+    .flow-card::after {
+      content: "";
+      position: absolute;
+      right: -10px;
+      top: 50%;
+      width: 10px;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .flow-card:last-child::after {
+      display: none;
+    }
+
+    .flow-index {
+      color: var(--rust);
+      font-weight: 850;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+
+    .flow-card strong {
+      display: block;
+      color: var(--deep);
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+
+    .flow-card span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .contract {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf9;
+      overflow: hidden;
+    }
+
+    .contract header {
+      padding: 16px 18px;
+      background: rgba(24, 53, 45, 0.06);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .contract h3 {
+      margin: 0;
+      color: var(--deep);
+      font-size: 17px;
+    }
+
+    .contract ul {
+      list-style: none;
+      margin: 0;
+      padding: 12px 18px 18px;
+      display: grid;
+      gap: 9px;
+    }
+
+    .contract li {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 12px;
+      padding: 9px 0;
+      border-bottom: 1px solid rgba(215, 222, 216, 0.7);
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .contract li:last-child {
+      border-bottom: 0;
+    }
+
+    .contract b {
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .runtime {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .state-map {
+      display: grid;
+      gap: 12px;
+    }
+
+    .state-row {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .state-label {
+      color: var(--deep);
+      font-weight: 800;
+      font-size: 14px;
+    }
+
+    .state-line {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .state-pill {
+      min-height: 82px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf9;
+      padding: 12px;
+    }
+
+    .state-pill strong {
+      display: block;
+      color: var(--deep);
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .state-pill span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.42;
+    }
+
+    .callout {
+      border-left: 4px solid var(--rust);
+      background: #fffdf9;
+      border-radius: 8px;
+      padding: 18px;
+      color: #3d4a44;
+      line-height: 1.65;
+      font-size: 15px;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .check {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf9;
+      padding: 16px;
+    }
+
+    .check strong {
+      display: block;
+      color: var(--deep);
+      margin-bottom: 8px;
+    }
+
+    .check p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.52;
+      font-size: 13px;
+    }
+
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf9;
+      padding: 16px;
+      min-height: 170px;
+    }
+
+    .step small {
+      color: var(--rust);
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .step h3 {
+      margin: 12px 0 8px;
+      color: var(--deep);
+      font-size: 17px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .footer-note {
+      margin-top: 34px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .runtime,
+      .matrix {
+        grid-template-columns: 1fr;
+      }
+
+      .lane {
+        grid-template-columns: 1fr;
+      }
+
+      .lane-body {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow-grid,
+      .roadmap,
+      .checklist {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        width: min(100% - 24px, 1180px);
+      }
+
+      .topbar {
+        position: static;
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      nav {
+        justify-content: flex-start;
+      }
+
+      .hero {
+        padding-top: 34px;
+      }
+
+      .section-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .lane-body,
+      .flow-grid,
+      .roadmap,
+      .checklist,
+      .state-line {
+        grid-template-columns: 1fr;
+      }
+
+      .state-row,
+      .contract li {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-card::after {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <a class="brand" href="#top" aria-label="SealMail 架构设计">
+        <span class="seal">S</span>
+        <span>SealMail Architecture</span>
+      </a>
+      <nav aria-label="页面导航">
+        <a href="#overview">总览</a>
+        <a href="#components">组成</a>
+        <a href="#interfaces">接口</a>
+        <a href="#runtime">运行时</a>
+        <a href="#communication">通信</a>
+        <a href="#release">发布</a>
+      </nav>
+    </div>
+
+    <header class="hero" id="top">
+      <div>
+        <div class="eyebrow">Architecture proposal</div>
+        <h1>Core CLI + GUI</h1>
+        <p class="lead">
+          把 SealMail 从「桌面应用里的 Rust 后端」升级为「CLI 是唯一业务入口，GUI 是展示壳」的结构。Core 承载业务规则，CLI 暴露稳定 JSON 合约，GUI 只通过 CLI bridge 读取数据和发出用户意图。
+        </p>
+      </div>
+      <aside class="hero-panel" aria-label="架构设计原则">
+        <div class="decision-stack">
+          <div class="decision">
+            <div class="mark">1</div>
+            <div>
+              <strong>业务只进 Core</strong>
+              <span>收发信、同步、签名、验证、过滤、缓存、草稿、联系人、密钥状态都由 Core 统一定义。</span>
+            </div>
+          </div>
+          <div class="decision">
+            <div class="mark">2</div>
+            <div>
+              <strong>业务入口只走 CLI</strong>
+              <span>GUI 不直接调用 Core。Tauri 只负责启动 CLI、传入 JSON/stdin/env、读取 JSON stdout。</span>
+            </div>
+          </div>
+          <div class="decision">
+            <div class="mark">3</div>
+            <div>
+              <strong>发布物先保持简单</strong>
+              <span>用户仍安装一个签名公证过的桌面 App；GUI 可以启动内置 CLI，或以 App 自身的 CLI 模式运行。</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </header>
+
+    <section id="overview">
+      <div class="section-head">
+        <h2>目标形态</h2>
+        <p class="section-note">GUI 不再和 CLI 并列消费 Core；GUI 通过 CLI JSON 合约消费业务能力，CLI 再调用 Core。</p>
+      </div>
+      <div class="band architecture">
+        <div class="lane">
+          <div class="lane-label">
+            <strong>用户入口</strong>
+            <span>人和自动化系统真正接触的界面。</span>
+          </div>
+          <div class="lane-body">
+            <article class="module gui">
+              <div>
+                <h3>GUI</h3>
+                <p>三栏邮件界面、可信状态展示、账户设置、风险确认、附件与草稿交互。</p>
+              </div>
+              <div class="tagrow"><span class="tag">展示</span><span class="tag">交互</span></div>
+            </article>
+            <article class="module cli">
+              <div>
+                <h3>CLI</h3>
+                <p>同步、查询、发信、信任管理、过滤器执行、诊断输出、脚本化自动化。</p>
+              </div>
+              <div class="tagrow"><span class="tag">自动化</span><span class="tag">排障</span></div>
+            </article>
+            <article class="module cli">
+              <div>
+                <h3>Daemon</h3>
+                <p>后台同步、新邮件通知、过滤器自动归档、状态事件广播。</p>
+              </div>
+              <div class="tagrow"><span class="tag">常驻</span><span class="tag">事件</span></div>
+            </article>
+            <article class="module gui">
+              <div>
+                <h3>未来入口</h3>
+                <p>TUI、移动壳、只读审计面板、团队内控工具可以按同一边界接入。</p>
+              </div>
+              <div class="tagrow"><span class="tag">可扩展</span></div>
+            </article>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-label">
+            <strong>能力核心</strong>
+            <span>唯一业务事实来源，定义数据、状态、错误和事件。</span>
+          </div>
+          <div class="lane-body">
+            <article class="module core">
+              <div>
+                <h3>Mail Core</h3>
+                <p>账户、目录、收信、发信、移动、删除、已读、星标、附件。</p>
+              </div>
+              <div class="tagrow"><span class="tag">IMAP</span><span class="tag">POP3</span><span class="tag">SMTP</span></div>
+            </article>
+            <article class="module core">
+              <div>
+                <h3>Trust Core</h3>
+                <p>本地身份、签名、验证、可信联系人、高风险语义判断。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Seal</span><span class="tag">Ledger</span></div>
+            </article>
+            <article class="module core">
+              <div>
+                <h3>Workflow Core</h3>
+                <p>过滤器、草稿、联系人、搜索、会话线程、偏好。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Rules</span><span class="tag">Drafts</span></div>
+            </article>
+            <article class="module core">
+              <div>
+                <h3>State Core</h3>
+                <p>统一配置目录、SQLite 缓存、密钥文件、OAuth token、状态快照。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Local first</span></div>
+            </article>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-label">
+            <strong>系统资源</strong>
+            <span>外部协议和本机能力，统一由 Core 或 Adapter 控制。</span>
+          </div>
+          <div class="lane-body">
+            <article class="module system">
+              <div>
+                <h3>Mail Servers</h3>
+                <p>邮箱服务、OAuth provider、服务器目录、远端状态同步。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Network</span></div>
+            </article>
+            <article class="module system">
+              <div>
+                <h3>Local Store</h3>
+                <p>账户配置、密钥材料、邮件缓存、草稿、规则和联系人。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Private</span></div>
+            </article>
+            <article class="module system">
+              <div>
+                <h3>Device</h3>
+                <p>Ledger USB、系统通知、文件选择、外部链接、下载目录。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Adapter</span></div>
+            </article>
+            <article class="module system">
+              <div>
+                <h3>Updater</h3>
+                <p>签名更新包、macOS 签名公证、发布渠道、版本元数据。</p>
+              </div>
+              <div class="tagrow"><span class="tag">Release</span></div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="components">
+      <div class="section-head">
+        <h2>关系组成</h2>
+        <p class="section-note">每层只负责一件事。越靠下越稳定，越靠上越贴近用户体验。</p>
+      </div>
+      <div class="flow-grid">
+        <article class="flow-card">
+          <div class="flow-index">Layer 01</div>
+          <strong>Domain Model</strong>
+          <span>账户、邮件、目录、身份、签名、可信联系人、规则、草稿、错误和事件的统一语义。</span>
+        </article>
+        <article class="flow-card">
+          <div class="flow-index">Layer 02</div>
+          <strong>Core Services</strong>
+          <span>把业务用例做成稳定能力：同步、发送、验证、过滤、缓存读写、风险判断。</span>
+        </article>
+        <article class="flow-card">
+          <div class="flow-index">Layer 03</div>
+          <strong>Adapters</strong>
+          <span>连接外部世界：IMAP、POP3、SMTP、OAuth、Ledger、SQLite、系统通知、文件系统。</span>
+        </article>
+        <article class="flow-card">
+          <div class="flow-index">Layer 04</div>
+          <strong>Interface Hosts</strong>
+          <span>CLI 是 Core 的稳定产品接口；Tauri command 只保留 CLI bridge 和系统能力。</span>
+        </article>
+        <article class="flow-card">
+          <div class="flow-index">Layer 05</div>
+          <strong>Presentation</strong>
+          <span>React GUI 只展示状态、收集用户意图、订阅事件，不拥有业务规则。</span>
+        </article>
+      </div>
+    </section>
+
+    <section id="interfaces">
+      <div class="section-head">
+        <h2>接口面</h2>
+        <p class="section-note">接口按「意图」分组，而不是按屏幕分组。GUI 调用 CLI 的 JSON 形态，CLI 调用 Core。</p>
+      </div>
+      <div class="matrix">
+        <article class="contract">
+          <header><h3>Core 对外能力</h3></header>
+          <ul>
+            <li><b>账户与身份</b><span>添加、测试、移除账户；选择本地身份或硬件身份；读取可信状态。</span></li>
+            <li><b>邮件与目录</b><span>列目录、同步、分页读取、读完整邮件、移动、归档、删除、标记。</span></li>
+            <li><b>发送与草稿</b><span>保存草稿、删除草稿、发送邮件、附加签名、处理附件。</span></li>
+            <li><b>信任与风险</b><span>验证签名、识别冒充、添加可信联系人、输出风险拦截原因。</span></li>
+            <li><b>规则与自动化</b><span>管理过滤器、应用过滤器、收集联系人、后台任务状态。</span></li>
+          </ul>
+        </article>
+
+        <article class="contract">
+          <header><h3>入口接口职责</h3></header>
+          <ul>
+            <li><b>GUI Adapter</b><span>把用户意图转成 CLI 参数/stdin，把 CLI JSON 转成视图模型；同时处理窗口、文件选择、外部链接、通知点击。</span></li>
+            <li><b>CLI Adapter</b><span>把命令参数转成 Core 意图，输出人类可读文本或机器可读 JSON。</span></li>
+            <li><b>Daemon API</b><span>提供本机 IPC 或 localhost API，维护长连接事件流和后台同步队列。</span></li>
+            <li><b>Release Adapter</b><span>处理 App 更新、版本检查、签名包验证、内置 sidecar 生命周期。</span></li>
+            <li><b>Test Harness</b><span>直接驱动 Core 用例，验证业务结果，不依赖 GUI 或真实点击。</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="runtime">
+      <div class="section-head">
+        <h2>运行时态</h2>
+        <p class="section-note">同一套 Core 由 CLI 加载。GUI 通过一次性 CLI 进程完成命令和查询，后续可演进为 daemon。</p>
+      </div>
+      <div class="runtime">
+        <div class="band state-map">
+          <div class="state-row">
+            <div class="state-label">GUI + CLI bridge 模式</div>
+            <div class="state-line">
+              <div class="state-pill"><strong>启动</strong><span>Tauri App 只启动 GUI 和平台 adapter。</span></div>
+              <div class="state-pill"><strong>交互</strong><span>React 调用 cli_json，Tauri 启动 sealmail-cli 或 App CLI 模式。</span></div>
+              <div class="state-pill"><strong>输出</strong><span>CLI 读取统一配置目录，调用 Core，并把 JSON stdout 返回 GUI。</span></div>
+            </div>
+          </div>
+          <div class="state-row">
+            <div class="state-label">CLI 一次性模式</div>
+            <div class="state-line">
+              <div class="state-pill"><strong>启动</strong><span>CLI 加载同一个 Core 配置目录和本地缓存。</span></div>
+              <div class="state-pill"><strong>执行</strong><span>完成同步、查询、发信、诊断等单个意图。</span></div>
+              <div class="state-pill"><strong>输出</strong><span>输出文本或 JSON，进程结束，不保留 UI 状态。</span></div>
+            </div>
+          </div>
+          <div class="state-row">
+            <div class="state-label">Daemon 常驻模式</div>
+            <div class="state-line">
+              <div class="state-pill"><strong>启动</strong><span>后台进程持有 Core，维护同步计划和事件队列。</span></div>
+              <div class="state-pill"><strong>服务</strong><span>GUI 与 CLI 都连接 daemon，请求快照或订阅事件。</span></div>
+              <div class="state-pill"><strong>更新</strong><span>跟随签名 App 更新；重启前保存任务和状态。</span></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="callout">
+          <strong>推荐演进顺序：</strong>
+          第一版采用方案 A：GUI 通过 CLI JSON bridge 调用业务能力。这样所有用户向能力都能被 CLI、CI 和真实邮箱 E2E 直接测试。等后台同步和事件流需求稳定后，再把 CLI 背后的执行体替换为 daemon。
+        </aside>
+      </div>
+    </section>
+
+    <section id="communication">
+      <div class="section-head">
+        <h2>通信方式</h2>
+        <p class="section-note">通信分为命令、查询、事件三类。命令改变世界，查询读取快照，事件通知变化。</p>
+      </div>
+      <div class="checklist">
+        <article class="check">
+          <strong>命令 Command</strong>
+          <p>发送邮件、移动邮件、添加账户、信任联系人、应用过滤器。要求明确成功或失败，并返回业务结果。</p>
+        </article>
+        <article class="check">
+          <strong>查询 Query</strong>
+          <p>获取账户列表、读取邮件列表、打开邮件详情、读取草稿、读取可信状态。要求可分页、可缓存、可离线。</p>
+        </article>
+        <article class="check">
+          <strong>事件 Event</strong>
+          <p>同步进度、新邮件、验证状态变化、过滤器执行完成、通知点击。GUI 订阅事件并更新展示。</p>
+        </article>
+        <article class="check">
+          <strong>GUI 通信</strong>
+          <p>GUI 只调用 Tauri 的 cli_json bridge。bridge 启动 CLI 进程，传入参数、stdin 和必要 env，解析 JSON stdout；平台能力如 OAuth、通知、外链仍由 Tauri adapter 处理。</p>
+        </article>
+        <article class="check">
+          <strong>CLI 通信</strong>
+          <p>一次性命令直接调用 Core；daemon 存在时优先连接 daemon，避免重复同步和状态竞争。</p>
+        </article>
+        <article class="check">
+          <strong>错误通信</strong>
+          <p>错误要携带类别、动作、对象和用户可理解说明；不要用默认值掩盖本不该为空的状态。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="release">
+      <div class="section-head">
+        <h2>发布与更新边界</h2>
+        <p class="section-note">架构可以拆，但发布物先保持集中。自动更新、签名和公证围绕最终 App bundle 管理。</p>
+      </div>
+      <div class="matrix">
+        <article class="contract">
+          <header><h3>推荐发布形态</h3></header>
+          <ul>
+            <li><b>桌面 App</b><span>继续作为主安装入口，包含 GUI、CLI 模式和 Core。</span></li>
+            <li><b>内置 CLI</b><span>优先使用 App 自身的 CLI 模式，避免额外 sidecar 签名负担；开发环境也可使用独立 sealmail-cli。</span></li>
+            <li><b>独立 CLI</b><span>作为诊断和自动化入口随源码构建，后续可作为独立发行物单独签名、公证。</span></li>
+            <li><b>更新策略</b><span>优先更新整个签名 App bundle，避免运行时替换未签名二进制。</span></li>
+          </ul>
+        </article>
+
+        <article class="contract">
+          <header><h3>安全边界</h3></header>
+          <ul>
+            <li><b>密钥材料</b><span>只在统一配置目录和系统权限内流转，不进入仓库，不作为日志输出。</span></li>
+            <li><b>OAuth token</b><span>Core 统一刷新和保存，GUI 不直接拥有 token 处理逻辑。</span></li>
+            <li><b>Ledger</b><span>硬件交互通过设备 adapter 触发，签名确认仍由用户在设备上完成。</span></li>
+            <li><b>更新签名</b><span>更新包必须经过 updater 签名验证，App bundle 走平台签名和公证。</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="migration">
+      <div class="section-head">
+        <h2>迁移路线</h2>
+        <p class="section-note">每一步都应该能独立合并和验证，避免一次性重写。</p>
+      </div>
+      <div class="roadmap">
+        <article class="step">
+          <small>Phase 1</small>
+          <h3>定义 Core 边界</h3>
+          <p>梳理现有 Tauri command，把业务用例按账户、邮件、信任、规则、状态分组，确定统一 DTO 和错误模型。</p>
+        </article>
+        <article class="step">
+          <small>Phase 2</small>
+          <h3>抽离业务服务</h3>
+          <p>把业务逻辑从 Tauri 层移到 Core，并让 CLI 成为 Core 的稳定 JSON 入口。</p>
+        </article>
+        <article class="step">
+          <small>Phase 3</small>
+          <h3>GUI 改走 CLI bridge</h3>
+          <p>GUI 业务 API 不再直接 invoke Core command，而是调用 cli_json bridge；bridge 启动 CLI 或 App CLI 模式并解析 JSON。</p>
+        </article>
+        <article class="step">
+          <small>Phase 4</small>
+          <h3>引入 Daemon</h3>
+          <p>把长期同步、通知和事件订阅迁到后台服务。GUI 逐步变成状态展示和交互客户端。</p>
+        </article>
+      </div>
+    </section>
+
+    <p class="footer-note">
+      SealMail Core CLI + GUI 架构文档。关注组成关系、接口边界、运行时态和通信方式；实现细节应沉淀到后续 ADR 与任务拆分中。
+    </p>
+  </main>
+</body>
+</html>

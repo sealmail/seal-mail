@@ -4,9 +4,9 @@
   "version": "0.1.28",
   "identifier": "com.sealmail.app",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run build:cli && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run build:cli:release && bun run build",
     "frontendDist": "../dist"
   },
   "app": {

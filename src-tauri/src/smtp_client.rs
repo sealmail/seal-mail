@@ -117,17 +117,8 @@ pub fn send_mail(
         }
     };
 
-    // 签名时附加一行低调的签名说明：用标准 "-- " 分隔符，普通客户端会按签名档弱化显示
-    let final_body = if signed {
-        format!(
-            "{}\n\n-- \n{} · 已用 SealMail 数字签名（{}）\n",
-            body.trim_end(),
-            account.display_name,
-            short
-        )
-    } else {
-        body.to_string()
-    };
+    // 签名证明只放在 X-SealMail-* 邮件头里；正文必须保持用户输入原样。
+    let final_body = body.to_string();
 
     let mut builder = MessageBuilder::new()
         .from((account.display_name.as_str(), account.email.as_str()))
