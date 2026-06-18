@@ -37,13 +37,13 @@
 1. 选择一个 packet，例如 `send-mail-experience.packet.md`。
 2. 校验评审资产：
    - `bun run ai-eval:validate`
-3. 构建完整评审包：
-   - `bun run ai-eval:packet -- send-mail-experience.packet.md`
-4. 运行自动化收集事实证据：
+3. 运行自动化收集事实证据：
    - `bun run ai-eval:evidence`
    - CLI JSON。
    - 真实邮箱 E2E 结果。
    - 错误输出。
+4. 构建完整评审包：
+   - `bun run ai-eval:packet -- send-mail-experience.packet.md`
 5. 运行 GUI 自动化收集体验证据：
    - 截图。
    - DOM 可见文本。
