@@ -69,6 +69,9 @@ jobs:
       - name: Collect AI fact evidence
         run: bun run ai-eval:evidence
 
+      - name: Collect static GUI experience evidence
+        run: bun run ai-eval:experience
+
   mail-server-smoke:
     name: Docker mail server smoke
     runs-on: ubuntu-latest

@@ -39,6 +39,7 @@
    - `bun run ai-eval:validate`
 3. 运行自动化收集事实证据：
    - `bun run ai-eval:evidence`
+   - `bun run ai-eval:experience`
    - CLI JSON。
    - 真实邮箱 E2E 结果。
    - 错误输出。
@@ -85,6 +86,24 @@ tmp/ai-evaluation/fact-evidence.json
 - 当前 packet、scenario 和 Git 状态。
 
 真实邮箱 E2E、GUI 截图、DOM 可见文本等运行时证据应该继续补充到 packet 的 evidence section 中。
+
+## 静态 GUI 体验证据
+
+`bun run ai-eval:experience` 会生成：
+
+```text
+tmp/ai-evaluation/experience-evidence.json
+```
+
+这份文件来自 GUI 源码，检查 S02-S07 基本盘场景是否仍保留关键界面入口、状态文案和操作控件，例如：
+
+- 收件箱的账号、目录、缓存、刷新、未读、星标、加载更多。
+- 阅读邮件的发件人、主题、正文、附件保存、回复、转发、验证详情。
+- 写信的收件人、主题、正文、附件、发送、撤销发送、发送结果。
+- 草稿的自动保存、恢复入口、删除草稿。
+- 整理邮件的移动、归档、删除、标记、文件夹管理。
+
+它是 L5 GUI 体验证据的第一层，只证明源码里存在这些体验入口。真正的 L5 评审还需要运行时截图、DOM 可见文本和关键状态序列。
 
 ## AI evaluator 角色
 

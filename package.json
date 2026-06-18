@@ -14,8 +14,9 @@
     "ai-eval:packet": "node scripts/ai-eval-packet.mjs build",
     "ai-eval:packets": "node scripts/ai-eval-packet.mjs build-all",
     "ai-eval:evidence": "node scripts/collect-ai-evidence.mjs",
+    "ai-eval:experience": "node scripts/collect-gui-experience-evidence.mjs",
     "ai-eval:run": "node scripts/ai-eval-runner.mjs",
-    "quality:product": "bun run architecture:guard && bun run functional:guard && bun run ai-eval:validate && bun run ai-eval:run -- self-test && bun run ai-eval:evidence && bunx tsc --noEmit",
+    "quality:product": "bun run architecture:guard && bun run functional:guard && bun run ai-eval:validate && bun run ai-eval:run -- self-test && bun run ai-eval:evidence && bun run ai-eval:experience && bunx tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri"
   },

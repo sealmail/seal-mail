@@ -7,6 +7,7 @@ const docsDir = path.join(root, "docs");
 const evalDir = path.join(docsDir, "ai-evaluation");
 const outDir = path.join(root, "tmp", "ai-evaluation");
 const factEvidencePath = path.join(outDir, "fact-evidence.json");
+const experienceEvidencePath = path.join(outDir, "experience-evidence.json");
 
 const requiredDocs = [
   "docs/product-philosophy.md",
@@ -127,8 +128,17 @@ function commandBuild(packetName) {
     fail(`packet not found: ${packetName}`);
   }
   const { text: packet } = validatePacket(packetPath);
-  const evidence = existsSync(factEvidencePath)
-    ? readFileSync(factEvidencePath, "utf8").trim()
+  const evidenceBlocks = [];
+  if (existsSync(factEvidencePath)) {
+    evidenceBlocks.push(["Fact Layer Evidence", readFileSync(factEvidencePath, "utf8").trim()]);
+  }
+  if (existsSync(experienceEvidencePath)) {
+    evidenceBlocks.push(["Experience Layer Evidence", readFileSync(experienceEvidencePath, "utf8").trim()]);
+  }
+  const evidence = evidenceBlocks.length > 0
+    ? evidenceBlocks
+        .map(([title, json]) => [`## ${title}`, "", "```json", json, "```"].join("\n"))
+        .join("\n\n")
     : [
         "Fill this section with collected evidence before sending to an AI evaluator.",
         "",
@@ -147,7 +157,7 @@ function commandBuild(packetName) {
     ["Rubric", readProjectFile("docs/ai-evaluation/rubric.md")],
     ["Output Schema", readProjectFile("docs/ai-evaluation/schema.json")],
     ["Scenario Packet", packet],
-    ["Evidence", existsSync(factEvidencePath) ? ["```json", evidence, "```"].join("\n") : evidence],
+    ["Evidence", evidence],
   ];
   mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, packetName.replace(/\.packet\.md$/, ".compiled.md"));
