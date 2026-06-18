@@ -16,6 +16,8 @@ const requiredDocs = [
   "docs/ai-evaluation/schema.json",
 ];
 
+const requiredCoreScenarioIds = ["S02", "S03", "S04", "S05", "S06", "S07"];
+
 function fail(message) {
   console.error(`error: ${message}`);
   process.exit(1);
@@ -63,7 +65,11 @@ function validatePacket(file) {
   if (!text.includes("Output JSON only")) {
     fail(`${path.relative(root, file)} must require JSON-only output`);
   }
-  return text;
+  const scenarioMatch = text.match(/Scenario ID:\s*`([^`]+)`/);
+  if (!scenarioMatch) {
+    fail(`${path.relative(root, file)} must declare a Scenario ID`);
+  }
+  return { text, scenarioId: scenarioMatch[1] };
 }
 
 function validateSchema() {
@@ -100,8 +106,13 @@ function commandValidate() {
   if (packets.length === 0) {
     fail("no packet templates found under docs/ai-evaluation");
   }
+  const scenarioIds = new Set();
   for (const file of packets) {
-    validatePacket(file);
+    scenarioIds.add(validatePacket(file).scenarioId);
+  }
+  const missingCoreScenarios = requiredCoreScenarioIds.filter((id) => !scenarioIds.has(id));
+  if (missingCoreScenarios.length > 0) {
+    fail(`missing AI evaluation packet coverage for core scenario(s): ${missingCoreScenarios.join(", ")}`);
   }
   console.log(`AI evaluation assets OK: ${packets.length} packet(s)`);
 }
@@ -115,7 +126,7 @@ function commandBuild(packetName) {
   if (!existsSync(packetPath)) {
     fail(`packet not found: ${packetName}`);
   }
-  const packet = validatePacket(packetPath);
+  const { text: packet } = validatePacket(packetPath);
   const evidence = existsSync(factEvidencePath)
     ? readFileSync(factEvidencePath, "utf8").trim()
     : [
@@ -153,6 +164,10 @@ if (command === "validate" || command === undefined) {
   commandValidate();
 } else if (command === "build") {
   commandBuild(arg);
+} else if (command === "build-all") {
+  for (const file of packetFiles()) {
+    commandBuild(path.basename(file));
+  }
 } else {
   fail(`unknown command: ${command}`);
 }

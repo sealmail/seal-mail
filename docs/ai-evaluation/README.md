@@ -44,6 +44,7 @@
    - 错误输出。
 4. 构建完整评审包：
    - `bun run ai-eval:packet -- send-mail-experience.packet.md`
+   - 或一次性构建全部核心评审包：`bun run ai-eval:packets`
 5. 运行 GUI 自动化收集体验证据：
    - 截图。
    - DOM 可见文本。
