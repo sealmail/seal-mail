@@ -54,6 +54,15 @@ jobs:
       - name: Frontend typecheck
         run: bunx tsc --noEmit
 
+      - name: Architecture guard
+        run: bun run architecture:guard
+
+      - name: AI evaluation assets
+        run: bun run ai-eval:validate
+
+      - name: AI evaluation runner self-test
+        run: bun run ai-eval:run -- self-test
+
   mail-server-smoke:
     name: Docker mail server smoke
     runs-on: ubuntu-latest

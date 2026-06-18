@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sealmail.local/schemas/ai-evaluation-result.json",
+  "title": "SealMail AI Evaluation Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scenarioId",
+    "pass",
+    "score",
+    "summary",
+    "dimensionScores",
+    "findings",
+    "evidenceCoverage",
+    "reviewedAntiPatterns"
+  ],
+  "properties": {
+    "scenarioId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pass": {
+      "type": "boolean"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dimensionScores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coreTaskClarity",
+        "basicReliability",
+        "featureRestraint",
+        "stateHonesty",
+        "errorActionability",
+        "cognitiveLoad",
+        "evidenceSufficiency"
+      ],
+      "properties": {
+        "coreTaskClarity": { "$ref": "#/$defs/dimensionScore" },
+        "basicReliability": { "$ref": "#/$defs/dimensionScore" },
+        "featureRestraint": { "$ref": "#/$defs/dimensionScore" },
+        "stateHonesty": { "$ref": "#/$defs/dimensionScore" },
+        "errorActionability": { "$ref": "#/$defs/dimensionScore" },
+        "cognitiveLoad": { "$ref": "#/$defs/dimensionScore" },
+        "evidenceSufficiency": { "$ref": "#/$defs/dimensionScore" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "evidenceCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["factLayer", "experienceLayer", "missingEvidence"],
+      "properties": {
+        "factLayer": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "experienceLayer": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "missingEvidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "reviewedAntiPatterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "present", "notes"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "present": { "type": "boolean" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    }
+  },
+  "$defs": {
+    "dimensionScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "reason"],
+      "properties": {
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "principle",
+        "issue",
+        "evidence",
+        "recommendation"
+      ],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["P0", "P1", "P2", "P3"]
+        },
+        "principle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issue": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

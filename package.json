@@ -8,6 +8,11 @@
     "build": "tsc && vite build",
     "build:cli": "cargo build --manifest-path src-tauri/Cargo.toml --bin sealmail-cli",
     "build:cli:release": "cargo build --manifest-path src-tauri/Cargo.toml --release --bin sealmail-cli",
+    "architecture:guard": "node scripts/architecture-guard.mjs",
+    "ai-eval:validate": "node scripts/ai-eval-packet.mjs validate",
+    "ai-eval:packet": "node scripts/ai-eval-packet.mjs build",
+    "ai-eval:run": "node scripts/ai-eval-runner.mjs",
+    "quality:product": "bun run architecture:guard && bun run ai-eval:validate && bun run ai-eval:run -- self-test && bunx tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri"
   },
