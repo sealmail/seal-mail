@@ -40,6 +40,7 @@
 3. 构建完整评审包：
    - `bun run ai-eval:packet -- send-mail-experience.packet.md`
 4. 运行自动化收集事实证据：
+   - `bun run ai-eval:evidence`
    - CLI JSON。
    - 真实邮箱 E2E 结果。
    - 错误输出。
@@ -66,6 +67,23 @@ bun run ai-eval:run -- validate-result tmp/ai-evaluation/send-mail-experience.re
 ```
 
 CI 默认只校验 packet、schema 和架构边界，不调用真实 AI 服务；真实 AI 评审适合在本地、发布前检查或带密钥的专用工作流中执行。
+
+## 事实证据
+
+`bun run ai-eval:evidence` 会生成：
+
+```text
+tmp/ai-evaluation/fact-evidence.json
+```
+
+这份文件只来自源码和文档，不读取真实账号、密码或 `.env.local`。它记录：
+
+- CLI/Core 架构入口是否存在。
+- GUI 是否通过 `cli_json` 进入业务能力。
+- 普通用户向核心邮件能力是否在 CLI、GUI API、用户场景中都有覆盖。
+- 当前 packet、scenario 和 Git 状态。
+
+真实邮箱 E2E、GUI 截图、DOM 可见文本等运行时证据应该继续补充到 packet 的 evidence section 中。
 
 ## AI evaluator 角色
 

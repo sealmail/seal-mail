@@ -57,11 +57,17 @@ jobs:
       - name: Architecture guard
         run: bun run architecture:guard
 
+      - name: Functional completeness guard
+        run: bun run functional:guard
+
       - name: AI evaluation assets
         run: bun run ai-eval:validate
 
       - name: AI evaluation runner self-test
         run: bun run ai-eval:run -- self-test
+
+      - name: Collect AI fact evidence
+        run: bun run ai-eval:evidence
 
   mail-server-smoke:
     name: Docker mail server smoke
