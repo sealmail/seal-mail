@@ -109,7 +109,7 @@ jobs:
             exit 1
           fi
           # 公钥不入库：构建时通过 --config 覆盖注入
-          printf '{"plugins":{"updater":{"pubkey":"%s"}}}' "$TAURI_UPDATER_PUBKEY" > "$RUNNER_TEMP/updater-config.json"
+          printf '{"bundle":{"externalBin":["binaries/sealmail-cli"]},"plugins":{"updater":{"pubkey":"%s"}}}' "$TAURI_UPDATER_PUBKEY" > "$RUNNER_TEMP/updater-config.json"
           # updater 的 .app.tar.gz 只在 `app` bundle 产出；dmg 用于手动安装
           bun run tauri build --target ${{ matrix.target }} --bundles app,dmg \
             --config "$RUNNER_TEMP/updater-config.json" -v
@@ -218,7 +218,7 @@ jobs:
             echo "::error::TAURI_UPDATER_PUBKEY / TAURI_SIGNING_PRIVATE_KEY secrets are required for updater artifacts."
             exit 1
           fi
-          printf '{"plugins":{"updater":{"pubkey":"%s"}}}' "$TAURI_UPDATER_PUBKEY" > "$RUNNER_TEMP/updater-config.json"
+          printf '{"bundle":{"externalBin":["binaries/sealmail-cli"]},"plugins":{"updater":{"pubkey":"%s"}}}' "$TAURI_UPDATER_PUBKEY" > "$RUNNER_TEMP/updater-config.json"
           bun run tauri build --bundles nsis --config "$RUNNER_TEMP/updater-config.json"
 
       - name: Stage artifacts

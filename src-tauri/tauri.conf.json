@@ -37,8 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["icons/icon.png"],
-    "externalBin": ["binaries/sealmail-cli"]
+    "resources": ["icons/icon.png"]
   },
   "plugins": {
     "updater": {
