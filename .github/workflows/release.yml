@@ -93,6 +93,7 @@ jobs:
 
       - name: Build macOS bundles
         env:
+          SEALMAIL_SIDECAR_TARGET: ${{ matrix.target }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -118,6 +119,26 @@ jobs:
           set -euxo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist
+          APP_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos/SealMail.app"
+          if [ ! -d "$APP_DIR" ]; then
+            echo "::error::Missing macOS app bundle at $APP_DIR."
+            exit 1
+          fi
+          EXECUTABLE=$(plutil -extract CFBundleExecutable raw "$APP_DIR/Contents/Info.plist")
+          if [ "$EXECUTABLE" != "sealmail" ]; then
+            echo "::error::Expected CFBundleExecutable=sealmail, got $EXECUTABLE."
+            exit 1
+          fi
+          if [ ! -x "$APP_DIR/Contents/MacOS/sealmail" ]; then
+            echo "::error::Missing executable GUI binary: $APP_DIR/Contents/MacOS/sealmail."
+            exit 1
+          fi
+          if [ ! -x "$APP_DIR/Contents/MacOS/sealmail-cli" ]; then
+            echo "::error::Missing executable sealmail-cli sidecar beside the GUI binary."
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+
           SRC=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)
           hdiutil verify "$SRC"
           cp "$SRC" "dist/SealMail_${VERSION}_macos_${{ matrix.arch }}.dmg"
@@ -185,6 +206,7 @@ jobs:
       - name: Build executable + NSIS updater installer
         shell: bash
         env:
+          SEALMAIL_SIDECAR_TARGET: x86_64-pc-windows-msvc
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

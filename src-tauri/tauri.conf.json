@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SealMail",
-  "version": "0.1.29",
+  "mainBinaryName": "sealmail",
+  "version": "0.1.30",
   "identifier": "com.sealmail.app",
   "build": {
     "beforeDevCommand": "bun run build:cli && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build:cli:release && bun run build",
+    "beforeBuildCommand": "node scripts/prepare-cli-sidecar.mjs && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -36,7 +37,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["icons/icon.png"]
+    "resources": ["icons/icon.png"],
+    "externalBin": ["binaries/sealmail-cli"]
   },
   "plugins": {
     "updater": {
