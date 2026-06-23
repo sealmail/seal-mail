@@ -1,0 +1,205 @@
+name: Release Verify
+
+# Verifies the final artifacts users download from GitHub Releases.
+# This intentionally runs on a fresh macOS runner, without importing Apple
+# signing certificates, so it catches problems hidden by the build runner.
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify, for example v0.1.30"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    name: Verify downloaded release artifacts
+    runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$WORKFLOW_RUN_HEAD_BRANCH}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Unable to resolve a release tag from '$TAG'."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Verifying release $TAG"
+
+      - name: Download published assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh release view "${{ steps.release.outputs.tag }}" --json assets,tagName,isDraft,isPrerelease,url > release.json
+          gh release download "${{ steps.release.outputs.tag }}" --dir artifacts --clobber
+          find artifacts -maxdepth 1 -type f -print | sort
+
+      - name: Verify asset digests and updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          shasum -a 256 artifacts/* | tee sha256.txt
+          node <<'NODE'
+          const fs = require("fs");
+          const release = JSON.parse(fs.readFileSync("release.json", "utf8"));
+          const manifest = JSON.parse(fs.readFileSync("artifacts/latest.json", "utf8"));
+          const version = release.tagName.replace(/^v/, "");
+          if (release.isDraft) throw new Error(`${release.tagName} is still a draft release`);
+          if (manifest.version !== version) {
+            throw new Error(`latest.json version ${manifest.version} does not match tag ${release.tagName}`);
+          }
+
+          const expectedFiles = [
+            "latest.json",
+            `SealMail_${version}_darwin-aarch64.app.tar.gz`,
+            `SealMail_${version}_darwin-aarch64.app.tar.gz.sig`,
+            `SealMail_${version}_darwin-x86_64.app.tar.gz`,
+            `SealMail_${version}_darwin-x86_64.app.tar.gz.sig`,
+            `SealMail_${version}_macos_aarch64.dmg`,
+            `SealMail_${version}_macos_x64.dmg`,
+            `SealMail_${version}_windows_x64_setup.exe`,
+            `SealMail_${version}_windows_x64_setup.exe.sig`,
+            `SealMail_${version}_windows_x64.zip`,
+          ];
+          const actualFiles = new Set(fs.readdirSync("artifacts"));
+          for (const file of expectedFiles) {
+            if (!actualFiles.has(file)) throw new Error(`Missing release asset: ${file}`);
+          }
+
+          const hashes = new Map(
+            fs.readFileSync("sha256.txt", "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => {
+                const [hash, file] = line.trim().split(/\s+/);
+                return [file.replace(/^artifacts\//, ""), hash];
+              })
+          );
+          for (const asset of release.assets) {
+            if (!asset.digest?.startsWith("sha256:")) continue;
+            const expected = asset.digest.slice("sha256:".length);
+            const actual = hashes.get(asset.name);
+            if (actual !== expected) {
+              throw new Error(`${asset.name} sha256 mismatch: ${actual} !== ${expected}`);
+            }
+          }
+
+          const platformToSig = {
+            "darwin-aarch64": `SealMail_${version}_darwin-aarch64.app.tar.gz.sig`,
+            "darwin-x86_64": `SealMail_${version}_darwin-x86_64.app.tar.gz.sig`,
+            "windows-x86_64": `SealMail_${version}_windows_x64_setup.exe.sig`,
+          };
+          for (const [platform, sigFile] of Object.entries(platformToSig)) {
+            const entry = manifest.platforms?.[platform];
+            if (!entry) throw new Error(`latest.json missing platform ${platform}`);
+            const sig = fs.readFileSync(`artifacts/${sigFile}`, "utf8").trim();
+            if (entry.signature.trim() !== sig) {
+              throw new Error(`${platform} signature does not match ${sigFile}`);
+            }
+            if (!entry.url.includes(`/releases/download/${release.tagName}/`)) {
+              throw new Error(`${platform} URL does not point at ${release.tagName}: ${entry.url}`);
+            }
+          }
+          NODE
+
+      - name: Verify macOS DMGs and app bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mounted=()
+          cleanup() {
+            for mountpoint in "${mounted[@]:-}"; do
+              hdiutil detach "$mountpoint" || true
+            done
+          }
+          trap cleanup EXIT
+
+          verify_app() {
+            local app="$1"
+            local context="$2"
+            local executable
+            executable=$(plutil -extract CFBundleExecutable raw "$app/Contents/Info.plist")
+            if [ "$executable" != "sealmail" ]; then
+              echo "::error::$context expected CFBundleExecutable=sealmail, got $executable"
+              exit 1
+            fi
+            test -x "$app/Contents/MacOS/sealmail"
+            test -x "$app/Contents/MacOS/sealmail-cli"
+            codesign --verify --deep --strict --verbose=4 "$app"
+            codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail"
+            codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail-cli"
+            codesign -dv --verbose=4 "$app"
+            stapler validate "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+          }
+
+          VERSION="${{ steps.release.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          for arch in aarch64 x64; do
+            dmg="artifacts/SealMail_${VERSION}_macos_${arch}.dmg"
+            mountpoint="$RUNNER_TEMP/sealmail-$arch"
+            mkdir -p "$mountpoint"
+            hdiutil verify "$dmg"
+            hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" "$dmg"
+            mounted+=("$mountpoint")
+            verify_app "$mountpoint/SealMail.app" "DMG $arch"
+            hdiutil detach "$mountpoint"
+          done
+
+      - name: Verify macOS updater tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_app() {
+            local app="$1"
+            local context="$2"
+            local executable
+            executable=$(plutil -extract CFBundleExecutable raw "$app/Contents/Info.plist")
+            if [ "$executable" != "sealmail" ]; then
+              echo "::error::$context expected CFBundleExecutable=sealmail, got $executable"
+              exit 1
+            fi
+            test -x "$app/Contents/MacOS/sealmail"
+            test -x "$app/Contents/MacOS/sealmail-cli"
+            codesign --verify --deep --strict --verbose=4 "$app"
+            codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail"
+            codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail-cli"
+            stapler validate "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+          }
+
+          VERSION="${{ steps.release.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          for platform in darwin-aarch64 darwin-x86_64; do
+            workdir="$RUNNER_TEMP/updater-$platform"
+            mkdir -p "$workdir"
+            tar -xzf "artifacts/SealMail_${VERSION}_${platform}.app.tar.gz" -C "$workdir"
+            verify_app "$workdir/SealMail.app" "updater $platform"
+          done
+
+      - name: Verify Windows package structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          test -s "artifacts/SealMail_${VERSION}_windows_x64_setup.exe"
+          test -s "artifacts/SealMail_${VERSION}_windows_x64_setup.exe.sig"
+          unzip -l "artifacts/SealMail_${VERSION}_windows_x64.zip" | tee windows-zip.txt
+          grep -q "SealMail.exe" windows-zip.txt
