@@ -142,6 +142,12 @@ jobs:
             fi
             test -x "$app/Contents/MacOS/sealmail"
             test -x "$app/Contents/MacOS/sealmail-cli"
+            local gui_smoke
+            gui_smoke=$("$app/Contents/MacOS/sealmail" --sealmail-gui-entry-smoke)
+            if [ "$gui_smoke" != "sealmail-gui-entry" ]; then
+              echo "::error::$context app main executable is not the GUI entrypoint. Smoke output: $gui_smoke"
+              exit 1
+            fi
             codesign --verify --deep --strict --verbose=4 "$app"
             codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail"
             codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail-cli"
@@ -178,6 +184,12 @@ jobs:
             fi
             test -x "$app/Contents/MacOS/sealmail"
             test -x "$app/Contents/MacOS/sealmail-cli"
+            local gui_smoke
+            gui_smoke=$("$app/Contents/MacOS/sealmail" --sealmail-gui-entry-smoke)
+            if [ "$gui_smoke" != "sealmail-gui-entry" ]; then
+              echo "::error::$context app main executable is not the GUI entrypoint. Smoke output: $gui_smoke"
+              exit 1
+            fi
             codesign --verify --deep --strict --verbose=4 "$app"
             codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail"
             codesign --verify --verbose=4 "$app/Contents/MacOS/sealmail-cli"

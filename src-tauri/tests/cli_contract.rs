@@ -11,6 +11,10 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_sealmail-cli")
 }
 
+fn gui_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_sealmail")
+}
+
 fn temp_config_dir(test_name: &str) -> PathBuf {
     let unique = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
     let nanos = SystemTime::now()
@@ -43,6 +47,17 @@ fn write_json<T: serde::Serialize>(dir: &Path, name: &str, value: &T) {
     fs::create_dir_all(dir).expect("config dir should be created");
     let json = serde_json::to_string_pretty(value).expect("fixture should serialize");
     fs::write(dir.join(name), json).expect("fixture should write");
+}
+
+#[test]
+fn gui_binary_uses_gui_entrypoint_by_default() {
+    let output = Command::new(gui_bin())
+        .arg("--sealmail-gui-entry-smoke")
+        .output()
+        .expect("gui process should start");
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output).trim(), "sealmail-gui-entry");
 }
 
 fn sample_account(id: &str, email: &str) -> Account {

@@ -1,13 +1,23 @@
 [package]
 name = "sealmail"
-version = "0.1.30"
+version = "0.1.31"
 description = "SealMail 信印 — 可信邮件客户端"
 authors = ["SealMail"]
 edition = "2021"
+default-run = "sealmail"
+autobins = false
 
 [lib]
 name = "sealmail_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "sealmail"
+path = "src/main.rs"
+
+[[bin]]
+name = "sealmail-cli"
+path = "src/bin/sealmail-cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -137,6 +137,11 @@ jobs:
             echo "::error::Missing executable sealmail-cli sidecar beside the GUI binary."
             exit 1
           fi
+          GUI_SMOKE=$("$APP_DIR/Contents/MacOS/sealmail" --sealmail-gui-entry-smoke)
+          if [ "$GUI_SMOKE" != "sealmail-gui-entry" ]; then
+            echo "::error::App main executable is not the GUI entrypoint. Smoke output: $GUI_SMOKE"
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
           SRC=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)
