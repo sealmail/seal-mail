@@ -247,6 +247,9 @@ function MailApp() {
 
   const fetchSeq = useRef(0);
   const selectSeq = useRef(0);
+  // 始终指向最新已加载列表，供 selectMail 本地筛会话用（避免后端全量扫描整个目录）
+  const messagesRef = useRef<EmailMeta[]>(messages);
+  messagesRef.current = messages;
   const clearSelection = useCallback(() => {
     selectSeq.current += 1;
     setSelected(null);
@@ -308,6 +311,8 @@ function MailApp() {
 
   // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
   const PAGE = 200;
+  // 首屏只取一小批，尽快结束白屏；上屏后再后台补齐到整页
+  const INITIAL_PAGE = 60;
   const AUTO_CACHE_TARGET = 1000;
   const AUTO_BACKFILL_ROUNDS = 4;
   const MANUAL_FILTER_LOAD_ROUNDS = 4;
@@ -373,14 +378,24 @@ function MailApp() {
     setListError(null);
     // 1) 本地缓存先上屏（离线也能看）
     setLoading(loadedRef.current === 0);
+    const firstBatch = loadedRef.current > 0 ? loadedRef.current : INITIAL_PAGE;
     try {
-      await loadCached(Math.max(loadedRef.current, PAGE));
+      await loadCached(firstBatch);
     } catch (e) {
       if (seq === fetchSeq.current) setListError(String(e));
     } finally {
       if (seq === fetchSeq.current) setLoading(false);
     }
     if (seq !== fetchSeq.current) return;
+    // 首屏只取了小批：上屏后在后台补齐到整页（列表已可交互，不再白屏）
+    if (loadedRef.current >= firstBatch && loadedRef.current < PAGE) {
+      try {
+        await loadCached(PAGE);
+      } catch (e) {
+        if (seq === fetchSeq.current) setListError(String(e));
+      }
+      if (seq !== fetchSeq.current) return;
+    }
     // 2) 后台与服务器增量同步，再回填
     setSyncing(true);
     try {
@@ -484,8 +499,19 @@ function MailApp() {
       if (seq === selectSeq.current) {
         const selectedFull = shouldMarkRead ? { ...full, meta: { ...full.meta, unread: false } } : full;
         setSelected(selectedFull);
-        const threadMetas = await api.listThread(m.accountId, m.folder, m.threadId);
-        if (seq !== selectSeq.current) return;
+        // 同会话邮件优先从「已加载列表」本地筛选——后端 list_thread 会把整个目录的邮件
+        // 全部读出来逐封解析，是切换卡顿的主因。绝大多数会话的邮件都在已加载范围内；
+        // 只有本地还没有这封（如点通知直达一封未加载的邮件）才回退到后端按需取整条会话。
+        const localThread = messagesRef.current.filter(
+          (x) => x.accountId === m.accountId && x.folder === m.folder && x.threadId === m.threadId
+        );
+        let threadMetas: EmailMeta[];
+        if (m.threadId && localThread.some((x) => mailKey(x) === key)) {
+          threadMetas = localThread;
+        } else {
+          threadMetas = await api.listThread(m.accountId, m.folder, m.threadId).catch(() => [m]);
+          if (seq !== selectSeq.current) return;
+        }
         const normalizedThread = threadMetas.map((item) =>
           mailKey(item) === key && shouldMarkRead ? { ...item, unread: false } : item
         );

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS messages (
   flagged    INTEGER NOT NULL DEFAULT 0,
   timestamp  INTEGER NOT NULL DEFAULT 0,
   raw        BLOB NOT NULL,
+  meta_json  TEXT,
   PRIMARY KEY (account_id, folder, uid)
 );
 CREATE INDEX IF NOT EXISTS idx_msg_list ON messages(account_id, folder, timestamp DESC);
@@ -45,6 +46,8 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
         Connection::open(dir.join("mail.db")).map_err(|e| format!("打开邮件缓存失败: {e}"))?;
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("初始化邮件缓存失败: {e}"))?;
+    // 旧库补充 meta_json 列（列已存在时 ALTER 会报错，忽略即可——这是安全的幂等迁移）
+    let _ = conn.execute("ALTER TABLE messages ADD COLUMN meta_json TEXT", []);
     Ok(conn)
 }
 
@@ -98,26 +101,27 @@ pub fn count(conn: &Connection, account: &str, folder: &str) -> Result<i64, Stri
     .map_err(err)
 }
 
-/// Read a whole folder newest-first. Used for local conversation grouping.
-pub fn list_folder(
+/// 读取整个目录的“元信息缓存”（newest-first，不含 raw），用于本地会话分组。
+/// 命中缓存的行不必读取/解析完整邮件，会话分组因此大幅加速。
+pub fn list_folder_meta(
     conn: &Connection,
     account: &str,
     folder: &str,
-) -> Result<Vec<CachedRow>, String> {
+) -> Result<Vec<MetaRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT uid, unread, flagged, raw FROM messages
+            "SELECT uid, unread, flagged, meta_json FROM messages
              WHERE account_id=?1 AND folder=?2
              ORDER BY timestamp DESC, uid DESC",
         )
         .map_err(err)?;
     let rows = stmt
         .query_map(params![account, folder], |r| {
-            Ok(CachedRow {
+            Ok(MetaRow {
                 uid: r.get(0)?,
                 unread: r.get::<_, i64>(1)? != 0,
                 flagged: r.get::<_, i64>(2)? != 0,
-                raw: r.get(3)?,
+                meta_json: r.get(3)?,
             })
         })
         .map_err(err)?
@@ -146,6 +150,68 @@ pub fn get_raw(
     )
     .optional()
     .map_err(err)
+}
+
+/// 列表展示用的轻量行：只读已缓存的元信息 JSON，不读体积大的 raw（含附件）。
+/// 这是列表/启动秒开的关键——避免把整个目录的完整邮件都读出来解析。
+pub struct MetaRow {
+    pub uid: u32,
+    pub unread: bool,
+    pub flagged: bool,
+    pub meta_json: Option<String>,
+}
+
+/// 按时间倒序分页读取“元信息缓存”（不含 raw）。
+pub fn list_meta(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<MetaRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT uid, unread, flagged, meta_json FROM messages
+             WHERE account_id=?1 AND folder=?2
+             ORDER BY timestamp DESC, uid DESC LIMIT ?3 OFFSET ?4",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![account, folder, limit, offset], |r| {
+            Ok(MetaRow {
+                uid: r.get(0)?,
+                unread: r.get::<_, i64>(1)? != 0,
+                flagged: r.get::<_, i64>(2)? != 0,
+                meta_json: r.get(3)?,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(rows)
+}
+
+/// 写回某封邮件解析后的元信息缓存（首次解析后调用，下次列表即可秒开）。
+pub fn set_meta_json(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+    meta_json: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE messages SET meta_json=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
+        params![account, folder, uid, meta_json],
+    )
+    .map(|_| ())
+    .map_err(err)
+}
+
+/// 清空全部元信息缓存。可信联系人变化后，trust 标记需要按新规则重算时调用。
+pub fn clear_all_meta_json(conn: &Connection) -> Result<(), String> {
+    conn.execute("UPDATE messages SET meta_json=NULL", [])
+        .map(|_| ())
+        .map_err(err)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -217,7 +283,7 @@ pub fn update_flags(
     .map_err(err)
 }
 
-/// POP3 移动到本地虚拟目录
+/// POP3 移动到本地虚拟目录。folder 变了，元信息缓存里的 folder 也会过期，一并清空待重算。
 pub fn set_folder(
     conn: &Connection,
     account: &str,
@@ -226,7 +292,7 @@ pub fn set_folder(
     target: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "UPDATE messages SET folder=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
+        "UPDATE messages SET folder=?4, meta_json=NULL WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid, target],
     )
     .map(|_| ())
@@ -425,6 +491,46 @@ mod tests {
         // POP3 自增 uid
         assert_eq!(pop_next_uid(&conn, "p").unwrap(), 1);
         assert_eq!(pop_next_uid(&conn, "p").unwrap(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn meta_json_cache_lifecycle() {
+        let dir = std::env::temp_dir().join(format!("sealmail-meta-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = open(&dir).unwrap();
+        upsert_message(&conn, "a", "INBOX", 1, None, true, false, 1000, b"raw-bytes").unwrap();
+
+        // 新邮件还没有元信息缓存
+        let rows = list_meta(&conn, "a", "INBOX", 0, 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].uid, 1);
+        assert!(rows[0].meta_json.is_none(), "刚插入应无元信息缓存");
+
+        // 写回后能读到
+        set_meta_json(&conn, "a", "INBOX", 1, "{\"subject\":\"hi\"}").unwrap();
+        let rows = list_meta(&conn, "a", "INBOX", 0, 10).unwrap();
+        assert_eq!(rows[0].meta_json.as_deref(), Some("{\"subject\":\"hi\"}"));
+
+        // 重新 upsert（邮件更新）会重置元信息缓存为 NULL，迫使下次重新解析
+        upsert_message(&conn, "a", "INBOX", 1, None, false, true, 1000, b"raw-bytes-2").unwrap();
+        let rows = list_meta(&conn, "a", "INBOX", 0, 10).unwrap();
+        assert!(rows[0].meta_json.is_none(), "重新 upsert 后元信息缓存应失效");
+
+        // 清空全部（可信联系人变化时）
+        set_meta_json(&conn, "a", "INBOX", 1, "{\"subject\":\"x\"}").unwrap();
+        clear_all_meta_json(&conn).unwrap();
+        assert!(list_meta(&conn, "a", "INBOX", 0, 10).unwrap()[0]
+            .meta_json
+            .is_none());
+
+        // POP3 移动目录会清掉该行的元信息缓存（folder 已变，缓存里的 folder 会过期）
+        set_meta_json(&conn, "a", "INBOX", 1, "{\"folder\":\"INBOX\"}").unwrap();
+        set_folder(&conn, "a", "INBOX", 1, "归档").unwrap();
+        let rows = list_meta(&conn, "a", "归档", 0, 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].meta_json.is_none(), "移动目录后元信息缓存应失效");
+
         std::fs::remove_dir_all(&dir).ok();
     }
 }
