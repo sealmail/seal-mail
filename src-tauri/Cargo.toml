@@ -60,6 +60,11 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
 
+# macOS：自己发系统通知并捕获“点击横幅”事件（tauri-plugin-notification 在 macOS 用废弃的
+# NSUserNotification 且不监听点击，导致点通知后毫无反应）。版本与依赖树里现有的保持一致。
+[target."cfg(target_os = \"macos\")".dependencies]
+mac-notification-sys = "0.6"
+
 [dev-dependencies]
 ed25519-dalek = "2"
 mail-builder = "0.4"

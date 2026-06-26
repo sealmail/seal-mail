@@ -3799,6 +3799,7 @@ dependencies = [
  "imap",
  "k256",
  "lettre",
+ "mac-notification-sys",
  "mail-builder",
  "mail-parser",
  "native-tls",

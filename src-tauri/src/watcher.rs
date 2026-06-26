@@ -88,7 +88,6 @@ fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec
 
 /// 窗口未聚焦且偏好开启时弹系统通知横幅
 fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &[MailNotice]) {
-    use tauri_plugin_notification::NotificationExt;
     let (enabled, email) = {
         let state = app.state::<AppState>();
         let s = state.inner.lock().unwrap();
@@ -142,24 +141,85 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
     } else {
         ("收到新邮件".to_string(), email)
     };
-    if let Some(n) = notices.first() {
-        set_pending_notification_target(
-            Instant::now(),
-            NotificationMailTarget {
-                account_id: account_id.to_string(),
-                folder: "INBOX".to_string(),
-                uid: n.uid,
-                message_id: n.message_id.clone(),
-            },
-        );
+    // 这条通知点击后要打开的邮件（取最新一封）
+    let target = notices.first().map(|n| NotificationMailTarget {
+        account_id: account_id.to_string(),
+        folder: "INBOX".to_string(),
+        uid: n.uid,
+        message_id: n.message_id.clone(),
+    });
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS 上 tauri-plugin-notification 用的是废弃的 NSUserNotification，且发完即走、
+        // 不监听点击——点通知毫无反应。改为自己发通知并阻塞捕获“点击横幅”，点中后再唤起
+        // 窗口、设定目标、通知前端来拉取。只有真正点击才设定目标，避免误把普通聚焦当成点击。
+        spawn_macos_click_notification(app.clone(), title, body, target);
     }
-    let mut builder = app.notification().builder().title(title).body(body);
-    if let Some(icon) = notification_icon_path(app) {
-        builder = builder.icon(icon);
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        // 其它平台：先记下目标，点击→窗口聚焦/激活→前端拉取（lib.rs 的 poke + 前端 pull）。
+        if let Some(t) = target {
+            set_pending_notification_target(Instant::now(), t);
+        }
+        let mut builder = app.notification().builder().title(title).body(body);
+        if let Some(icon) = notification_icon_path(app) {
+            builder = builder.icon(icon);
+        }
+        if let Err(e) = builder.show() {
+            eprintln!("[watcher] 系统通知发送失败: {}", e);
+        }
     }
-    if let Err(e) = builder.show() {
-        eprintln!("[watcher] 系统通知发送失败: {}", e);
-    }
+}
+
+/// macOS：`set_application` 要求“最多调用一次且在发通知之前”，用 Once 保证。
+/// 设成已安装 App 的 bundle id，让通知顶着 SealMail 的名字与图标出现。
+#[cfg(target_os = "macos")]
+fn macos_set_application_once(app: &AppHandle) {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let id = app.config().identifier.clone();
+        if let Err(e) = mac_notification_sys::set_application(&id) {
+            eprintln!("[watcher] set_application({id}) 失败，改用默认身份: {e:?}");
+        }
+    });
+}
+
+/// macOS：在后台线程阻塞发送一条通知并等待用户交互。`wait_for_click(true)` 让 `send()`
+/// 一直等到用户点击/关闭/通知被清除才返回；只有点击横幅（Click）或动作按钮时才唤起窗口。
+/// 线程会驻留到该通知被处理为止——这也正好让“点通知中心里的旧通知”同样能跳转。
+#[cfg(target_os = "macos")]
+fn spawn_macos_click_notification(
+    app: AppHandle,
+    title: String,
+    body: String,
+    target: Option<NotificationMailTarget>,
+) {
+    macos_set_application_once(&app);
+    std::thread::spawn(move || {
+        use mac_notification_sys::{Notification, NotificationResponse};
+        let icon = notification_icon_path(&app);
+        let mut n = Notification::new();
+        n.title(&title).message(&body).wait_for_click(true);
+        if let Some(ic) = icon.as_deref() {
+            n.app_icon(ic);
+        }
+        match n.send() {
+            // 点击横幅本体或动作按钮 → 唤起窗口并定位到这封邮件
+            Ok(NotificationResponse::Click) | Ok(NotificationResponse::ActionButton(_)) => {
+                if let Some(t) = target {
+                    set_pending_notification_target(Instant::now(), t);
+                }
+                reveal_main_window(&app);
+                let _ = app.emit("notification-activated", ());
+            }
+            // 关闭按钮 / 划走 / 自动消失：不打扰
+            Ok(_) => {}
+            Err(e) => eprintln!("[watcher] macOS 通知发送失败: {e:?}"),
+        }
+    });
 }
 
 fn notification_icon_path(app: &AppHandle) -> Option<String> {
