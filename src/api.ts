@@ -15,6 +15,7 @@ import type {
   FolderInfo,
   IdentityInfo,
   LedgerAccountRow,
+  NotificationMailTarget,
   OAuthProvider,
   OAuthTokens,
   SendResult,
@@ -81,7 +82,7 @@ export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
   return result.notifyNewMail;
 }
 
-export async function openPendingNotificationMail(): Promise<void> {
+export async function openPendingNotificationMail(): Promise<NotificationMailTarget | null> {
   return invoke("open_pending_notification_mail");
 }
 

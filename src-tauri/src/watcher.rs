@@ -75,6 +75,12 @@ fn pending_notification_target() -> &'static Mutex<Option<(Instant, Notification
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
+/// 写入待打开通知目标（带时间戳）。运行期只在 notify_new_mail 内通过 set 触发；
+/// 这里提取成函数是为了让测试也能注入一个目标。
+fn set_pending_notification_target(created_at: Instant, target: NotificationMailTarget) {
+    *pending_notification_target().lock().unwrap() = Some((created_at, target));
+}
+
 fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec<MailNotice>) {
     let _ = app.emit("new-mail", serde_json::json!({ "accountId": account_id }));
     notify_new_mail(app, account_id, new_count, &notices);
@@ -137,7 +143,7 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
         ("收到新邮件".to_string(), email)
     };
     if let Some(n) = notices.first() {
-        *pending_notification_target().lock().unwrap() = Some((
+        set_pending_notification_target(
             Instant::now(),
             NotificationMailTarget {
                 account_id: account_id.to_string(),
@@ -145,7 +151,7 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
                 uid: n.uid,
                 message_id: n.message_id.clone(),
             },
-        ));
+        );
     }
     let mut builder = app.notification().builder().title(title).body(body);
     if let Some(icon) = notification_icon_path(app) {
@@ -168,17 +174,35 @@ fn notification_icon_path(app: &AppHandle) -> Option<String> {
         .and_then(|p| p.to_str().map(str::to_owned))
 }
 
-pub fn emit_pending_notification_open(app: &AppHandle) {
-    let target = pending_notification_target()
+/// 是否还有未过期的待打开通知目标（只读，不消费）。
+pub fn has_pending_notification_target() -> bool {
+    pending_notification_target()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(created_at, _)| created_at.elapsed() <= NOTIFICATION_OPEN_TTL)
+        .unwrap_or(false)
+}
+
+/// 取出并清除待打开通知目标（带 TTL 校验）。
+/// 只有真正把目标交给前端的那一次拉取才会消费它——避免在窗口隐藏/监听器未就绪时
+/// 被一次性 emit 白白吃掉，从而导致点击通知后既不弹窗也不定位。
+pub fn take_pending_notification_target() -> Option<NotificationMailTarget> {
+    pending_notification_target()
         .lock()
         .unwrap()
         .take()
-        .and_then(|(created_at, target)| (created_at.elapsed() <= NOTIFICATION_OPEN_TTL).then_some(target));
-    let Some(target) = target else {
+        .and_then(|(created_at, target)| (created_at.elapsed() <= NOTIFICATION_OPEN_TTL).then_some(target))
+}
+
+/// 应用被激活（点击通知 / Dock / 窗口聚焦）后调用：若存在待打开通知，
+/// 唤起主窗口并发一个无副作用的 poke，由前端主动来拉取目标（不在这里消费）。
+pub fn poke_pending_notification_open(app: &AppHandle) {
+    if !has_pending_notification_target() {
         return;
-    };
+    }
     reveal_main_window(app);
-    let _ = app.emit("open-notification-mail", target);
+    let _ = app.emit("notification-activated", ());
 }
 
 pub fn reveal_main_window(app: &AppHandle) {
@@ -397,5 +421,61 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
             }
         }
         std::thread::sleep(POP3_POLL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_target(uid: u32) -> NotificationMailTarget {
+        NotificationMailTarget {
+            account_id: "acc-1".to_string(),
+            folder: "INBOX".to_string(),
+            uid: Some(uid),
+            message_id: Some(format!("<msg-{uid}@example.com>")),
+        }
+    }
+
+    fn clear_pending() {
+        *pending_notification_target().lock().unwrap() = None;
+    }
+
+    // 单个测试串行覆盖待打开目标的生命周期：用进程级 static，拆成多个 #[test]
+    // 会被 cargo 并行跑而互相踩，所以合并成一个顺序执行。
+    //
+    // 通知点击改为「前端主动拉取」后的核心不变量：
+    // 观察（has / poke）不能消费目标，只有真正取走（take）才消费，且只消费一次。
+    // 旧实现里 emit 一次就把目标 take 掉，事件在监听器未就绪时丢失，目标也白白没了——
+    // 正是这一点导致点击通知既不弹窗也不定位。这里锁死「观察不消费、取走只一次、过期取不到」。
+    #[test]
+    fn pending_notification_target_lifecycle() {
+        clear_pending();
+
+        // 没有目标时：观察为空，取走为 None
+        assert!(!has_pending_notification_target());
+        assert!(take_pending_notification_target().is_none());
+
+        // —— 观察不消费、取走只消费一次 ——
+        set_pending_notification_target(Instant::now(), sample_target(42));
+        assert!(has_pending_notification_target());
+        assert!(has_pending_notification_target(), "多次观察不应把目标消费掉");
+
+        let taken = take_pending_notification_target().expect("应取到待打开目标");
+        assert_eq!(taken.uid, Some(42));
+        assert_eq!(taken.account_id, "acc-1");
+
+        assert!(!has_pending_notification_target(), "取走后应已被消费");
+        assert!(take_pending_notification_target().is_none(), "目标只能被取走一次");
+
+        // —— 超过 TTL 的目标视为过期：既不可见也取不到 ——
+        let expired_at = Instant::now()
+            .checked_sub(NOTIFICATION_OPEN_TTL + Duration::from_secs(1))
+            .expect("测试基准时间应可回退");
+        set_pending_notification_target(expired_at, sample_target(7));
+        assert!(!has_pending_notification_target(), "过期目标不应可见");
+        assert!(take_pending_notification_target().is_none(), "过期目标不应被取走");
+
+        clear_pending();
     }
 }

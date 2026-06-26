@@ -147,6 +147,16 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] **To/Cc 显示**：阅读窗头部显示收件人/抄送列表
 - [x] **新邮件系统通知**（tauri-plugin-notification）：watcher 检测到新邮件且窗口未聚焦时弹横幅，
       设置页可关（prefs.notify_new_mail）
+- [x] **点击通知定位邮件（重做为「前端主动拉取」，修复点了没反应/定位不到）**：
+      桌面端 tauri-plugin-notification 的 `actionPerformed` 只在移动端触发，旧实现完全依赖
+      lib.rs 的 Focused/Reopen 事件回调里 `emit` 一次性把目标 take 掉——事件在窗口隐藏/
+      监听器重注册间隙丢失时，目标被白白消费，于是既不弹窗也不定位。
+      现改为：① 后端 `open_pending_notification_mail` 命令「取出并返回」待打开目标（请求/响应，
+      不会丢），只有真正取走才消费；② Focused/Reopen/Opened 只 `poke_pending_notification_open`
+      （唤起窗口 + emit 无副作用的 `notification-activated`，不消费）；③ 前端只注册一次监听，
+      通过 ref 取最新 openNotificationMail，并在 mount、window focus、visibilitychange、
+      notification-activated 这几条可靠信号上各拉取一次——无论应用被哪种方式带到前台都能补上。
+      不变量由 `watcher::tests::pending_notification_target_lifecycle` 锁定（观察不消费/取走只一次/过期取不到）
 
 ### v10（P2：会话线程视图）
 - [x] `mail.rs` 解析 `Message-ID` / `References` / `In-Reply-To`，生成 `message_id` 与 `thread_id`；

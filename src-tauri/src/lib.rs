@@ -232,9 +232,16 @@ fn set_notify_new_mail(state: State<'_, AppState>, enabled: bool) -> Result<bool
     core::set_notify_new_mail(&mut s, enabled)
 }
 
+/// 前端主动拉取待打开的通知邮件：顺手唤起主窗口，并返回（同时消费）待打开目标。
+/// 返回 None 表示当前没有待打开通知。请求/响应方式比一次性 emit 更可靠——
+/// 不会因为事件在监听器未就绪时被丢弃而把目标白白消费掉。
 #[tauri::command]
-fn open_pending_notification_mail(app: AppHandle) {
-    watcher::emit_pending_notification_open(&app);
+fn open_pending_notification_mail(app: AppHandle) -> Option<watcher::NotificationMailTarget> {
+    let target = watcher::take_pending_notification_target();
+    if target.is_some() {
+        watcher::reveal_main_window(&app);
+    }
+    target
 }
 
 // ───────────────────────── oauth2 (设备码) ─────────────────────────
@@ -774,6 +781,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
+            // 窗口聚焦（点通知/Dock 后系统把应用带到前台）→ 提示前端来拉取待打开通知
             if matches!(
                 _event,
                 tauri::RunEvent::WindowEvent {
@@ -781,19 +789,20 @@ pub fn run() {
                     ..
                 }
             ) {
-                watcher::emit_pending_notification_open(_app);
+                watcher::poke_pending_notification_open(_app);
             }
-            // macOS：窗口隐藏后点程序坞图标重新打开
+            // macOS：窗口隐藏后点程序坞图标 / 点通知重新打开
             #[cfg(target_os = "macos")]
             {
+                // Dock 点击：即使没有待打开通知，也要把隐藏的窗口恢复出来
+                if let tauri::RunEvent::Reopen { .. } = _event {
+                    watcher::reveal_main_window(_app);
+                }
                 if matches!(
                     _event,
                     tauri::RunEvent::Reopen { .. } | tauri::RunEvent::Opened { .. }
                 ) {
-                    watcher::emit_pending_notification_open(_app);
-                }
-                if let tauri::RunEvent::Reopen { .. } = _event {
-                    watcher::reveal_main_window(_app);
+                    watcher::poke_pending_notification_open(_app);
                 }
             }
         });

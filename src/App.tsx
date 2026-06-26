@@ -18,7 +18,7 @@ import { TextBody } from "./components/TextBody";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { Seal } from "./components/Seal";
 import { classifyMail, type MailCategory } from "./mailCategory";
-import type { Account, AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo } from "./types";
+import type { Account, AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo, NotificationMailTarget } from "./types";
 import "./styles.css";
 
 function isRisky(m: EmailMeta) {
@@ -39,13 +39,6 @@ function mailKey(m: Pick<EmailMeta, "accountId" | "folder" | "uid">) {
 function threadKey(m: Pick<EmailMeta, "accountId" | "folder" | "threadId" | "messageId" | "uid">) {
   return `${m.accountId}/${m.folder}/${m.threadId || m.messageId || m.uid}`;
 }
-
-type NotificationMailTarget = {
-  accountId: string;
-  folder: string;
-  uid?: number | null;
-  messageId?: string | null;
-};
 
 function defaultShowHtml(mail: EmailFull) {
   return !!mail.bodyHtml?.trim();
@@ -584,21 +577,54 @@ function MailApp() {
     }
   }
 
-  useEffect(() => {
-    const unlisten = listen<NotificationMailTarget>("open-notification-mail", (e) => {
-      openNotificationMail(e.payload);
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, [accountId, refreshFolders, retainSelection]);
+  // 始终指向最新的 openNotificationMail，避免监听器闭包过期；监听器只注册一次，
+  // 不再随 accountId 反复解绑/重绑（那个间隙曾导致点击通知的事件被丢掉）。
+  const openNotificationMailRef = useRef(openNotificationMail);
+  openNotificationMailRef.current = openNotificationMail;
 
+  // 点击系统通知后定位邮件：改为「前端主动拉取」而非依赖后端一次性 emit。
+  // 无论应用通过哪种方式被带到前台（点通知/点 Dock/窗口聚焦），都会触发一次拉取；
+  // 后端仅在确有待打开目标且被成功取走时才消费它，事件丢失也不会白白吃掉目标。
   useEffect(() => {
-    const unlisten = addPluginListener("notification", "actionPerformed", () => {
-      api.openPendingNotificationMail().catch((e) => setListError(String(e)));
-    });
+    let cancelled = false;
+    let pulling = false;
+    async function pullPendingNotification() {
+      if (pulling) return; // 同一时刻只拉一次，避免重复触发
+      pulling = true;
+      try {
+        const target = await api.openPendingNotificationMail();
+        if (!cancelled && target) openNotificationMailRef.current(target);
+      } catch (e) {
+        if (!cancelled) setListError(String(e));
+      } finally {
+        pulling = false;
+      }
+    }
+
+    // 1) 启动兜底：进程内若已记录待打开目标（如 webview 重载）也能补上
+    pullPendingNotification();
+
+    // 2) 窗口被激活/重新可见——点击通知后系统把窗口带到前台时最可靠的信号
+    const onFocus = () => pullPendingNotification();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") pullPendingNotification();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+
+    // 3) 后端在 Focused/Reopen/Opened 时发来的提醒（暖启动主路径）
+    const unlistenPoke = listen("notification-activated", () => pullPendingNotification());
+    // 4) 移动端原生通知点击事件（桌面端不会触发，保留以兼容移动端）
+    const unlistenAction = addPluginListener("notification", "actionPerformed", () =>
+      pullPendingNotification()
+    );
+
     return () => {
-      unlisten.then((listener) => listener.unregister());
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+      unlistenPoke.then((f) => f());
+      unlistenAction.then((listener) => listener.unregister());
     };
   }, []);
 

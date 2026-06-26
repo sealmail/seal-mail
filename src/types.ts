@@ -175,6 +175,14 @@ export interface FolderInfo {
   role?: string;
 }
 
+/** 点击系统通知后，后端记录的待打开邮件目标 */
+export interface NotificationMailTarget {
+  accountId: string;
+  folder: string;
+  uid?: number | null;
+  messageId?: string | null;
+}
+
 export interface AppStateView {
   accounts: Account[];
   identity: IdentityInfo;
