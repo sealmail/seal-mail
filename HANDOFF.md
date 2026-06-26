@@ -147,16 +147,28 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] **To/Cc 显示**：阅读窗头部显示收件人/抄送列表
 - [x] **新邮件系统通知**（tauri-plugin-notification）：watcher 检测到新邮件且窗口未聚焦时弹横幅，
       设置页可关（prefs.notify_new_mail）
-- [x] **点击通知定位邮件（重做为「前端主动拉取」，修复点了没反应/定位不到）**：
-      桌面端 tauri-plugin-notification 的 `actionPerformed` 只在移动端触发，旧实现完全依赖
-      lib.rs 的 Focused/Reopen 事件回调里 `emit` 一次性把目标 take 掉——事件在窗口隐藏/
-      监听器重注册间隙丢失时，目标被白白消费，于是既不弹窗也不定位。
-      现改为：① 后端 `open_pending_notification_mail` 命令「取出并返回」待打开目标（请求/响应，
-      不会丢），只有真正取走才消费；② Focused/Reopen/Opened 只 `poke_pending_notification_open`
-      （唤起窗口 + emit 无副作用的 `notification-activated`，不消费）；③ 前端只注册一次监听，
-      通过 ref 取最新 openNotificationMail，并在 mount、window focus、visibilitychange、
-      notification-activated 这几条可靠信号上各拉取一次——无论应用被哪种方式带到前台都能补上。
-      不变量由 `watcher::tests::pending_notification_target_lifecycle` 锁定（观察不消费/取走只一次/过期取不到）
+- [x] **点击通知定位邮件（macOS 根治：自己捕获点击）**：
+      根因——tauri-plugin-notification 在 macOS 用废弃的 `NSUserNotification` 且 `wait_for_click=false`，
+      发完即走、不监听点击；`actionPerformed` 又只在移动端触发。所以点通知后系统既不激活 App
+      也不回调，A/B 场景全都没反应（与 dev 无关，正式版同样）。已用 `examples/notify_probe.rs`
+      实测确认 `mac_notification_sys` + `wait_for_click(true)` 能拿到 `Click`。
+      现 macOS 改为自己发通知：watcher `spawn_macos_click_notification` 在后台线程
+      `set_application(bundle)` + `wait_for_click(true)` 阻塞 `send()`，捕获 `Click` 后**自己**
+      `reveal_main_window` + 设定目标 + emit `notification-activated`，完全不依赖系统激活/RunEvent。
+      只有真点击才动作（普通聚焦不误触发）。其它平台仍走 tauri-plugin-notification + 前端拉取。
+      新增直接依赖 `mac-notification-sys`（仅 macOS target）。前端保持「只注册一次 + ref 取最新
+      openNotificationMail + 多信号拉取（mount/focus/visibilitychange/notification-activated）」。
+      不变量由 `watcher::tests::pending_notification_target_lifecycle` 锁定。
+- [x] **性能：列表/启动/切换卡顿（正式版白屏十几秒、切邮件卡）**：
+      根因——DB 只存原始 raw（含附件，可能几百 MB），列表(`list_cached`)、会话(`list_thread`)每次都
+      把整批 raw 读出来逐封 MIME 解析+验证。修复：
+      ① DB 新增 `meta_json` 列（安全幂等迁移：`ALTER TABLE ADD COLUMN`，旧行惰性回填）。
+      `list_cached`/`list_thread` 改走轻量 `list_meta`/`list_folder_meta`（只读元信息 JSON、不读 raw），
+      命中即秒出；未命中才读一次 raw 解析并写回。已读/星标以 DB 列为准；`upsert`/`set_folder` 会
+      失效该行缓存；可信联系人变更时 `invalidate_meta_cache` 清空全部（trust 按新规则重算）。
+      ② 前端 `selectMail` 优先用已加载列表本地筛同会话，仅本地缺失时才回退后端。
+      注意：更新后**首次**打开仍会回填一次（解析首屏），之后秒开。
+      新测试 `db::tests::meta_json_cache_lifecycle`（写回/重置/清空/移动目录失效）。
 
 ### v10（P2：会话线程视图）
 - [x] `mail.rs` 解析 `Message-ID` / `References` / `In-Reply-To`，生成 `message_id` 与 `thread_id`；
