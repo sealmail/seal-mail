@@ -5,6 +5,9 @@ pub mod db;
 pub mod filters;
 pub mod imap_client;
 pub mod ledger;
+pub mod logging;
+#[cfg(target_os = "macos")]
+pub mod mac_notify;
 pub mod mail;
 pub mod models;
 pub mod oauth;
@@ -29,6 +32,54 @@ fn gen_id() -> String {
     let mut b = [0u8; 8];
     let _ = getrandom::getrandom(&mut b);
     hex::encode(b)
+}
+
+/// 启动后在后台补全 meta_json 缓存。列表/会话的「懒回填」在升级后首次访问时
+/// 要把整个目录的原始邮件解析一遍（实测数千封 ≈ 数秒卡顿）；挪到后台小批推进，
+/// 用户操作到哪儿都不会再撞上这堵墙。批间让出锁与 IO，不影响交互。
+fn spawn_meta_backfill(app: AppHandle) {
+    std::thread::spawn(move || {
+        // 等应用先把首屏加载完
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let state = app.state::<AppState>();
+        let targets = {
+            let s = state.inner.lock().unwrap();
+            db::missing_meta_targets(&s.db).unwrap_or_default()
+        };
+        if targets.is_empty() {
+            return;
+        }
+        logging::log(format!("[cache] 后台补全 meta 缓存开始：{} 个目录", targets.len()));
+        let t0 = std::time::Instant::now();
+        let mut total = 0u32;
+        for (account_id, folder) in targets {
+            let mut cursor = 0u32;
+            loop {
+                let batch = {
+                    let mut s = state.inner.lock().unwrap();
+                    core::backfill_meta_batch(&mut s, &account_id, &folder, cursor, 40)
+                };
+                match batch {
+                    Ok((0, _)) => break,
+                    Ok((n, max_uid)) => {
+                        total += n;
+                        match max_uid {
+                            Some(u) => cursor = u,
+                            None => break,
+                        }
+                    }
+                    Err(_) => break, // 账户已删除等情况：跳过该目录
+                }
+                // 让出状态锁和磁盘 IO，避免与用户操作抢资源
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+        logging::log(format!(
+            "[cache] 后台补全 meta 缓存完成：{} 封，耗时 {}ms",
+            total,
+            t0.elapsed().as_millis()
+        ));
+    });
 }
 
 fn cli_binary_name() -> &'static str {
@@ -77,8 +128,11 @@ fn resolve_cli(app: &AppHandle) -> Result<(PathBuf, bool), String> {
     Err(format!("找不到 sealmail-cli，也无法回退到 App CLI 模式。已查找: {searched}"))
 }
 
+/// GUI 全部业务调用都经过这里。必须是 async：Tauri 2 的同步命令在主线程执行，
+/// 之前每次等待 CLI 子进程都会冻结 UI 事件循环（同步邮件时整窗卡死 2 秒以上）；
+/// async + spawn_blocking 让调用在线程池并行，主线程始终响应。
 #[tauri::command]
-fn cli_json(
+async fn cli_json(
     app: AppHandle,
     args: Vec<String>,
     stdin: Option<String>,
@@ -90,6 +144,31 @@ fn cli_json(
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Err("GUI bridge 只允许 JSON 命令，不执行 help".into());
     }
+    // 记录命令与耗时，真机排查性能/失败时直接看日志
+    let t0 = std::time::Instant::now();
+    let brief = args
+        .iter()
+        .take_while(|a| !a.starts_with("--"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let result = tauri::async_runtime::spawn_blocking(move || cli_json_inner(app, args, stdin, env))
+        .await
+        .map_err(|e| format!("CLI 任务执行失败: {e}"))?;
+    logging::log(format!(
+        "[perf] cli {brief} {}ms ok={}",
+        t0.elapsed().as_millis(),
+        result.is_ok()
+    ));
+    result
+}
+
+fn cli_json_inner(
+    app: AppHandle,
+    args: Vec<String>,
+    stdin: Option<String>,
+    env: Option<HashMap<String, String>>,
+) -> Result<serde_json::Value, String> {
     let (cli, app_cli_mode) = resolve_cli(&app)?;
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let mut final_args = args;
@@ -239,6 +318,7 @@ fn set_notify_new_mail(state: State<'_, AppState>, enabled: bool) -> Result<bool
 fn open_pending_notification_mail(app: AppHandle) -> Option<watcher::NotificationMailTarget> {
     let target = watcher::take_pending_notification_target();
     if target.is_some() {
+        logging::log(format!("[notify] 前端取走待打开目标 {target:?}"));
         watcher::reveal_main_window(&app);
     }
     target
@@ -724,12 +804,15 @@ pub fn run() {
         })
         .setup(|app| {
             let dir = app.path().app_config_dir().expect("无法获取应用配置目录");
+            logging::init(&dir);
             let data = StoreData::load(dir).expect("初始化本地存储失败");
             app.manage(AppState {
                 inner: std::sync::Mutex::new(data),
             });
             // 启动新邮件监听（IMAP IDLE / POP3 轮询）
             watcher::ensure_watchers(&app.handle().clone());
+            watcher::debug_fire_test_notification(&app.handle().clone());
+            spawn_meta_backfill(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

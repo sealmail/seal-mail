@@ -660,6 +660,33 @@ pub fn get_message(
     Ok(full)
 }
 
+/// 后台补全一批 meta_json 缓存（升级后首次运行的一次性开销，从交互路径挪到后台）。
+/// 从 `after_uid` 之后按 uid 升序处理至多 `limit` 行；返回 (处理行数, 本批最大 uid)。
+/// 解析失败的行也推进游标（否则会原地打转），下次列表读到时再按需处理。
+pub fn backfill_meta_batch(
+    s: &mut StoreData,
+    account_id: &str,
+    folder: &str,
+    after_uid: u32,
+    limit: u32,
+) -> Result<(u32, Option<u32>), String> {
+    let account = s.account(account_id)?; // 账户已删除时报错，调用方跳过该目录
+    let trusted = s.trusted_for_verify(&account);
+    let rows = db::rows_missing_meta(&s.db, account_id, folder, after_uid, limit)?;
+    let n = rows.len() as u32;
+    let max_uid = rows.last().map(|r| r.uid);
+    for r in rows {
+        if let Ok(full) =
+            mail::parse_email(&r.raw, r.uid, account_id, folder, r.unread, r.flagged, &trusted)
+        {
+            if let Ok(json) = serde_json::to_string(&full.meta) {
+                let _ = db::set_meta_json(&s.db, account_id, folder, r.uid, &json);
+            }
+        }
+    }
+    Ok((n, max_uid))
+}
+
 pub fn list_thread(
     s: &mut StoreData,
     account_id: &str,

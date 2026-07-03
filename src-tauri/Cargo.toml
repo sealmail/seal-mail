@@ -1,6 +1,6 @@
 [package]
 name = "sealmail"
-version = "0.1.33"
+version = "0.1.34"
 description = "SealMail 信印 — 可信邮件客户端"
 authors = ["SealMail"]
 edition = "2021"
@@ -60,10 +60,14 @@ rusqlite = { version = "0.40.1", features = ["bundled"] }
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
 
-# macOS：自己发系统通知并捕获“点击横幅”事件（tauri-plugin-notification 在 macOS 用废弃的
-# NSUserNotification 且不监听点击，导致点通知后毫无反应）。版本与依赖树里现有的保持一致。
+# macOS：自己发系统通知并用单例 delegate 捕获点击（tauri-plugin-notification 在 macOS
+# 用废弃的 NSUserNotification 且不监听点击，导致点通知后毫无反应）。见 src/mac_notify.rs。
+# mac-notification-sys 仅保留 set_application（dev 未打包运行时伪装 bundle 身份）。
+# 版本与依赖树里现有的保持一致。
 [target."cfg(target_os = \"macos\")".dependencies]
 mac-notification-sys = "0.6"
+objc2 = "0.6"
+objc2-foundation = "0.3"
 
 [dev-dependencies]
 ed25519-dalek = "2"

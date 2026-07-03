@@ -11,9 +11,11 @@ import type { EmailFull, EmailMeta, FolderInfo } from "../types";
 interface Props {
   mail: EmailFull | null;
   thread: EmailMeta[];
-  threadMails: EmailFull[];
+  /** 会话正文缓存（mailKey → 全文）；没有正文的邮件渲染占位卡片，点击再加载 */
+  threadFulls: Record<string, EmailFull>;
   folders: FolderInfo[];
   onOpenThreadMail: (mail: EmailMeta) => void;
+  onLoadThreadMail: (mail: EmailMeta) => void;
   onReply: () => void;
   onReplyAll: () => void;
   onForward: () => void;
@@ -111,10 +113,10 @@ export function MessageView(p: Props) {
   }, [uid]);
 
   useEffect(() => {
-    if (p.threadMails.length > 1) {
+    if (p.thread.length > 1) {
       selectedCardRef.current?.scrollIntoView({ block: "start" });
     }
-  }, [uid, p.threadMails.length]);
+  }, [uid, p.thread.length]);
 
   async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
@@ -148,7 +150,7 @@ export function MessageView(p: Props) {
   const banner = riskBanner(m);
   const moveTargets = p.folders.filter((f) => f.name !== m.meta.folder && f.name !== "__risk__");
   const canTrust = m.verify.status === "signedUnknown";
-  const conversation = p.threadMails.length > 1 ? p.threadMails : [];
+  const conversation = p.thread.length > 1 ? p.thread : [];
 
   function renderBody(mail: EmailFull, mode: boolean | null, setMode: (next: boolean) => void) {
     const hasHtml = !!mail.bodyHtml;
@@ -169,9 +171,36 @@ export function MessageView(p: Props) {
     );
   }
 
-  function renderThreadCard(mail: EmailFull) {
-    const key = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}`;
+  function renderThreadCard(meta: EmailMeta) {
+    const key = `${meta.accountId}/${meta.folder}/${meta.uid}`;
     const current = key === `${m.meta.accountId}/${m.meta.folder}/${m.meta.uid}`;
+    const mail = current ? m : p.threadFulls[key];
+    // 正文未加载（长会话中间的邮件）：占位卡片，点击按需加载
+    if (!mail) {
+      return (
+        <div
+          className="thread-card thread-card-stub"
+          key={key}
+          onClick={() => p.onLoadThreadMail(meta)}
+          title="点击加载这封邮件的正文"
+        >
+          <div className="thread-card-head">
+            <div className="msg-fromline">
+              <Seal trust={meta.trust} size={30} />
+              <div style={{ minWidth: 0 }}>
+                <div className="msg-fromname">{meta.fromName}</div>
+                <div className="msg-addr">{meta.fromAddr}</div>
+              </div>
+            </div>
+            <span className="msg-date">{meta.dateDisplay}</span>
+          </div>
+          <div className="thread-stub-preview">{meta.preview || "…"}</div>
+          <button className="btn-ghost thread-stub-load" onClick={(e) => { e.stopPropagation(); p.onLoadThreadMail(meta); }}>
+            展开正文
+          </button>
+        </div>
+      );
+    }
     const mode = threadHtmlModes[key] ?? null;
     return (
       <div className={`thread-card${current ? " current" : ""}`} key={key} ref={current ? selectedCardRef : null}>

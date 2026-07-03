@@ -8,10 +8,13 @@ use crate::models::*;
 use crate::store::AppState;
 use crate::{imap_client, mail, oauth, pop3_client};
 use std::collections::HashSet;
+#[cfg(not(target_os = "macos"))]
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
+#[cfg(not(target_os = "macos"))]
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 单轮 IDLE 等待时长；到时会重新 EXAMINE 校对一次再继续
 const IDLE_ROUND: Duration = Duration::from_secs(4 * 60);
@@ -64,10 +67,10 @@ struct MailNotice {
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationMailTarget {
-    account_id: String,
-    folder: String,
-    uid: Option<u32>,
-    message_id: Option<String>,
+    pub(crate) account_id: String,
+    pub(crate) folder: String,
+    pub(crate) uid: Option<u32>,
+    pub(crate) message_id: Option<String>,
 }
 
 fn pending_notification_target() -> &'static Mutex<Option<(Instant, NotificationMailTarget)>> {
@@ -75,10 +78,15 @@ fn pending_notification_target() -> &'static Mutex<Option<(Instant, Notification
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
-/// 写入待打开通知目标（带时间戳）。运行期只在 notify_new_mail 内通过 set 触发；
-/// 这里提取成函数是为了让测试也能注入一个目标。
+/// 写入待打开通知目标（带时间戳）。这里提取成函数是为了让测试也能注入一个目标。
 fn set_pending_notification_target(created_at: Instant, target: NotificationMailTarget) {
     *pending_notification_target().lock().unwrap() = Some((created_at, target));
+}
+
+/// 供 mac_notify 的点击回调使用：立刻记下待打开目标。
+#[cfg(target_os = "macos")]
+pub fn set_pending_notification_target_now(target: NotificationMailTarget) {
+    set_pending_notification_target(Instant::now(), target);
 }
 
 fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec<MailNotice>) {
@@ -97,6 +105,10 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
         };
         (s.prefs.notify_new_mail, email)
     };
+    crate::logging::log(format!(
+        "[notify] 新邮件 account={account_id} count={new_count} enabled={enabled} notices={}",
+        notices.len()
+    ));
     if !enabled {
         return;
     }
@@ -106,7 +118,9 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
         .next()
         .and_then(|w| w.is_focused().ok())
         .unwrap_or(false);
-    if focused {
+    // SEALMAIL_DEBUG_NOTIFY 调试时绕过焦点检查（自动化测试里 dev 应用始终在前台）
+    if focused && std::env::var("SEALMAIL_DEBUG_NOTIFY").is_err() {
+        crate::logging::log("[notify] 窗口聚焦中，跳过系统通知");
         return; // 正在看着应用就不用打扰了
     }
     let (title, body) = if notices.len() == 1 {
@@ -151,10 +165,9 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
 
     #[cfg(target_os = "macos")]
     {
-        // macOS 上 tauri-plugin-notification 用的是废弃的 NSUserNotification，且发完即走、
-        // 不监听点击——点通知毫无反应。改为自己发通知并阻塞捕获“点击横幅”，点中后再唤起
-        // 窗口、设定目标、通知前端来拉取。只有真正点击才设定目标，避免误把普通聚焦当成点击。
-        spawn_macos_click_notification(app.clone(), title, body, target);
+        // macOS：自己发通知并安装单例 delegate 捕获点击（见 mac_notify.rs 顶部说明）。
+        // 点击回调里才设定目标，普通聚焦不会误触发。
+        crate::mac_notify::notify(app, title, body, target);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -168,60 +181,12 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
             builder = builder.icon(icon);
         }
         if let Err(e) = builder.show() {
-            eprintln!("[watcher] 系统通知发送失败: {}", e);
+            crate::logging::log(format!("[notify] 系统通知发送失败: {e}"));
         }
     }
 }
 
-/// macOS：`set_application` 要求“最多调用一次且在发通知之前”，用 Once 保证。
-/// 设成已安装 App 的 bundle id，让通知顶着 SealMail 的名字与图标出现。
-#[cfg(target_os = "macos")]
-fn macos_set_application_once(app: &AppHandle) {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let id = app.config().identifier.clone();
-        if let Err(e) = mac_notification_sys::set_application(&id) {
-            eprintln!("[watcher] set_application({id}) 失败，改用默认身份: {e:?}");
-        }
-    });
-}
-
-/// macOS：在后台线程阻塞发送一条通知并等待用户交互。`wait_for_click(true)` 让 `send()`
-/// 一直等到用户点击/关闭/通知被清除才返回；只有点击横幅（Click）或动作按钮时才唤起窗口。
-/// 线程会驻留到该通知被处理为止——这也正好让“点通知中心里的旧通知”同样能跳转。
-#[cfg(target_os = "macos")]
-fn spawn_macos_click_notification(
-    app: AppHandle,
-    title: String,
-    body: String,
-    target: Option<NotificationMailTarget>,
-) {
-    macos_set_application_once(&app);
-    std::thread::spawn(move || {
-        use mac_notification_sys::{Notification, NotificationResponse};
-        let icon = notification_icon_path(&app);
-        let mut n = Notification::new();
-        n.title(&title).message(&body).wait_for_click(true);
-        if let Some(ic) = icon.as_deref() {
-            n.app_icon(ic);
-        }
-        match n.send() {
-            // 点击横幅本体或动作按钮 → 唤起窗口并定位到这封邮件
-            Ok(NotificationResponse::Click) | Ok(NotificationResponse::ActionButton(_)) => {
-                if let Some(t) = target {
-                    set_pending_notification_target(Instant::now(), t);
-                }
-                reveal_main_window(&app);
-                let _ = app.emit("notification-activated", ());
-            }
-            // 关闭按钮 / 划走 / 自动消失：不打扰
-            Ok(_) => {}
-            Err(e) => eprintln!("[watcher] macOS 通知发送失败: {e:?}"),
-        }
-    });
-}
-
+#[cfg(not(target_os = "macos"))]
 fn notification_icon_path(app: &AppHandle) -> Option<String> {
     app.path()
         .resolve("icons/icon.png", BaseDirectory::Resource)
@@ -482,6 +447,47 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
         }
         std::thread::sleep(POP3_POLL);
     }
+}
+
+/// 调试钩子：设置 SEALMAIL_DEBUG_NOTIFY=<account_id>:<uid>[,<uid>...] 启动应用时，
+/// 8 秒后走真实 notify_new_mail 路径发指向已缓存邮件的测试通知（多个 uid 间隔 4 秒），
+/// 用于在真机上验证「点通知→跳转邮件」全链路而无需等真实新邮件。
+/// 该模式下同时绕过窗口聚焦检查（notify_new_mail 内）。
+pub fn debug_fire_test_notification(app: &AppHandle) {
+    let Ok(spec) = std::env::var("SEALMAIL_DEBUG_NOTIFY") else {
+        return;
+    };
+    let Some((account_id, uids)) = spec.split_once(':') else {
+        crate::logging::log("[notify] SEALMAIL_DEBUG_NOTIFY 格式应为 account_id:uid[,uid...]");
+        return;
+    };
+    let account_id = account_id.to_string();
+    let uids: Vec<u32> = uids.split(',').filter_map(|u| u.trim().parse().ok()).collect();
+    if uids.is_empty() {
+        crate::logging::log(format!("[notify] SEALMAIL_DEBUG_NOTIFY uid 解析失败: {spec}"));
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(8));
+        for (i, uid) in uids.iter().enumerate() {
+            if i > 0 {
+                std::thread::sleep(Duration::from_secs(4));
+            }
+            let notice = MailNotice {
+                uid: Some(*uid),
+                message_id: None,
+                from_name: "点击诊断".to_string(),
+                from_addr: "debug@sealmail.test".to_string(),
+                subject: format!("测试通知 uid={uid}"),
+                preview: "请点击这条通知横幅".to_string(),
+            };
+            crate::logging::log(format!(
+                "[notify] 发送调试通知 account={account_id} uid={uid}"
+            ));
+            notify_new_mail(&app, &account_id, 1, &[notice]);
+        }
+    });
 }
 
 #[cfg(test)]

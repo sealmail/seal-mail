@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-06-13（v18：子窗口缩放快捷键与会话折叠）
+> 最后更新：2026-07-03（v19：通知点击根治 + UI 响应优化 + 持久化日志）
 
 ## 项目定位
 
@@ -220,6 +220,53 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] 独立邮件窗口增加捕获层快捷键处理，确保 Cmd/Ctrl +/-/0 可调整字体缩放
 - [x] HTML iframe 内触发缩放快捷键时同步通知父窗口，避免焦点在邮件正文里时失效
 - [x] 超过 3 封的会话默认折叠中间邮件，只保留首封和末尾两封；点击可展开全部
+
+### v19（通知点击根治 + UI 响应优化 + 持久化日志 / v0.1.34）
+
+**macOS 通知点击（第三次修复，这次有 E2E 证据）**：
+- [x] 根因：v0.1.33 的 mac-notification-sys `wait_for_click` 方案有先天缺陷——每次
+      `send()` 都会**替换** NSUserNotificationCenter 的全局 delegate，且回调不校验是
+      哪条通知。邮件客户端常态是多条通知并存，点任何一条都只会唤醒最后一条的等待线程：
+      要么打开错误的邮件，要么毫无反应。另外用户当时装的是 v0.1.32（修复只进了 v0.1.33），
+      测到的还是「完全没反应」的旧版行为。
+- [x] 新 `src/mac_notify.rs`：objc2 自定义**单例 delegate**（进程内只装一次）+ 每条
+      通知唯一 identifier + identifier→NotificationMailTarget 注册表；主线程回调按
+      id 精确路由，不阻塞任何线程；点「通知中心里攒下的旧通知」也各开各的邮件
+      （限本进程发出的；重启后点旧通知只唤起窗口）。mac-notification-sys 仅保留
+      `set_application`（dev 未打包运行时伪装 bundle 身份；打包后跳过 swizzle）。
+      前端拉取模型（open_pending_notification_mail）不变。
+- [x] 通知打开改**本地缓存优先**：openNotificationMail 先 listCached 定位直接打开
+      （实测点击→邮件打开约 200ms），找不到才阻塞同步一次；目录刷新/列表同步放后台。
+      旧实现先 refreshFolders+syncMessages（网络）再打开，Exchange 慢时点了通知
+      几秒都打不开（实测挂过 8 分钟）。
+- [x] 测试：`mac_notify::tests::identifier_routing_is_exact_and_consume_once` 锁定
+      「按 id 精确路由/取走即消费/未知 id 只唤窗口」不变量（ObjC 回调层无法无头单测，
+      注册表就是路由正确性的测试缝隙）。
+
+**UI 响应优化（用户反馈"有点慢"，实测定位到三个来源）**：
+- [x] **cli_json 同步命令冻结主线程（最大头）**：Tauri 2 同步命令在主线程执行，GUI
+      所有业务调用（走 CLI 子进程桥）都会阻塞 UI 事件循环——同步一次邮件整窗卡死
+      2 秒+。改 async + `spawn_blocking`：主线程始终响应，独立调用并行
+      （实测启动 state/drafts 并行，点通知后 read 不再排在 sync/folders 后面）。
+- [x] **会话正文懒加载**：selectMail 原来 Promise.all 一次性拉整条会话所有正文
+      （长会话数十次 read+MIME 解析+验签）。现在只急加载选中封+首封+末尾三封
+      （≤6 封才全量），其余渲染占位卡片（发件人/日期/预览）点击再取；
+      同会话内切换复用 metas 与正文缓存，不再整屏闪烁重取。
+- [x] **meta 缓存后台补全**：升级后首次访问的懒回填墙（实测 2700 封目录首次
+      list_thread 卡 4.2 秒）挪到启动 5 秒后的后台线程小批推进
+      （`core::backfill_meta_batch`，批 40 封间隔 25ms，让出锁与 IO）；
+      已删除账户的残留行自动跳过。SQLite 加 `busy_timeout(5s)`，
+      GUI 进程与 CLI 子进程并发读写不再怕撞锁。
+
+**持久化日志（真机排障用）**：
+- [x] `src/logging.rs`：写 `<应用配置目录>/logs/sealmail.log`，单文件 1MB 超限轮转为
+      `.log.old`。记录通知链路 `[notify]`、GUI 全部 CLI 调用耗时 `[perf]`、
+      缓存补全 `[cache]`。只在用户动作级别写，不进热循环，无性能影响。
+      macOS 查看：`tail -f ~/Library/Application\ Support/com.sealmail.app/logs/sealmail.log`
+- [x] 调试钩子：`SEALMAIL_DEBUG_NOTIFY=<account_id>:<uid>[,<uid>...]` 启动应用，
+      8 秒后走真实链路发指向已缓存邮件的测试通知（该模式下绕过窗口聚焦检查），
+      真机不用等真实新邮件即可验证「点通知→跳转邮件」。account_id 与 uid 可从
+      日志或 `sealmail-cli list` 获取。
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）

@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS pop_state (
 pub fn open(dir: &Path) -> Result<Connection, String> {
     let conn =
         Connection::open(dir.join("mail.db")).map_err(|e| format!("打开邮件缓存失败: {e}"))?;
+    // GUI 进程（后台补全/监听）与 CLI 子进程会并发读写同一个库，
+    // 撞锁时等待重试而不是直接报 database is locked
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("初始化邮件缓存失败: {e}"))?;
     // 旧库补充 meta_json 列（列已存在时 ALTER 会报错，忽略即可——这是安全的幂等迁移）
@@ -212,6 +215,49 @@ pub fn clear_all_meta_json(conn: &Connection) -> Result<(), String> {
     conn.execute("UPDATE messages SET meta_json=NULL", [])
         .map(|_| ())
         .map_err(err)
+}
+
+/// 还有 meta 缓存缺口的目录（供启动后的后台补全遍历）。
+pub fn missing_meta_targets(conn: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT account_id, folder FROM messages WHERE meta_json IS NULL")
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(rows)
+}
+
+/// 按 uid 游标批量取出还没有 meta 缓存的行（含 raw，供后台解析回填）。
+pub fn rows_missing_meta(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    after_uid: u32,
+    limit: u32,
+) -> Result<Vec<CachedRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT uid, unread, flagged, raw FROM messages
+             WHERE account_id=?1 AND folder=?2 AND meta_json IS NULL AND uid>?3
+             ORDER BY uid ASC LIMIT ?4",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![account, folder, after_uid, limit], |r| {
+            Ok(CachedRow {
+                uid: r.get(0)?,
+                unread: r.get::<_, i64>(1)? != 0,
+                flagged: r.get::<_, i64>(2)? != 0,
+                raw: r.get(3)?,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(rows)
 }
 
 #[allow(clippy::too_many_arguments)]

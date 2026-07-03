@@ -204,7 +204,9 @@ function MailApp() {
   const [selected, setSelected] = useState<EmailFull | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [thread, setThread] = useState<EmailMeta[]>([]);
-  const [threadMails, setThreadMails] = useState<EmailFull[]>([]);
+  // 会话正文缓存：mailKey → 全文。只按需加载（选中封 + 首末几封），长会话中间的
+  // 邮件渲染占位卡片、点击再取——此前一次性拉取整条会话所有正文是切换卡顿的主因。
+  const [threadFulls, setThreadFulls] = useState<Record<string, EmailFull>>({});
   const [view, setView] = useState<"mail" | "keys">("mail");
   const [search, setSearch] = useState("");
   const [filterMode, setFilterMode] = useState<"all" | "unread" | "flagged">("all");
@@ -250,12 +252,17 @@ function MailApp() {
   // 始终指向最新已加载列表，供 selectMail 本地筛会话用（避免后端全量扫描整个目录）
   const messagesRef = useRef<EmailMeta[]>(messages);
   messagesRef.current = messages;
+  // 同会话内切换时复用已加载的 metas 与正文缓存（ref 避免闭包拿到旧值）
+  const threadRef = useRef<EmailMeta[]>(thread);
+  threadRef.current = thread;
+  const threadFullsRef = useRef<Record<string, EmailFull>>(threadFulls);
+  threadFullsRef.current = threadFulls;
   const clearSelection = useCallback(() => {
     selectSeq.current += 1;
     setSelected(null);
     setSelectedKey(null);
     setThread([]);
-    setThreadMails([]);
+    setThreadFulls({});
   }, []);
   const retainSelection = useCallback((metas: EmailMeta[]) => {
     const visible = new Set(metas.map(mailKey));
@@ -480,13 +487,25 @@ function MailApp() {
   useEffect(() => localStorage.setItem("sealmail.listWidth", String(listWidth)), [listWidth]);
 
   // ── 选中邮件 ──
+  // 会话正文按需加载：短会话全量；长会话只先取首封 + 末尾几封 + 选中封
+  const EAGER_THREAD_BODIES = 6;
+
   async function selectMail(m: EmailMeta, opts: { markRead?: boolean } = {}) {
     const key = mailKey(m);
     const seq = ++selectSeq.current;
+    // 同会话内切换：metas 与正文缓存直接复用，不清空避免整屏闪烁
+    const sameThread =
+      !!m.threadId &&
+      threadRef.current.length > 0 &&
+      threadRef.current[0]?.threadId === m.threadId &&
+      threadRef.current.some((x) => mailKey(x) === key);
+    const cached = sameThread ? threadFullsRef.current[key] : undefined;
     setSelectedKey(key);
-    setSelected(null);
-    setThread([]);
-    setThreadMails([]);
+    setSelected(cached ?? null);
+    if (!sameThread) {
+      setThread([]);
+      setThreadFulls({});
+    }
     setView("mail");
     const shouldMarkRead = opts.markRead !== false && m.unread;
     if (shouldMarkRead) {
@@ -495,37 +514,75 @@ function MailApp() {
       setInboxMetas((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
     }
     try {
-      const full = await api.getMessage(m.accountId, m.folder, m.uid);
-      if (seq === selectSeq.current) {
-        const selectedFull = shouldMarkRead ? { ...full, meta: { ...full.meta, unread: false } } : full;
-        setSelected(selectedFull);
-        // 同会话邮件优先从「已加载列表」本地筛选——后端 list_thread 会把整个目录的邮件
-        // 全部读出来逐封解析，是切换卡顿的主因。绝大多数会话的邮件都在已加载范围内；
-        // 只有本地还没有这封（如点通知直达一封未加载的邮件）才回退到后端按需取整条会话。
+      const full = cached ?? (await api.getMessage(m.accountId, m.folder, m.uid));
+      if (seq !== selectSeq.current) return;
+      const selectedFull = shouldMarkRead ? { ...full, meta: { ...full.meta, unread: false } } : full;
+      setSelected(selectedFull);
+
+      // 同会话邮件优先从「已加载列表」本地筛选——后端 list_thread 会把整个目录的邮件
+      // 全部读出来逐封解析。绝大多数会话的邮件都在已加载范围内；
+      // 只有本地还没有这封（如点通知直达一封未加载的邮件）才回退到后端按需取整条会话。
+      let threadMetas: EmailMeta[];
+      if (sameThread) {
+        threadMetas = threadRef.current;
+      } else {
         const localThread = messagesRef.current.filter(
           (x) => x.accountId === m.accountId && x.folder === m.folder && x.threadId === m.threadId
         );
-        let threadMetas: EmailMeta[];
         if (m.threadId && localThread.some((x) => mailKey(x) === key)) {
           threadMetas = localThread;
         } else {
           threadMetas = await api.listThread(m.accountId, m.folder, m.threadId).catch(() => [m]);
           if (seq !== selectSeq.current) return;
         }
-        const normalizedThread = threadMetas.map((item) =>
-          mailKey(item) === key && shouldMarkRead ? { ...item, unread: false } : item
-        );
-        setThread(normalizedThread);
-        const fulls = await Promise.all(
-          normalizedThread.map(async (item) => {
-            if (mailKey(item) === key) return selectedFull;
-            return api.getMessage(item.accountId, item.folder, item.uid);
-          })
-        );
-        if (seq === selectSeq.current) {
-          setThreadMails(fulls.sort((a, b) => a.meta.timestamp - b.meta.timestamp));
-        }
       }
+      const normalizedThread = threadMetas
+        .map((item) => (mailKey(item) === key && shouldMarkRead ? { ...item, unread: false } : item))
+        .sort((a, b) => a.timestamp - b.timestamp);
+      setThread(normalizedThread);
+
+      // 只急加载一小撮正文：选中封 + 首封 + 末尾三封；其余占位卡片点击再取
+      const eager = new Set<string>([key]);
+      if (normalizedThread.length <= EAGER_THREAD_BODIES) {
+        normalizedThread.forEach((item) => eager.add(mailKey(item)));
+      } else {
+        eager.add(mailKey(normalizedThread[0]));
+        normalizedThread.slice(-3).forEach((item) => eager.add(mailKey(item)));
+      }
+      const known = sameThread ? threadFullsRef.current : {};
+      const missing = normalizedThread.filter(
+        (item) => eager.has(mailKey(item)) && mailKey(item) !== key && !known[mailKey(item)]
+      );
+      const loaded = await Promise.all(
+        missing.map(async (item) => {
+          try {
+            return await api.getMessage(item.accountId, item.folder, item.uid);
+          } catch {
+            return null; // 单封失败只影响该占位卡片，可点击重试
+          }
+        })
+      );
+      if (seq !== selectSeq.current) return;
+      setThreadFulls((s) => {
+        const next = { ...s, [key]: selectedFull };
+        for (const f of loaded) {
+          if (f) next[mailKey(f.meta)] = f;
+        }
+        return next;
+      });
+    } catch (e) {
+      if (seq === selectSeq.current) setListError(String(e));
+    }
+  }
+
+  // 长会话中被折叠的正文：点击占位卡片时按需加载
+  async function loadThreadFull(item: EmailMeta) {
+    const key = mailKey(item);
+    if (threadFullsRef.current[key]) return;
+    const seq = selectSeq.current;
+    try {
+      const full = await api.getMessage(item.accountId, item.folder, item.uid);
+      if (seq === selectSeq.current) setThreadFulls((s) => ({ ...s, [key]: full }));
     } catch (e) {
       if (seq === selectSeq.current) setListError(String(e));
     }
@@ -565,11 +622,8 @@ function MailApp() {
     setListError(null);
     setLoading(true);
     setSyncing(true);
-    try {
-      await refreshFolders(target.accountId).catch(() => {});
-      await api.syncMessages(target.accountId, targetFolder).catch((e) => {
-        console.warn("同步通知邮件失败，尝试从本地缓存打开", e);
-      });
+    // 本地缓存里定位目标邮件；命中则立即打开
+    const locate = async (): Promise<EmailMeta | undefined> => {
       const res = await api.listCached(target.accountId, targetFolder, 0, Math.max(loadedRef.current, PAGE));
       const metas = [...res.metas].sort((a, b) => b.timestamp - a.timestamp);
       loadedRef.current = metas.length;
@@ -577,11 +631,25 @@ function MailApp() {
       if (targetFolder === "INBOX") setInboxMetas(metas);
       setMessages(metas);
       retainSelection(metas);
+      return target.uid != null
+        ? metas.find((m) => m.uid === target.uid)
+        : metas.find((m) => target.messageId && m.messageId === target.messageId);
+    };
+    try {
+      // 本地缓存优先：点通知要立刻见到邮件，不能等网络。通知里的邮件绝大多数
+      // 已被 watcher/上次同步写进缓存；只有缓存真没有才阻塞式同步一次再找。
+      // 目录刷新和列表同步放后台补，慢网络/断网都不挡打开。
+      let meta = await locate();
+      if (!meta) {
+        await api.syncMessages(target.accountId, targetFolder).catch((e) => {
+          console.warn("同步通知邮件失败，尝试从本地缓存打开", e);
+        });
+        meta = await locate();
+      } else {
+        api.syncMessages(target.accountId, targetFolder).then(() => loadMessages()).catch(() => {});
+      }
+      refreshFolders(target.accountId).catch(() => {});
 
-      const meta =
-        target.uid != null
-          ? metas.find((m) => m.uid === target.uid)
-          : metas.find((m) => target.messageId && m.messageId === target.messageId);
       if (meta) {
         await selectMail(meta);
       } else if (target.uid != null) {
@@ -591,7 +659,7 @@ function MailApp() {
         const selectedFull = full.meta.unread ? { ...full, meta: { ...full.meta, unread: false } } : full;
         setSelected(selectedFull);
         setThread([selectedFull.meta]);
-        setThreadMails([selectedFull]);
+        setThreadFulls({ [mailKey(selectedFull.meta)]: selectedFull });
       } else {
         setListError("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。");
       }
@@ -1213,9 +1281,10 @@ function MailApp() {
               <MessageView
                 mail={selected}
                 thread={thread}
-                threadMails={threadMails}
+                threadFulls={threadFulls}
                 folders={folders}
                 onOpenThreadMail={selectMail}
+                onLoadThreadMail={loadThreadFull}
                 onReply={handleReply}
                 onReplyAll={handleReplyAll}
                 onForward={handleForward}

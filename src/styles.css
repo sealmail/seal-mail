@@ -535,6 +535,32 @@ input, textarea, select { font-family: inherit; }
   border-color: rgba(25, 126, 78, 0.42);
   box-shadow: 0 0 0 2px rgba(25, 126, 78, 0.1);
 }
+/* 长会话中正文未加载的占位卡片：点击按需加载 */
+.thread-card-stub {
+  cursor: pointer;
+  background: var(--bg-hover);
+}
+.thread-card-stub:hover {
+  border-color: var(--border-3);
+}
+.thread-card-stub .thread-card-head {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.thread-stub-preview {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mut-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thread-stub-load {
+  margin-top: 8px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+}
 .thread-card-head {
   display: flex;
   align-items: flex-start;
