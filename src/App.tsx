@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { addPluginListener } from "@tauri-apps/api/core";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
@@ -68,7 +68,6 @@ function useZoomShortcuts() {
   });
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--sealmail-zoom", String(zoom));
     (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
     localStorage.setItem("sealmail.zoom", String(zoom));
     window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
@@ -95,9 +94,15 @@ function useZoomShortcuts() {
 
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("sealmail-zoom-delta", onFrameShortcut as EventListener);
+    // macOS 原生菜单（显示 > 放大/缩小/实际大小）：切换 app 回来后 WKWebView 可能
+    // 丢失 first responder，页面收不到 keydown，菜单加速键不受此影响
+    const unlistenMenu = getCurrentWebviewWindow().listen<ZoomShortcut>("sealmail-menu-zoom", (e) => {
+      applyZoomShortcut(e.payload);
+    });
     return () => {
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("sealmail-zoom-delta", onFrameShortcut as EventListener);
+      void unlistenMenu.then((f) => f());
     };
   }, []);
 

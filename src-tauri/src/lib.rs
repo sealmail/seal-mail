@@ -776,6 +776,62 @@ async fn check_for_update() -> Result<updater::UpdateInfo, String> {
 // ───────────────────────── entry ─────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// macOS 专用：在默认菜单的 View 子菜单里插入 放大/缩小/实际大小（Cmd+= / Cmd+- / Cmd+0），
+/// 触发后发事件给当前聚焦窗口，由前端 useZoomShortcuts 统一应用缩放。
+#[cfg(target_os = "macos")]
+fn setup_zoom_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, SubmenuBuilder};
+    use tauri::Emitter;
+
+    let menu = Menu::default(app.handle())?;
+    let zoom_reset = MenuItemBuilder::with_id("zoom-reset", "实际大小")
+        .accelerator("Cmd+0")
+        .build(app)?;
+    let zoom_in = MenuItemBuilder::with_id("zoom-in", "放大")
+        .accelerator("Cmd+=")
+        .build(app)?;
+    let zoom_out = MenuItemBuilder::with_id("zoom-out", "缩小")
+        .accelerator("Cmd+-")
+        .build(app)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+
+    let existing_view = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(s) if s.text().map(|t| t == "View").unwrap_or(false) => Some(s),
+        _ => None,
+    });
+    match existing_view {
+        Some(view) => {
+            view.insert_items(&[&zoom_reset, &zoom_in, &zoom_out, &separator], 0)?;
+        }
+        None => {
+            let view = SubmenuBuilder::new(app, "显示")
+                .item(&zoom_reset)
+                .item(&zoom_in)
+                .item(&zoom_out)
+                .build()?;
+            menu.append(&view)?;
+        }
+    }
+    app.set_menu(menu)?;
+
+    app.on_menu_event(|app, event| {
+        let payload = match event.id().as_ref() {
+            "zoom-in" => serde_json::json!({ "kind": "step", "delta": 0.1 }),
+            "zoom-out" => serde_json::json!({ "kind": "step", "delta": -0.1 }),
+            "zoom-reset" => serde_json::json!({ "kind": "reset" }),
+            _ => return,
+        };
+        if let Some(win) = app
+            .webview_windows()
+            .into_values()
+            .find(|w| w.is_focused().unwrap_or(false))
+        {
+            let _ = win.emit_to(win.label(), "sealmail-menu-zoom", payload);
+        }
+    });
+    Ok(())
+}
+
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -809,6 +865,10 @@ pub fn run() {
             app.manage(AppState {
                 inner: std::sync::Mutex::new(data),
             });
+            // macOS：界面缩放挂到原生菜单加速键上。切换 app 回来后 WKWebView 可能
+            // 丢失 first responder（页面收不到 Cmd+/-），原生菜单不依赖 webview 焦点。
+            #[cfg(target_os = "macos")]
+            setup_zoom_menu(app)?;
             // 启动新邮件监听（IMAP IDLE / POP3 轮询）
             watcher::ensure_watchers(&app.handle().clone());
             watcher::debug_fire_test_notification(&app.handle().clone());

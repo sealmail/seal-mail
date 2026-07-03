@@ -86,7 +86,9 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
 
   const style = parsed.createElement("style");
   style.textContent = `
-    html { width: 100% !important; min-width: 0 !important; overflow-x: auto; }
+    /* overflow-y hidden：iframe 高度由父页面按内容精确设置，内部永远不该出现
+       纵向滚动条（否则缩放时会闪烁）；超宽邮件仍允许横向滚动 */
+    html { width: 100% !important; min-width: 0 !important; overflow-x: auto; overflow-y: hidden; }
     *, *::before, *::after { box-sizing: border-box; }
     body { margin: 0; width: 100% !important; min-width: 0 !important; overflow-x: auto; }
     body > :first-child { margin-top: 0 !important; }
@@ -119,11 +121,11 @@ function currentZoom() {
   return Number.isFinite(z) && z > 0 ? z : 1;
 }
 
+/* iframe 内容不继承父文档的 zoom，所以要在 iframe 里重放一次。
+   标准化 CSS zoom 下百分比宽度自动换算，不要再加 width: calc(100%/zoom) 补偿。 */
 function applyFrameZoom(d: Document, zoom: number) {
-  d.documentElement.style.setProperty("--sealmail-frame-zoom", String(zoom));
   if (!d.body) return;
   (d.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
-  d.body.style.setProperty("width", `calc(100% / ${zoom})`, "important");
 }
 
 function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
@@ -165,14 +167,16 @@ export function HtmlBody(p: Props) {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         frame.style.width = "100%";
-        const nextHeight = Math.max(
+        // 高度只用 iframe 内 body 自身坐标系（不含 zoom）的值：iframe 元素的样式
+        // 高度被外层 zoom 放大一次，iframe 内容被内层 zoom 放大一次，二者相同正好
+        // 抵消，任意缩放比例都精确贴合。documentElement.scrollHeight 是含 zoom 的
+        // 渲染像素，混进来会在缩放时算错高度、出现内部滚动条（实测探针结论）。
+        const contentCss = Math.max(
           120,
-          d.documentElement.scrollHeight,
           d.body?.scrollHeight ?? 0,
-          d.documentElement.offsetHeight,
           d.body?.offsetHeight ?? 0
         );
-        frame.style.height = `${nextHeight + 12}px`;
+        frame.style.height = `${contentCss + 12}px`;
       });
     };
 
@@ -248,11 +252,12 @@ export function HtmlBody(p: Props) {
   return (
     <div className="html-body-wrap">
       {blocked > 0 && !allowRemote && (
-        <div className="img-blocked-bar">
-          已阻止 {blocked} 处远程内容（远程图片可被用来追踪你是否打开了邮件）
-          <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setAllowRemote(true)}>
-            显示图片
-          </button>
+        <div
+          className="img-blocked-chip"
+          title={`已阻止 ${blocked} 处远程内容：远程图片可被用来追踪你是否打开了邮件，确认来源可信后再显示`}
+        >
+          已阻止远程图片
+          <button onClick={() => setAllowRemote(true)}>显示</button>
         </div>
       )}
       <iframe key={frameKey} ref={ref} className="html-body" sandbox="allow-same-origin" srcDoc={doc} onLoad={onLoad} title="邮件正文" />

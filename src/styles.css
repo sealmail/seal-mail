@@ -3,7 +3,6 @@
    地址/指纹/哈希一律 IBM Plex Mono，UI 用 IBM Plex Sans，印章字 IBM Plex Serif */
 
 :root {
-  --sealmail-zoom: 1;
   --bg: #fbfbf8;
   --bg-warm: #f6f4ef;
   --bg-side: #f4f6f2;
@@ -56,8 +55,10 @@ html {
   overflow: hidden;
 }
 body {
-  width: calc(100vw / var(--sealmail-zoom));
-  height: calc(100vh / var(--sealmail-zoom));
+  /* 标准化 CSS zoom（新 WebKit/Chromium）下百分比自动按 zoom 换算，
+     不要再写 calc(100vw / zoom) 补偿——那是旧引擎行为，现在会导致右侧/底部留白 */
+  width: 100%;
+  height: 100%;
   font-family: var(--sans);
   background: var(--bg);
   color: var(--ink-2);
@@ -117,7 +118,8 @@ input, textarea, select { font-family: inherit; }
 .brand-cn { font-family: var(--serif); font-size: 13px; color: var(--mut); }
 
 .search-wrap {
-  position: absolute; left: 50%; top: 50%; width: min(420px, calc(100vw - 520px));
+  /* 用 % 不用 vw：zoom 下 vw 不换算会失去上限作用（顶栏本身就是整窗宽） */
+  position: absolute; left: 50%; top: 50%; width: min(420px, calc(100% - 520px));
   min-width: 260px; transform: translate(-50%, -50%);
   display: flex; justify-content: center;
 }
@@ -636,16 +638,29 @@ input, textarea, select { font-family: inherit; }
 /* HTML 正文 */
 .body-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-bottom: 6px; }
 .body-note { font-size: 11px; color: var(--warn); }
-.html-body-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; overflow: hidden; }
+.html-body-wrap { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; overflow: hidden; }
 .msg-scroll > .html-body-wrap,
 .popout-body > .html-body-wrap {
   width: min(100%, 1120px);
 }
-.img-blocked-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  font-size: 11.5px; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-border);
-  border-radius: 9px; padding: 8px 12px;
+/* 远程内容拦截提示：悬浮在正文右上角的小胶囊，不占版面、不抢视线；详情放 title 提示 */
+.img-blocked-chip {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  display: flex; align-items: center; gap: 2px;
+  font-size: 11px; color: var(--mut);
+  background: rgba(251, 251, 248, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 999px; padding: 2px 4px 2px 11px;
+  box-shadow: 0 1px 4px rgba(21, 25, 22, 0.06);
+  opacity: 0.72; transition: opacity 0.15s ease;
 }
+.img-blocked-chip:hover { opacity: 1; }
+.img-blocked-chip button {
+  border: none; background: none; cursor: pointer;
+  color: var(--jade-deep); font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px;
+}
+.img-blocked-chip button:hover { background: var(--bg-hover); }
 .html-body { display: block; width: 100%; max-width: 100%; align-self: center; border: none; background: var(--bg); border-radius: 6px; min-height: 120px; color-scheme: light; }
 
 /* 风险横幅 */

@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-07-03（v19：通知点击根治 + UI 响应优化 + 持久化日志）
+> 最后更新：2026-07-03（v20：界面缩放三连修 + 原生缩放菜单 + 拦截提示弱化）
 
 ## 项目定位
 
@@ -267,6 +267,44 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
       8 秒后走真实链路发指向已缓存邮件的测试通知（该模式下绕过窗口聚焦检查），
       真机不用等真实新邮件即可验证「点通知→跳转邮件」。account_id 与 uid 可从
       日志或 `sealmail-cli list` 获取。
+
+### v20（界面缩放三连修 + 原生缩放菜单 + 拦截提示弱化 / v0.1.35）
+
+**界面缩放布局全面失效（右侧留白 / 横向滚动 / 内部滚动条闪烁）**：
+- [x] 根因（Safari 探针实测，非推断）：新版 WebKit 实现了标准化 CSS zoom——
+      **百分比宽度自动按 zoom 换算**（100% 永远贴合父级），但 **vw/vh 不换算**
+      （zoom 1.4 时 100vw 渲染成 1.4 倍窗宽直接溢出）。旧代码按旧引擎行为写的
+      `width: calc(100% / zoom)` / `calc(100vw / zoom)` 补偿全部反向破坏：
+      放大→正文缩成 1/zoom（右侧留白），缩小→撑成 1/zoom 倍宽（横向滚动），
+      高度公式随之失配（内部纵向滚动条反复出现→闪烁）。
+- [x] 修复：删掉全部 zoom 宽度补偿（外层 body 与 iframe 内 body 都用 100%）；
+      `.search-wrap` 的 100vw 上限改 100%。
+- [x] iframe 高度公式改为**坐标系抵消**：只用 iframe 内 body 自身坐标系（不含
+      zoom）的 scrollHeight/offsetHeight 直接做样式高度——iframe 元素高度被外层
+      zoom 放大一次、内容被内层 zoom 放大一次，因子相同正好抵消，任意缩放精确贴合，
+      无需除法。**切记 documentElement.scrollHeight 是含 zoom 的渲染像素，不能混用**。
+      另给 iframe 根元素加 `overflow-y: hidden`（高度由父页面精确设置，内部
+      永远不该出现纵向滚动条），横向仍允许滚动兜底超宽邮件。
+- [x] 探针方法：`zoom` 语义在文档里查不到实现细节，写独立 HTML 探针在 Safari
+      （同系统 WebKit）里实测 gBCR/scrollHeight/clientWidth 再定公式；
+      以后遇到引擎行为分歧照此办理，别靠猜。
+
+**缩放快捷键在 app 切换后失效**：
+- [x] 根因：WKWebView 在应用失焦再激活后可能不恢复 first responder，页面收不到
+      keydown。修复：macOS 在默认菜单 View 里插入 实际大小/放大/缩小
+      （Cmd+0/=/-）原生菜单项（lib.rs `setup_zoom_menu`），on_menu_event 发
+      `sealmail-menu-zoom` 事件给**当前聚焦窗口**，前端 useZoomShortcuts 统一应用。
+      原生加速键不依赖 webview 焦点，弹窗/主窗都有效；keydown 路径保留给 Windows。
+
+**远程内容拦截提示弱化**：
+- [x] 黄色整行横幅（占正文上方视线焦点）改为悬浮在正文右上角的半透明小胶囊
+      `.img-blocked-chip`（「已阻止远程图片 · 显示」，hover 提高不透明度），
+      追踪原理说明移进 title 提示，不再占版面。
+
+**教训（勿重蹈）**：
+- `cargo build` 出来的 debug 二进制加载的是**编译时嵌入的 dist/**（不连 vite），
+  真机验证前端改动必须用 `bunx tauri dev`（或先 `bun run build` 刷新 dist 再重编）；
+  否则测的是旧代码还浑然不觉——本轮就踩了，靠界面上的旧文案才发现。
 
 **GitHub Secrets（用户手动配置，密钥文件在本机 ~/.tauri/）**：
 - `TAURI_UPDATER_PUBKEY` = ~/.tauri/sealmail-updater.key.pub 的内容（公钥，构建时注入 tauri.conf）
