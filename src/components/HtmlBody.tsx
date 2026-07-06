@@ -116,18 +116,6 @@ interface Props {
 
 type ZoomShortcut = { kind: "step"; delta: number } | { kind: "reset" };
 
-function currentZoom() {
-  const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
-  return Number.isFinite(z) && z > 0 ? z : 1;
-}
-
-/* iframe 内容不继承父文档的 zoom，所以要在 iframe 里重放一次。
-   标准化 CSS zoom 下百分比宽度自动换算，不要再加 width: calc(100%/zoom) 补偿。 */
-function applyFrameZoom(d: Document, zoom: number) {
-  if (!d.body) return;
-  (d.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
-}
-
 function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   const meta = e.metaKey || e.ctrlKey;
   if (!meta || e.altKey) return null;
@@ -167,10 +155,7 @@ export function HtmlBody(p: Props) {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         frame.style.width = "100%";
-        // 高度只用 iframe 内 body 自身坐标系（不含 zoom）的值：iframe 元素的样式
-        // 高度被外层 zoom 放大一次，iframe 内容被内层 zoom 放大一次，二者相同正好
-        // 抵消，任意缩放比例都精确贴合。documentElement.scrollHeight 是含 zoom 的
-        // 渲染像素，混进来会在缩放时算错高度、出现内部滚动条（实测探针结论）。
+        // 缩放走原生 pageZoom（视口级），iframe 内外同一坐标系，直接用 CSS px 量高即可
         const contentCss = Math.max(
           120,
           d.body?.scrollHeight ?? 0,
@@ -180,14 +165,10 @@ export function HtmlBody(p: Props) {
       });
     };
 
-    applyFrameZoom(d, currentZoom());
     measure();
     window.addEventListener("resize", measure);
-    const onZoomChange = (ev: Event) => {
-      const zoom = (ev as CustomEvent<number>).detail;
-      applyFrameZoom(d, Number.isFinite(zoom) && zoom > 0 ? zoom : currentZoom());
-      measure();
-    };
+    // pageZoom 改变布局视口宽度，文本重排后高度变化，重新量一次
+    const onZoomChange = () => measure();
     window.addEventListener("sealmail-zoom-change", onZoomChange);
     d.fonts?.ready.then(measure).catch(() => undefined);
     d.querySelectorAll("img").forEach((img) => {

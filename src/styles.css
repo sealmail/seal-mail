@@ -55,8 +55,9 @@ html {
   overflow: hidden;
 }
 body {
-  /* 标准化 CSS zoom（新 WebKit/Chromium）下百分比自动按 zoom 换算，
-     不要再写 calc(100vw / zoom) 补偿——那是旧引擎行为，现在会导致右侧/底部留白 */
+  /* 缩放走原生 pageZoom（webview.setZoom），不要在这里用 CSS zoom：
+     Tauri WKWebView 是旧版 CSS zoom 语义（百分比不换算，app 会溢出窗口），
+     与 Safari（标准化语义）行为不同，探针测不出来 */
   width: 100%;
   height: 100%;
   font-family: var(--sans);

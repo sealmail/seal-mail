@@ -68,7 +68,14 @@ function useZoomShortcuts() {
   });
 
   useEffect(() => {
-    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+    // 原生 pageZoom（WKWebView setPageZoom / WebView2 ZoomFactor）：视口级缩放，
+    // 百分比布局和 iframe 内容随视口一起缩放，无需任何 CSS zoom 布局补偿。
+    // 不要改回 document.body.style.zoom——Tauri 的 WKWebView 是旧版 CSS zoom
+    // 语义（百分比不按 zoom 换算），整个 app 会溢出窗口右缘和底缘；Safari 探针
+    // 是新版标准化语义，测不出这个问题。
+    getCurrentWebviewWindow()
+      .setZoom(zoom)
+      .catch((err) => console.error("setZoom 失败（检查 core:webview:allow-set-webview-zoom 权限）", err));
     localStorage.setItem("sealmail.zoom", String(zoom));
     window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
   }, [zoom]);
@@ -218,7 +225,7 @@ function MailApp() {
   const [categoryMode, setCategoryMode] = useState<MailCategory>("all");
   const [total, setTotal] = useState(0);
   const [syncing, setSyncing] = useState(false);
-  // 界面缩放（Cmd+/-/0），WebKit 支持非标准 zoom 属性
+  // 界面缩放（Cmd+/-/0），走原生 pageZoom
   useZoomShortcuts();
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const n = Number(localStorage.getItem("sealmail.sidebarWidth") ?? 228);
