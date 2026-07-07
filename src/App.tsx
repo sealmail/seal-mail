@@ -548,9 +548,23 @@ function MailApp() {
           if (seq !== selectSeq.current) return;
         }
       }
-      const normalizedThread = threadMetas
+      const sortedThread = threadMetas
         .map((item) => (mailKey(item) === key && shouldMarkRead ? { ...item, unread: false } : item))
         .sort((a, b) => a.timestamp - b.timestamp);
+      // 列表行按会话聚合未读点,打开会话必须整条标已读:只标被点击的最新一封,
+      // 会话里更早的未读邮件会让未读点永远清不掉(且再次点击时最新一封已读,不再触发标记)
+      let normalizedThread = sortedThread;
+      if (opts.markRead !== false) {
+        const unreadInThread = sortedThread.filter((x) => x.unread);
+        if (unreadInThread.length > 0) {
+          api.markRead(m.accountId, m.folder, unreadInThread.map((x) => x.uid)).catch(() => {});
+          const unreadKeys = new Set(unreadInThread.map(mailKey));
+          const clearUnread = (ms: EmailMeta[]) => ms.map((x) => (unreadKeys.has(mailKey(x)) ? { ...x, unread: false } : x));
+          setMessages(clearUnread);
+          setInboxMetas(clearUnread);
+          normalizedThread = clearUnread(sortedThread);
+        }
+      }
       setThread(normalizedThread);
 
       // 只急加载一小撮正文：选中封 + 首封 + 末尾三封；其余占位卡片点击再取
