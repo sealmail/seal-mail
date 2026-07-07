@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { ask as askDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { AppIcon } from "./AppIcon";
 import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
@@ -120,7 +120,8 @@ export function MessageView(p: Props) {
 
   async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
-    if (warning && !window.confirm(warning)) return;
+    // WKWebView 里 window.confirm 是 no-op（静默返回 false），必须走 dialog 插件
+    if (warning && !(await askDialog(warning, { title: "危险附件", kind: "warning", okLabel: "继续保存", cancelLabel: "取消" }))) return;
     const path = await saveFileDialog({ defaultPath: name, title: "保存附件" });
     if (!path) return;
     const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;

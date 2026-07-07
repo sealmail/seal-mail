@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 interface OpenExternalOptions {
   label?: string | null;
@@ -29,20 +30,25 @@ function domainLikeText(text: string | null | undefined): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-function shouldOpenExternal(url: string, label?: string | null): boolean {
+/**
+ * 正常链接直接交系统浏览器打开；只有链接文字看着是 A 域名、实际指向 B 域名
+ * （典型钓鱼手法）时才弹确认。注意 WKWebView 里 window.confirm 是 no-op
+ * （静默返回 false），确认框必须走 tauri-plugin-dialog。
+ */
+async function shouldOpenExternal(url: string, label?: string | null): Promise<boolean> {
   const host = hostOf(url);
   const shownDomain = domainLikeText(label);
   const mismatch = shownDomain && host && shownDomain !== host && !host.endsWith(`.${shownDomain}`);
-  const lines = [`即将用系统默认浏览器打开：`, url];
-  if (mismatch) {
-    lines.push("", `注意：链接文字看起来是 ${shownDomain}，实际打开的是 ${host}。`);
-  }
-  return window.confirm(lines.join("\n"));
+  if (!mismatch) return true;
+  return ask(
+    `链接文字看起来是 ${shownDomain}，实际指向的是 ${host}。\n\n${url}\n\n仍要用系统浏览器打开吗？`,
+    { title: "链接地址与显示不符", kind: "warning", okLabel: "打开", cancelLabel: "取消" }
+  );
 }
 
 export async function openExternalUrl(raw: string | null | undefined, options: OpenExternalOptions = {}) {
   const url = normalizeExternalUrl(raw);
   if (!url) return;
-  if (options.confirm !== false && !shouldOpenExternal(url, options.label)) return;
+  if (options.confirm !== false && !(await shouldOpenExternal(url, options.label))) return;
   await invoke("open_external_url", { url });
 }

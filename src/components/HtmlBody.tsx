@@ -67,6 +67,12 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
       if (after !== before) blocked++;
       el.textContent = after;
     }
+    if (el.tagName === "A" || el.tagName === "AREA") {
+      // 沙箱未开 allow-popups：_blank 的默认动作会被引擎直接拦掉，
+      // 即使父页面点击监听意外缺失，也绝不会在 iframe 内原地跳转
+      el.setAttribute("target", "_blank");
+      el.setAttribute("rel", "noreferrer noopener");
+    }
     if (el.tagName === "IMG") {
       const src = el.getAttribute("src") ?? "";
       if (isRemoteUrl(src)) {
@@ -125,10 +131,10 @@ function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   return null;
 }
 
-function closestAnchor(target: EventTarget | null): HTMLAnchorElement | null {
+function closestAnchor(target: EventTarget | null): Element | null {
   if (!(target instanceof Node)) return null;
   const el = target instanceof Element ? target : target.parentElement;
-  return el?.closest?.("a") ?? null;
+  return el?.closest?.("a,area") ?? null;
 }
 
 /** 沙箱 iframe 渲染（无脚本执行；同源仅用于父页面接管链接点击和自适应高度） */
@@ -227,6 +233,14 @@ export function HtmlBody(p: Props) {
       d.removeEventListener("keydown", onKeydown, true);
     };
   }
+
+  // srcDoc 可能在 React 绑定 load 事件前就完成加载（竞态），此时 onLoad 不会触发,
+  // 点击监听挂不上 → 链接走默认导航。挂载后若文档已 complete 则主动补一次绑定。
+  useEffect(() => {
+    const d = ref.current?.contentDocument;
+    if (d?.readyState === "complete" && d.body) onLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameKey]);
 
   useEffect(() => () => cleanupRef.current?.(), []);
 

@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-07-03（v20：界面缩放三连修 + 原生缩放菜单 + 拦截提示弱化）
+> 最后更新：2026-07-07（v21：链接一律走系统浏览器 + WKWebView confirm 失效根治）
 
 ## 项目定位
 
@@ -311,6 +311,24 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - `TAURI_SIGNING_PRIVATE_KEY` = ~/.tauri/sealmail-updater.key 的内容（私钥，签 updater 工件）
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = 空字符串（生成时未设密码）
 注意：发版时 package.json + tauri.conf.json + Cargo.toml 三处 version 要一起改，tag 用 v<version>。
+
+### v21（链接一律走系统浏览器 + WKWebView confirm 失效根治 / v0.1.37）
+
+**点邮件内链接在邮箱内跳转（应开系统浏览器）**：
+- [x] 根因一：**wry 的 WKWebView 里 `window.confirm` 是 no-op（不弹窗、静默返回
+      false）**，url.ts 里"是否用系统浏览器打开"的确认从未真正工作过，整条
+      openExternalUrl 链路被它挡死。改用 `@tauri-apps/plugin-dialog` 的 `ask()`；
+      **以后一切浏览器原生对话框（alert/confirm/prompt）都必须走 dialog 插件**。
+- [x] 策略调整：正常链接直接开系统浏览器不弹窗；仅链接文字域名与实际指向不符
+      （钓鱼手法）时弹 ask 警告。
+- [x] 根因二兜底：srcDoc iframe 的 load 可能先于 React 绑定完成（竞态），点击监听
+      挂不上时链接走默认导航（iframe 内原地跳转）。三层防御：
+      ① 消毒时给所有 `<a>`/`<area>` 强制 `target="_blank" rel="noreferrer noopener"`
+      ——沙箱未开 allow-popups，默认动作被引擎拦成无操作，物理杜绝原地跳转；
+      ② 挂载后若文档已 complete 主动补一次 onLoad 绑定；
+      ③ 点击拦截扩展到 `<area>` 图片热区。
+- [x] 同根因连带修复：MessageView 危险附件警告的 `window.confirm` 也失效
+      （危险附件永远无法下载），一并换 dialog `ask()`。
 
 ## 待办 / 路线图（2026-06-11 产品 review 后重排，定位「小而美」）
 
