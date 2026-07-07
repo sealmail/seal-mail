@@ -61,7 +61,10 @@ function zoomShortcutForKey(e: KeyboardEvent): ZoomShortcut | null {
   return null;
 }
 
-function useZoomShortcuts() {
+function useZoomShortcuts(opts: { persist?: boolean } = {}) {
+  // persist=false（邮件子窗口）：缩放只作用于本窗口且不落盘——初始值继承主窗口
+  // 设置,但快捷键调整是临时的,关窗即弃,不能反向污染 sealmail.zoom
+  const persist = opts.persist !== false;
   const [zoom, setZoom] = useState(() => {
     const z = parseFloat(localStorage.getItem("sealmail.zoom") ?? "1");
     return Number.isFinite(z) && z >= MIN_ZOOM && z <= MAX_ZOOM ? z : 1;
@@ -76,9 +79,9 @@ function useZoomShortcuts() {
     getCurrentWebviewWindow()
       .setZoom(zoom)
       .catch((err) => console.error("setZoom 失败（检查 core:webview:allow-set-webview-zoom 权限）", err));
-    localStorage.setItem("sealmail.zoom", String(zoom));
+    if (persist) localStorage.setItem("sealmail.zoom", String(zoom));
     window.dispatchEvent(new CustomEvent("sealmail-zoom-change", { detail: zoom }));
-  }, [zoom]);
+  }, [zoom, persist]);
 
   useEffect(() => {
     function applyZoomShortcut(shortcut: ZoomShortcut) {
@@ -148,7 +151,7 @@ function PaneResizer({
 }
 
 function PopoutApp({ storageKey }: { storageKey: string }) {
-  useZoomShortcuts();
+  useZoomShortcuts({ persist: false });
   const [mail] = useState<EmailFull | null>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
