@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "sealmail-landing",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./public",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "seal-mail.nannan.app", "custom_domain": true }
+  ]
+}

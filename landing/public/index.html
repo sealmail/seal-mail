@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SealMail 信印 — 可信邮件客户端 · A Trusted Mail Client</title>
+<meta name="description" content="SealMail 信印：通用桌面邮件客户端，特色是邮件签名与可信度验证。IMAP / POP3 / SMTP / Exchange / Gmail，Ed25519 与 Ledger 硬件签名，本地验证。macOS 与 Windows 下载。">
+<meta property="og:title" content="SealMail 信印 — Mail you can trust">
+<meta property="og:description" content="A general-purpose desktop email client that also proves an email can be trusted. macOS & Windows.">
+<meta property="og:image" content="https://seal-mail.nannan.app/icon.png">
+<meta property="og:url" content="https://seal-mail.nannan.app/">
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f6f2e9;
+  --paper-deep:#efe9db;
+  --card:#fffdf7;
+  --ink:#1d2724;
+  --ink-soft:#4c5a54;
+  --ink-faint:#78857f;
+  --teal:#10715a;
+  --teal-deep:#0a4d3e;
+  --teal-wash:#e3ede8;
+  --gold:#b3861f;
+  --gold-wash:#f4ead1;
+  --red:#b0402c;
+  --red-wash:#f6e3dd;
+  --line:#ddd5c4;
+  --serif:"Fraunces","Songti SC","STSong",serif;
+  --sans:"IBM Plex Sans","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:"IBM Plex Mono","Menlo",monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--sans);
+  color:var(--ink);
+  background:var(--paper);
+  line-height:1.65;
+  font-size:16px;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
+}
+::selection{background:var(--teal);color:#fff}
+a{color:var(--teal);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1120px;margin:0 auto;padding:0 28px;position:relative;z-index:1}
+
+/* ---------- header ---------- */
+header{
+  position:sticky;top:0;z-index:50;
+  background:rgba(246,242,233,.86);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);
+}
+.nav{display:flex;align-items:center;gap:28px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:600;font-size:19px;color:var(--ink)}
+.brand img{width:30px;height:30px;border-radius:7px}
+.brand:hover{text-decoration:none}
+.nav-links{display:flex;gap:24px;margin-left:auto;font-size:14.5px}
+.nav-links a{color:var(--ink-soft)}
+.nav-links a:hover{color:var(--teal);text-decoration:none}
+.lang-toggle{
+  border:1px solid var(--line);background:var(--card);border-radius:99px;
+  font:inherit;font-size:13px;padding:5px 14px;cursor:pointer;color:var(--ink-soft);
+}
+.lang-toggle:hover{border-color:var(--teal);color:var(--teal)}
+.gh-link{display:flex;align-items:center;gap:6px}
+.gh-link svg{width:17px;height:17px;fill:currentColor}
+
+/* ---------- hero ---------- */
+.hero{padding:88px 0 40px;display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--teal-deep);font-weight:600;margin-bottom:22px;
+  border:1px solid var(--teal);border-radius:99px;padding:5px 14px;background:var(--teal-wash);
+}
+.eyebrow .dot{width:6px;height:6px;border-radius:99px;background:var(--teal)}
+h1{
+  font-family:var(--serif);font-weight:600;font-size:clamp(38px,5vw,58px);
+  line-height:1.12;letter-spacing:-.01em;margin-bottom:22px;
+}
+h1 em{font-style:italic;color:var(--teal-deep)}
+.hero-sub{font-size:18px;color:var(--ink-soft);max-width:32em;margin-bottom:34px}
+.cta-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.btn{
+  display:inline-flex;align-items:center;gap:9px;
+  font:inherit;font-size:15.5px;font-weight:600;cursor:pointer;
+  padding:13px 26px;border-radius:12px;border:1.5px solid transparent;
+  transition:transform .15s ease, box-shadow .15s ease;
+}
+.btn svg{width:18px;height:18px;fill:currentColor}
+.btn-primary{background:var(--teal-deep);color:#fdfbf5;box-shadow:0 8px 24px -8px rgba(10,77,62,.45)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 14px 30px -10px rgba(10,77,62,.5);text-decoration:none}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn-ghost:hover{border-color:var(--teal);color:var(--teal);text-decoration:none}
+.hero-meta{margin-top:18px;font-size:13.5px;color:var(--ink-faint)}
+.hero-meta code{font-family:var(--mono);font-size:12.5px}
+
+/* ---------- app mock ---------- */
+.mock{
+  background:var(--card);border:1px solid var(--line);border-radius:16px;
+  box-shadow:0 30px 60px -30px rgba(29,39,36,.35), 0 4px 14px -6px rgba(29,39,36,.12);
+  overflow:hidden;font-size:11px;transform:rotate(.6deg);
+}
+.mock-bar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--paper-deep)}
+.mock-bar i{width:10px;height:10px;border-radius:99px;background:#d6cdb9}
+.mock-bar i:first-child{background:#e2a79b}
+.mock-bar span{margin-left:8px;font-family:var(--serif);font-size:11px;color:var(--ink-faint)}
+.mock-body{display:grid;grid-template-columns:150px 1fr 132px;min-height:330px}
+.mock-list{border-right:1px solid var(--line);padding:10px}
+.mock-item{padding:8px 9px;border-radius:8px;margin-bottom:4px;display:flex;gap:7px;align-items:flex-start}
+.mock-item.active{background:var(--teal-wash)}
+.mock-item .seal{flex-shrink:0;width:13px;height:13px;border-radius:99px;margin-top:2px}
+.seal-green{background:radial-gradient(circle at 35% 30%,#2a9c7f,#0a4d3e);box-shadow:0 0 0 2px rgba(16,113,90,.2)}
+.seal-gold{background:radial-gradient(circle at 35% 30%,#dcb04a,#96690f);box-shadow:0 0 0 2px rgba(179,134,31,.22)}
+.seal-empty{background:transparent;border:1.5px dashed #b9b1a0}
+.seal-red{background:radial-gradient(circle at 35% 30%,#d0654c,#8e2f1d);box-shadow:0 0 0 2px rgba(176,64,44,.22)}
+.seal-red::after{content:"";display:block;width:1.5px;height:9px;background:var(--card);margin:2px auto 0;transform:rotate(24deg)}
+.mock-item b{display:block;font-size:10px;font-weight:600;line-height:1.3}
+.mock-item small{font-size:9px;color:var(--ink-faint);line-height:1.3;display:block}
+.mock-read{padding:16px 18px}
+.mock-read h4{font-family:var(--serif);font-size:15px;margin-bottom:2px}
+.mock-read .from{font-size:10px;color:var(--ink-faint);margin-bottom:12px}
+.mock-read .from b{color:var(--teal-deep)}
+.mock-line{height:7px;border-radius:4px;background:var(--paper-deep);margin-bottom:7px}
+.mock-line.w80{width:80%}.mock-line.w95{width:95%}.mock-line.w60{width:60%}.mock-line.w90{width:90%}.mock-line.w70{width:70%}
+.mock-sig{margin-top:14px;padding-top:10px;border-top:1px dashed var(--line);font-family:var(--mono);font-size:8.5px;color:var(--ink-faint);line-height:1.6}
+.mock-rail{border-left:1px solid var(--line);background:#f2f6f3;padding:14px 12px;text-align:center}
+.mock-rail .big-seal{
+  width:52px;height:52px;border-radius:99px;margin:6px auto 10px;position:relative;
+  background:radial-gradient(circle at 34% 28%,#2a9c7f 0%,#10715a 45%,#0a4d3e 100%);
+  box-shadow:0 6px 14px -4px rgba(10,77,62,.5), inset 0 -3px 6px rgba(0,0,0,.25), inset 0 2px 4px rgba(255,255,255,.3);
+}
+.mock-rail .big-seal::after{
+  content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#eafaf3;font-size:22px;font-weight:700;
+}
+.mock-rail h5{font-size:10.5px;color:var(--teal-deep);margin-bottom:2px}
+.mock-rail p{font-size:8.5px;color:var(--ink-faint);margin-bottom:10px}
+.mock-check{display:flex;gap:5px;align-items:center;font-size:8.5px;color:var(--ink-soft);text-align:left;padding:4px 5px;background:var(--card);border-radius:6px;margin-bottom:4px;border:1px solid #e4ded0}
+.mock-check i{color:var(--teal);font-style:normal;font-size:9px}
+.mock-fp{margin-top:8px;font-family:var(--mono);font-size:7.5px;color:var(--ink-faint);word-break:break-all;line-height:1.5}
+
+/* ---------- seal states band ---------- */
+.states{padding:64px 0 8px}
+.states-strip{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;
+}
+.state{background:var(--card);padding:26px 20px 22px;text-align:center}
+.state .seal{display:block;width:34px;height:34px;border-radius:99px;margin:0 auto 14px}
+.state .seal.seal-red::after{width:2px;height:22px;margin-top:5px}
+.state h3{font-family:var(--serif);font-size:16.5px;font-weight:600;margin-bottom:5px}
+.state p{font-size:12.5px;color:var(--ink-faint);line-height:1.5}
+.state.crack h3,.state.forge h3{color:var(--red)}
+.state.gold h3{color:var(--gold)}
+.state.green h3{color:var(--teal-deep)}
+
+/* ---------- sections ---------- */
+section{padding:72px 0}
+.sec-head{max-width:640px;margin-bottom:44px}
+.sec-eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--teal);font-weight:600;margin-bottom:12px}
+h2{font-family:var(--serif);font-weight:600;font-size:clamp(28px,3.4vw,38px);line-height:1.2;margin-bottom:14px}
+.sec-head p{color:var(--ink-soft);font-size:16.5px}
+
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.feat{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 24px;
+  transition:transform .18s ease, box-shadow .18s ease;
+}
+.feat:hover{transform:translateY(-3px);box-shadow:0 16px 32px -18px rgba(29,39,36,.25)}
+.feat .ico{
+  width:38px;height:38px;border-radius:10px;background:var(--teal-wash);
+  display:flex;align-items:center;justify-content:center;margin-bottom:16px;
+}
+.feat .ico svg{width:19px;height:19px;stroke:var(--teal-deep);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.feat h3{font-family:var(--serif);font-size:18px;font-weight:600;margin-bottom:8px}
+.feat p{font-size:14px;color:var(--ink-soft);line-height:1.6}
+
+/* ---------- how it works ---------- */
+.how{background:var(--teal-deep);color:#e9f2ed;border-radius:24px;padding:64px 56px;margin:0 0 8px}
+.how .sec-eyebrow{color:#8fc7b3}
+.how h2{color:#fdfbf5}
+.how .sec-head p{color:#b8d5c9}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:36px;margin-top:8px}
+.step .num{
+  font-family:var(--serif);font-style:italic;font-size:44px;color:#5da88e;line-height:1;margin-bottom:14px;
+}
+.step h3{font-family:var(--serif);font-size:19px;font-weight:600;color:#fdfbf5;margin-bottom:9px}
+.step p{font-size:14px;color:#b8d5c9;line-height:1.65}
+.step code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.1);padding:1px 6px;border-radius:5px;color:#cfe8dc}
+
+/* ---------- download ---------- */
+.dl-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.dl-card{
+  background:var(--card);border:1px solid var(--line);border-radius:16px;padding:30px 26px;
+  display:flex;flex-direction:column;align-items:flex-start;
+}
+.dl-card svg.os{width:30px;height:30px;fill:var(--ink);margin-bottom:16px}
+.dl-card h3{font-family:var(--serif);font-size:19px;font-weight:600;margin-bottom:3px}
+.dl-card .arch{font-size:13px;color:var(--ink-faint);margin-bottom:20px}
+.dl-card .btn{margin-top:auto;width:100%;justify-content:center;font-size:14.5px;padding:11px 18px}
+.dl-note{margin-top:22px;font-size:13.5px;color:var(--ink-faint)}
+.dl-note a{font-weight:500}
+.ver-badge{font-family:var(--mono);font-size:12px;color:var(--teal-deep);background:var(--teal-wash);border-radius:99px;padding:2px 10px;margin-left:10px;vertical-align:2px}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--line);padding:36px 0 44px;font-size:13.5px;color:var(--ink-faint)}
+.foot{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.foot .brand{font-size:15px}
+.foot .brand img{width:22px;height:22px}
+.foot-links{margin-left:auto;display:flex;gap:20px}
+.foot-links a{color:var(--ink-faint)}
+.foot-links a:hover{color:var(--teal)}
+
+/* ---------- reveal ---------- */
+@media (prefers-reduced-motion:no-preference){
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+  .hero>div{animation:rise .7s ease both}
+  .hero .mock-wrap{animation-delay:.15s}
+  @keyframes rise{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+}
+
+@media (max-width:920px){
+  .hero{grid-template-columns:1fr;padding-top:56px}
+  .states-strip{grid-template-columns:1fr 1fr;border-radius:14px}
+  .state:last-child{grid-column:1/-1}
+  .feat-grid,.dl-cards,.steps{grid-template-columns:1fr}
+  .how{padding:44px 28px}
+  .nav-links a:not(.gh-link){display:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#"><img src="/icon.png" alt="SealMail icon"><span data-i18n="brand">SealMail 信印</span></a>
+    <nav class="nav-links">
+      <a href="#features" data-i18n="nav_features">功能</a>
+      <a href="#trust" data-i18n="nav_trust">信任层</a>
+      <a href="#download" data-i18n="nav_download">下载</a>
+      <a class="gh-link" href="https://github.com/sealmail/seal-mail" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </nav>
+    <button class="lang-toggle" id="langToggle">English</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div>
+      <span class="eyebrow"><span class="dot"></span><span data-i18n="eyebrow">开源 · macOS &amp; Windows</span></span>
+      <h1 data-i18n-html="h1">收发之外，<br>还能<em>证明可信</em>的邮件客户端。</h1>
+      <p class="hero-sub" data-i18n="hero_sub">SealMail 信印是一个通用桌面邮件客户端：IMAP / POP3 / SMTP、Exchange、Gmail、iCloud 全都支持。特色在信任层——发送时用 Ed25519 或 Ledger 硬件密钥盖上「火漆封印」，接收时本地验证发件人身份与内容完整性。</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" id="ctaPrimary" href="https://github.com/sealmail/seal-mail/releases/latest">
+          <svg viewBox="0 0 24 24"><path d="M12 3v10.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4L10 13.2V3h2zM5 19h14v2H5v-2z"/></svg>
+          <span data-i18n="cta_download">下载 SealMail</span>
+        </a>
+        <a class="btn btn-ghost" href="#download" data-i18n="cta_all">全部安装包</a>
+      </div>
+      <p class="hero-meta"><span data-i18n="hero_meta">已签名并通过 Apple 公证 · 内置自动更新 · </span><span id="verLine"><code>v—</code></span></p>
+    </div>
+
+    <div class="mock-wrap">
+      <!-- stylized app mock -->
+      <div class="mock" aria-hidden="true">
+        <div class="mock-bar"><i></i><i></i><i></i><span>SealMail — Inbox</span></div>
+        <div class="mock-body">
+          <div class="mock-list">
+            <div class="mock-item active"><span class="seal seal-green"></span><span><b>Wei Chen</b><small data-i18n="m1">Q3 合同已确认，请查收</small></span></div>
+            <div class="mock-item"><span class="seal seal-gold"></span><span><b>Anna Li</b><small data-i18n="m2">设计稿终版</small></span></div>
+            <div class="mock-item"><span class="seal seal-empty"></span><span><b>Newsletter</b><small data-i18n="m3">本周精选</small></span></div>
+            <div class="mock-item"><span class="seal seal-red"></span><span><b>"Wei Chen"</b><small data-i18n="m4">紧急：请立即付款</small></span></div>
+          </div>
+          <div class="mock-read">
+            <h4 data-i18n="mr_subject">Q3 合同已确认，请查收</h4>
+            <p class="from"><b>Wei Chen</b> &lt;wei@partner.co&gt;</p>
+            <div class="mock-line w95"></div>
+            <div class="mock-line w90"></div>
+            <div class="mock-line w80"></div>
+            <div class="mock-line w60"></div>
+            <div class="mock-line w90"></div>
+            <div class="mock-line w70"></div>
+            <div class="mock-sig">--<br>Sealed with SealMail · fp 9F2A…C41E</div>
+          </div>
+          <div class="mock-rail">
+            <div class="big-seal"></div>
+            <h5 data-i18n="rail_state">完整封印 · 已验证本人</h5>
+            <p data-i18n="rail_sub">签名有效，指纹一致</p>
+            <div class="mock-check"><i>✓</i><span data-i18n="rc1">签名验证通过</span></div>
+            <div class="mock-check"><i>✓</i><span data-i18n="rc2">正文哈希一致</span></div>
+            <div class="mock-check"><i>✓</i><span data-i18n="rc3">指纹匹配可信记录</span></div>
+            <div class="mock-fp">ed25519 9F2A 71D3 08BB C41E</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SEAL STATES -->
+  <div class="states reveal">
+    <div class="states-strip">
+      <div class="state green"><span class="seal seal-green"></span><h3 data-i18n="s1t">完整封印</h3><p data-i18n="s1p">签名有效，指纹与你的可信记录一致——确认是本人。</p></div>
+      <div class="state gold"><span class="seal seal-gold"></span><h3 data-i18n="s2t">金色封印</h3><p data-i18n="s2p">签名有效但尚未列入可信，一键加入可信联系人。</p></div>
+      <div class="state"><span class="seal seal-empty"></span><h3 data-i18n="s3t">空印环</h3><p data-i18n="s3p">未盖印的普通邮件，身份未知。</p></div>
+      <div class="state crack"><span class="seal seal-red"></span><h3 data-i18n="s4t">裂开的封印</h3><p data-i18n="s4p">正文哈希与签名不符——内容在途中被改动。</p></div>
+      <div class="state forge"><span class="seal seal-red"></span><h3 data-i18n="s5t">伪造封印</h3><p data-i18n="s5p">显示名相同但密钥或域名不符——有人在冒充你的联系人。</p></div>
+    </div>
+  </div>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <div class="sec-head reveal">
+      <p class="sec-eyebrow" data-i18n="f_eyebrow">基础必须完好</p>
+      <h2 data-i18n="f_title">首先是一个称手的邮件客户端</h2>
+      <p data-i18n="f_sub">信任层建立在扎实的基础之上：多协议、多账户、离线可用，日常收发不打折扣。</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>
+        <h3 data-i18n="f1t">多账户 · 多协议</h3>
+        <p data-i18n="f1p">IMAP / POP3 收件 + SMTP 发件（SSL / STARTTLS）。预设 Exchange Online（OAuth2 设备码登录）、自建 Exchange、Gmail、iCloud、QQ、163，或自定义服务器。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 3"/><path d="M17 3h4v4"/></svg></div>
+        <h3 data-i18n="f2t">本地缓存 · 离线阅读</h3>
+        <p data-i18n="f2p">SQLite 本地缓存 + 增量同步，离线照常阅读；IMAP IDLE / POP3 轮询实时通知新邮件，历史邮件分页加载。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h13M10 18h10"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="7.5" cy="18" r="1.5"/></svg></div>
+        <h3 data-i18n="f3t">过滤规则 · 自建目录</h3>
+        <p data-i18n="f3p">按发件人 / 主题 / 正文匹配，自动归档到目录，可一键「立即整理收件箱」。IMAP 建真实服务器目录，POP3 用本地虚拟目录。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3 data-i18n="f4t">安全渲染</h3>
+        <p data-i18n="f4p">HTML 正文安全渲染，默认阻止远程图片追踪；删除先进回收站，撤销发送给你反悔的时间。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3l-9 9"/><path d="M15 3h6v6"/></svg></div>
+        <h3 data-i18n="f5t">完整收发体验</h3>
+        <p data-i18n="f5p">统一收件箱、会话线程、星标归档、本地搜索、附件收发、本地草稿、收件人自动补全与常用快捷键。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/></svg></div>
+        <h3 data-i18n="f6t">高风险拦截</h3>
+        <p data-i18n="f6p">启发式识别付款催促、索取密码 / 助记词、合同时限等高风险邮件，弹窗要求「已独立核实」才能继续操作。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- TRUST / HOW -->
+  <section id="trust">
+    <div class="how reveal">
+      <div class="sec-head">
+        <p class="sec-eyebrow" data-i18n="t_eyebrow">信任层 · 特色功能</p>
+        <h2 data-i18n="t_title">像火漆封印一样，为邮件盖上可验证的印</h2>
+        <p data-i18n="t_sub">不依赖头像、签名档装饰或语言习惯——只认密钥指纹。</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="num">01</div>
+          <h3 data-i18n="t1t">发送时盖印</h3>
+          <p data-i18n-html="t1p">二选一：本地生成的 Ed25519 密钥（<code>identity.key</code>，0600），或 Ledger 硬件密钥——每次签名都在设备上确认，私钥永不离开硬件。</p>
+        </div>
+        <div class="step">
+          <div class="num">02</div>
+          <h3 data-i18n="t2t">对普通收件人隐形</h3>
+          <p data-i18n-html="t2p">签名放在 <code>X-SealMail-*</code> 邮件头中，正文只追加一行标准 <code>--&nbsp;</code> 签名档式的低调说明——在 Gmail、Outlook 里看起来就是一封普通邮件。</p>
+        </div>
+        <div class="step">
+          <div class="num">03</div>
+          <h3 data-i18n="t3t">接收时本地验证</h3>
+          <p data-i18n="t3p">验证全部在本机完成，不经过任何服务器。五种封印状态一眼分辨：本人、可信、未知、被篡改、被冒充。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOWNLOAD -->
+  <section id="download">
+    <div class="sec-head reveal">
+      <p class="sec-eyebrow" data-i18n="d_eyebrow">下载</p>
+      <h2><span data-i18n="d_title">获取 SealMail</span><span class="ver-badge" id="verBadge">v—</span></h2>
+      <p data-i18n="d_sub">macOS 安装包已签名并通过 Apple 公证；应用内置自动更新，装一次即可。</p>
+    </div>
+    <div class="dl-cards">
+      <div class="dl-card reveal">
+        <svg class="os" viewBox="0 0 24 24"><path d="M18.7 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.9-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.2-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.5-1-2.6-3.8zM16.2 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.9-1 2.9 1.1.1 2.2-.5 2.8-1.4z"/></svg>
+        <h3>macOS</h3>
+        <p class="arch">Apple Silicon (M1–M4) · .dmg</p>
+        <a class="btn btn-primary" id="dlMacArm" href="https://github.com/sealmail/seal-mail/releases/latest"><span data-i18n="d_btn">下载</span></a>
+      </div>
+      <div class="dl-card reveal">
+        <svg class="os" viewBox="0 0 24 24"><path d="M18.7 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.9-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.2-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.5-1-2.6-3.8zM16.2 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.9-1 2.9 1.1.1 2.2-.5 2.8-1.4z"/></svg>
+        <h3>macOS</h3>
+        <p class="arch">Intel · .dmg</p>
+        <a class="btn btn-ghost" id="dlMacIntel" href="https://github.com/sealmail/seal-mail/releases/latest"><span data-i18n="d_btn">下载</span></a>
+      </div>
+      <div class="dl-card reveal">
+        <svg class="os" viewBox="0 0 24 24"><path d="M3 5.5l7.5-1v7H3v-6zm0 13v-6h7.5v7L3 18.5zm8.5 1.2V12.5H21v8.3l-9.5-1.1zm0-15.4L21 3.2v8.3h-9.5v-7.2z"/></svg>
+        <h3>Windows</h3>
+        <p class="arch">x64 · Installer (.exe)</p>
+        <a class="btn btn-ghost" id="dlWin" href="https://github.com/sealmail/seal-mail/releases/latest"><span data-i18n="d_btn">下载</span></a>
+      </div>
+    </div>
+    <p class="dl-note"><span data-i18n="d_note">需要其他格式（Windows 便携版 zip）或历史版本？前往</span> <a href="https://github.com/sealmail/seal-mail/releases" target="_blank" rel="noopener">GitHub Releases</a></p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="#"><img src="/icon.png" alt=""><span data-i18n="brand">SealMail 信印</span></a>
+    <span data-i18n="foot_line">密码与私钥仅保存在本机（0600），验证只认密钥指纹。</span>
+    <div class="foot-links">
+      <a href="https://github.com/sealmail/seal-mail" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/sealmail/seal-mail/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/sealmail/seal-mail/issues" target="_blank" rel="noopener" data-i18n="foot_feedback">反馈</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ---------- i18n ---------- */
+const EN = {
+  brand:"SealMail",
+  nav_features:"Features", nav_trust:"Trust layer", nav_download:"Download",
+  eyebrow:"Open source · macOS & Windows",
+  h1:"The mail client that also <em>proves trust</em>.",
+  hero_sub:"SealMail is a general-purpose desktop email client — IMAP / POP3 / SMTP, Exchange, Gmail, iCloud all supported. Its signature feature is the trust layer: seal outgoing mail with an Ed25519 or Ledger hardware key, and verify sender identity and content integrity locally on receive.",
+  cta_download:"Download SealMail", cta_all:"All downloads",
+  hero_meta:"Signed & notarized by Apple · built-in auto-update · ",
+  m1:"Q3 contract confirmed", m2:"Final design files", m3:"This week's picks", m4:"URGENT: pay immediately",
+  mr_subject:"Q3 contract confirmed",
+  rail_state:"Intact seal · Verified sender", rail_sub:"Valid signature, fingerprint matches",
+  rc1:"Signature verified", rc2:"Body hash matches", rc3:"Fingerprint trusted",
+  s1t:"Intact seal", s1p:"Valid signature and the fingerprint matches your trusted record — it's really them.",
+  s2t:"Gold seal", s2p:"Valid signature, not yet trusted. One click adds them to trusted contacts.",
+  s3t:"Empty ring", s3p:"An ordinary unsigned email; identity unknown.",
+  s4t:"Cracked seal", s4p:"Body hash doesn't match the signature — content was tampered in transit.",
+  s5t:"Forged seal", s5p:"Same display name, wrong key or domain — someone is impersonating your contact.",
+  f_eyebrow:"The foundation comes first",
+  f_title:"First and foremost, a capable mail client",
+  f_sub:"The trust layer stands on solid ground: multi-protocol, multi-account, offline-ready — everyday email without compromise.",
+  f1t:"Multi-account · multi-protocol",
+  f1p:"IMAP / POP3 incoming + SMTP outgoing (SSL / STARTTLS). Presets for Exchange Online (OAuth2 device-code), on-prem Exchange, Gmail, iCloud, QQ, 163 — or any custom server.",
+  f2t:"Local cache · offline reading",
+  f2p:"SQLite cache with incremental sync — read offline as usual. IMAP IDLE / POP3 polling for real-time notifications, paginated history loading.",
+  f3t:"Filter rules · custom folders",
+  f3p:"Match on from / subject / body and auto-file into folders, with one-click “organize inbox now”. Real server folders for IMAP, local virtual folders for POP3.",
+  f4t:"Safe rendering",
+  f4p:"Safe HTML rendering with remote images blocked by default. Deletes go to trash first; undo send gives you time to reconsider.",
+  f5t:"Complete mail experience",
+  f5p:"Unified inbox, conversation threads, stars & archive, local search, attachments, local drafts, recipient autocomplete, and keyboard shortcuts.",
+  f6t:"High-risk interception",
+  f6p:"Heuristics flag payment urgency, password / seed-phrase requests, and contract deadlines. The risk modal requires “independently verified” before you proceed.",
+  t_eyebrow:"Trust layer · the signature feature",
+  t_title:"A verifiable wax seal for your email",
+  t_sub:"No reliance on avatars, footers, or writing style — only key fingerprints.",
+  t1t:"Seal on send",
+  t1p:"Choose your identity: a locally generated Ed25519 key (<code>identity.key</code>, mode 0600), or a Ledger hardware key — every signature is confirmed on-device and the private key never leaves it.",
+  t2t:"Invisible to ordinary recipients",
+  t2p:"Signatures live in <code>X-SealMail-*</code> headers; the body only gains one low-key line in the standard <code>--&nbsp;</code> signature-block format — it reads as a normal email in Gmail or Outlook.",
+  t3t:"Verify locally on receive",
+  t3p:"Verification happens entirely on your machine — no server involved. Five seal states at a glance: verified, trusted-pending, unknown, tampered, impersonated.",
+  d_eyebrow:"Download", d_title:"Get SealMail",
+  d_sub:"macOS builds are signed and notarized by Apple; the app updates itself, so you only install once.",
+  d_btn:"Download",
+  d_note:"Need the portable Windows zip or older versions? Visit",
+  foot_line:"Passwords and private keys stay on your machine (mode 0600); verification trusts only key fingerprints.",
+  foot_feedback:"Feedback"
+};
+const ZH = {}; // zh strings are in the HTML itself
+document.querySelectorAll("[data-i18n],[data-i18n-html]").forEach(el=>{
+  const key = el.dataset.i18n || el.dataset.i18nHtml;
+  ZH[key] = el.dataset.i18n ? el.textContent : el.innerHTML;
+});
+
+let lang = localStorage.getItem("sealmail-lang") ||
+  ((navigator.language||"").toLowerCase().startsWith("zh") ? "zh" : "en");
+function applyLang(){
+  const dict = lang==="en" ? EN : ZH;
+  document.documentElement.lang = lang==="en" ? "en" : "zh-CN";
+  document.querySelectorAll("[data-i18n]").forEach(el=>{ el.textContent = dict[el.dataset.i18n]; });
+  document.querySelectorAll("[data-i18n-html]").forEach(el=>{ el.innerHTML = dict[el.dataset.i18nHtml]; });
+  document.getElementById("langToggle").textContent = lang==="en" ? "中文" : "English";
+  document.title = lang==="en"
+    ? "SealMail — A Trusted Mail Client · macOS & Windows"
+    : "SealMail 信印 — 可信邮件客户端 · macOS 与 Windows 下载";
+}
+document.getElementById("langToggle").addEventListener("click",()=>{
+  lang = lang==="en" ? "zh" : "en";
+  localStorage.setItem("sealmail-lang",lang);
+  applyLang();
+});
+applyLang();
+
+/* ---------- latest release links ---------- */
+const RELEASES = "https://github.com/sealmail/seal-mail/releases";
+fetch("https://api.github.com/repos/sealmail/seal-mail/releases/latest")
+  .then(r=>r.json())
+  .then(rel=>{
+    if(!rel || !rel.assets) return;
+    const find = re => (rel.assets.find(a=>re.test(a.name))||{}).browser_download_url;
+    const macArm   = find(/macos_aarch64\.dmg$/);
+    const macIntel = find(/macos_x64\.dmg$/);
+    const winExe   = find(/windows_x64_setup\.exe$/);
+    if(macArm)   document.getElementById("dlMacArm").href   = macArm;
+    if(macIntel) document.getElementById("dlMacIntel").href = macIntel;
+    if(winExe)   document.getElementById("dlWin").href      = winExe;
+    const v = rel.tag_name || "";
+    document.getElementById("verBadge").textContent = v;
+    document.getElementById("verLine").innerHTML = "<code>"+v+"</code>";
+    // platform-aware hero CTA
+    const ua = navigator.userAgent;
+    const isMac = /Macintosh/.test(ua), isWin = /Windows/.test(ua);
+    const cta = document.getElementById("ctaPrimary");
+    if(isWin && winExe) cta.href = winExe;
+    else if(isMac && macArm) cta.href = macArm; // ARM is the common case; Intel users pick below
+    else cta.href = RELEASES + "/latest";
+  })
+  .catch(()=>{ /* fall back to releases page links already in HTML */ });
+
+/* ---------- scroll reveal ---------- */
+const io = new IntersectionObserver(es=>{
+  es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add("in"); io.unobserve(e.target); } });
+},{threshold:.12});
+document.querySelectorAll(".reveal").forEach(el=>io.observe(el));
+</script>
+</body>
+</html>
