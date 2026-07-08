@@ -528,6 +528,45 @@ fn filter_rules_match() {
     assert!(rule_matches(&rule, &mail));
 }
 
+#[test]
+fn filter_from_equals_matches_address() {
+    // 「发件人 等于 地址」必须能命中：haystack 是 "显示名 地址" 拼接，
+    // 不能用全串 equals 比较（bug：jenkins@wanchain.org 规则匹配不到任何邮件）
+    let mail = mk_mail(
+        "jenkins@wanchain.org",
+        "Alert-main-bridge_api",
+        "creat_tx2 status",
+    );
+    let mut rule = FilterRule {
+        id: "r2".into(),
+        name: "bot".into(),
+        account_id: None,
+        field: "from".into(),
+        op: "equals".into(),
+        value: "jenkins@wanchain.org".into(),
+        target_folder: "机器人".into(),
+        mark_read: true,
+        enabled: true,
+    };
+    assert!(rule_matches(&rule, &mail), "发件人地址精确相等必须命中");
+
+    // 大小写不敏感
+    rule.value = "Jenkins@Wanchain.org".into();
+    assert!(rule_matches(&rule, &mail));
+
+    // 显示名精确相等也应命中（build_raw 里显示名是 "Someone"）
+    rule.value = "someone".into();
+    assert!(rule_matches(&rule, &mail), "显示名精确相等必须命中");
+
+    // 不同地址不命中
+    rule.value = "other@wanchain.org".into();
+    assert!(!rule_matches(&rule, &mail));
+
+    // 地址的子串不算 equals
+    rule.value = "wanchain.org".into();
+    assert!(!rule_matches(&rule, &mail), "equals 不应做子串匹配");
+}
+
 /// 自己（本机身份）签发的邮件，经 trusted_for_verify 注入本人身份后应直接「已验证」，
 /// 而不是黄色「签名有效·尚未列入可信」
 #[test]
