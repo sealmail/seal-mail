@@ -567,6 +567,57 @@ fn filter_from_equals_matches_address() {
     assert!(!rule_matches(&rule, &mail), "equals 不应做子串匹配");
 }
 
+fn mk_rule(id: &str, value: &str, target: &str, mark_read: bool) -> FilterRule {
+    FilterRule {
+        id: id.into(),
+        name: id.into(),
+        account_id: None,
+        field: "from".into(),
+        op: "contains".into(),
+        value: value.into(),
+        target_folder: target.into(),
+        mark_read,
+        enabled: true,
+    }
+}
+
+#[test]
+fn plan_moves_groups_by_target_and_respects_rule_order() {
+    use sealmail_lib::filters::plan_moves;
+    let mut m1 = mk_mail("jenkins@wanchain.org", "Alert 1", "x");
+    m1.meta.uid = 11;
+    let mut m2 = mk_mail("jenkins@wanchain.org", "Alert 2", "x");
+    m2.meta.uid = 12;
+    let mut m3 = mk_mail("support@vultr.com", "Notice", "x");
+    m3.meta.uid = 13;
+    let mut m4 = mk_mail("friend@example.com", "Hi", "x");
+    m4.meta.uid = 14;
+    let mails = [m1, m2, m3, m4];
+
+    // 两条规则都能匹配 jenkins 时，第一条生效（规则按顺序匹配）
+    let rules = vec![
+        mk_rule("r1", "jenkins", "机器人", true),
+        mk_rule("r2", "wanchain", "商务", false),
+        mk_rule("r3", "vultr", "屏蔽", true),
+    ];
+    let plans = plan_moves(&rules, "acc1", "INBOX", &mails);
+    assert_eq!(plans.len(), 2, "jenkins×2 归一组，vultr 归一组，无关邮件不动");
+    assert_eq!(plans[0].target, "机器人");
+    assert_eq!(plans[0].uids, vec![11, 12], "同目标合并为一组批量移动");
+    assert!(plans[0].mark_read);
+    assert_eq!(plans[1].target, "屏蔽");
+    assert_eq!(plans[1].uids, vec![13]);
+
+    // 目标目录等于来源目录时跳过（避免原地移动）
+    let rules = vec![mk_rule("r1", "jenkins", "INBOX", false)];
+    assert!(plan_moves(&rules, "acc1", "INBOX", &mails).is_empty());
+
+    // 限定其他账户的规则不参与
+    let mut scoped = mk_rule("r1", "jenkins", "机器人", false);
+    scoped.account_id = Some("other".into());
+    assert!(plan_moves(&[scoped], "acc1", "INBOX", &mails).is_empty());
+}
+
 /// 自己（本机身份）签发的邮件，经 trusted_for_verify 注入本人身份后应直接「已验证」，
 /// 而不是黄色「签名有效·尚未列入可信」
 #[test]

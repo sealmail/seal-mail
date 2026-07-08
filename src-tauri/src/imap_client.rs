@@ -571,14 +571,44 @@ pub fn move_message(
 ) -> Result<(), String> {
     let mut sess = connect(account, secret)?;
     sess.select(folder).map_err(|e| e.to_string())?;
-    let uidset = uid.to_string();
-    // 优先 MOVE，不支持则 COPY + 删除
-    if sess.uid_mv(&uidset, target).is_err() {
-        sess.uid_copy(&uidset, target)
+    move_uidset(&mut sess, &uid.to_string(), target)?;
+    let _ = sess.logout();
+    Ok(())
+}
+
+/// 优先 MOVE，不支持则 COPY + 删除
+fn move_uidset(sess: &mut ImapSession, uidset: &str, target: &str) -> Result<(), String> {
+    if sess.uid_mv(uidset, target).is_err() {
+        sess.uid_copy(uidset, target)
             .map_err(|e| format!("移动失败（目标目录可能不存在）: {}", e))?;
-        sess.uid_store(&uidset, "+FLAGS (\\Deleted)")
+        sess.uid_store(uidset, "+FLAGS (\\Deleted)")
             .map_err(|e| e.to_string())?;
         sess.expunge().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 过滤规则批量整理：单条连接完成全部分组的标已读 + 移动。
+/// 标已读必须在移动**之前**做——UID 在移动后即失效，不能拿旧 UID 去目标目录改标记。
+pub fn organize_messages(
+    account: &Account,
+    secret: &AccountSecret,
+    folder: &str,
+    groups: &[(String, Vec<u32>, bool)],
+) -> Result<(), String> {
+    let mut sess = connect(account, secret)?;
+    sess.select(folder).map_err(|e| e.to_string())?;
+    for (target, uids, mark_read) in groups {
+        let uidset = uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        if *mark_read {
+            sess.uid_store(&uidset, "+FLAGS (\\Seen)")
+                .map_err(|e| e.to_string())?;
+        }
+        move_uidset(&mut sess, &uidset, target)?;
     }
     let _ = sess.logout();
     Ok(())

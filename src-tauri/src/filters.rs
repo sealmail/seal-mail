@@ -1,5 +1,55 @@
 use crate::models::*;
 
+/// 一组待批量移动的邮件：同目标目录 + 同标已读策略合并，单条 IMAP 命令完成
+pub struct MovePlan {
+    pub target: String,
+    pub mark_read: bool,
+    pub uids: Vec<u32>,
+    /// 与 uids 一一对应的主题，用于整理明细展示
+    pub subjects: Vec<String>,
+}
+
+/// 按规则给邮件生成移动计划：每封邮件取第一条命中的规则（规则按顺序优先），
+/// 相同 (目标目录, 标已读) 合并为一组；目标等于来源目录的跳过
+pub fn plan_moves(
+    rules: &[FilterRule],
+    account_id: &str,
+    source_folder: &str,
+    mails: &[EmailFull],
+) -> Vec<MovePlan> {
+    let mut plans: Vec<MovePlan> = Vec::new();
+    for mail in mails {
+        let Some(rule) = rules.iter().find(|rule| {
+            rule.enabled
+                && rule
+                    .account_id
+                    .as_ref()
+                    .map(|id| id == account_id)
+                    .unwrap_or(true)
+                && rule.target_folder != source_folder
+                && rule_matches(rule, mail)
+        }) else {
+            continue;
+        };
+        match plans
+            .iter_mut()
+            .find(|p| p.target == rule.target_folder && p.mark_read == rule.mark_read)
+        {
+            Some(plan) => {
+                plan.uids.push(mail.meta.uid);
+                plan.subjects.push(mail.meta.subject.clone());
+            }
+            None => plans.push(MovePlan {
+                target: rule.target_folder.clone(),
+                mark_read: rule.mark_read,
+                uids: vec![mail.meta.uid],
+                subjects: vec![mail.meta.subject.clone()],
+            }),
+        }
+    }
+    plans
+}
+
 pub fn rule_matches(rule: &FilterRule, mail: &EmailFull) -> bool {
     if !rule.enabled {
         return false;

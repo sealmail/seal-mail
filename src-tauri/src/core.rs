@@ -451,6 +451,7 @@ pub fn sync_messages(
             }
             db::set_uidvalidity(&s.db, account_id, folder, sf.uidvalidity)?;
             let mut added = 0u32;
+            let mut new_fulls: Vec<EmailFull> = Vec::new();
             for m in &sf.new_mails {
                 let ts = match mail::parse_email(
                     &m.raw, m.uid, account_id, folder, m.unread, m.flagged, &trusted,
@@ -461,7 +462,9 @@ pub fn sync_messages(
                             &full.meta.from_addr,
                             full.meta.timestamp,
                         );
-                        full.meta.timestamp
+                        let ts = full.meta.timestamp;
+                        new_fulls.push(full);
+                        ts
                     }
                     Err(_) => 0,
                 };
@@ -492,6 +495,10 @@ pub fn sync_messages(
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
             }
+            // 新到收件箱的邮件自动应用过滤规则（单连接批量，见 organize_by_filters）
+            if folder == "INBOX" && !new_fulls.is_empty() {
+                organize_by_filters(s, account_id, secret, "INBOX", &new_fulls)?;
+            }
             Ok(SyncResult {
                 added,
                 total: db::count(&s.db, account_id, folder)?,
@@ -504,6 +511,7 @@ pub fn sync_messages(
                 .collect();
             let ps = pop3_client::sync_fetch(&account, secret, &known, db::INITIAL_WINDOW)?;
             let mut added = 0u32;
+            let mut new_fulls: Vec<EmailFull> = Vec::new();
             for (uidl, raw) in &ps.new_mails {
                 let uid = db::pop_next_uid(&s.db, account_id)?;
                 let ts =
@@ -514,7 +522,9 @@ pub fn sync_messages(
                                 &full.meta.from_addr,
                                 full.meta.timestamp,
                             );
-                            full.meta.timestamp
+                            let ts = full.meta.timestamp;
+                            new_fulls.push(full);
+                            ts
                         }
                         Err(_) => 0,
                     };
@@ -541,6 +551,10 @@ pub fn sync_messages(
             }
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
+            }
+            // 新到收件箱的邮件自动应用过滤规则（POP3 为本地虚拟目录，纯本地操作）
+            if !new_fulls.is_empty() {
+                organize_by_filters(s, account_id, secret, "INBOX", &new_fulls)?;
             }
             Ok(SyncResult {
                 added,
@@ -976,41 +990,70 @@ pub fn apply_filters(
             .ok()
         })
         .collect();
-    let rules = s.filters.clone();
+    organize_by_filters(s, account_id, secret, "INBOX", &mails)
+}
+
+/// 按过滤规则批量整理给定邮件。IMAP 走单条连接完成全部标已读 + 移动
+/// （逐封各开一条 TLS 连接太慢，且移动后旧 UID 失效不能再改标记）。
+pub fn organize_by_filters(
+    s: &mut StoreData,
+    account_id: &str,
+    secret: &AccountSecret,
+    folder: &str,
+    mails: &[EmailFull],
+) -> Result<ApplyResult, String> {
+    let plans = filters::plan_moves(&s.filters, account_id, folder, mails);
+    if plans.is_empty() {
+        return Ok(ApplyResult {
+            moved: 0,
+            details: Vec::new(),
+        });
+    }
+    let account = s.account(account_id)?;
+    match account.protocol {
+        IncomingProtocol::Imap => {
+            let groups: Vec<(String, Vec<u32>, bool)> = plans
+                .iter()
+                .map(|p| (p.target.clone(), p.uids.clone(), p.mark_read))
+                .collect();
+            imap_client::organize_messages(&account, secret, folder, &groups)?;
+            for plan in &plans {
+                for uid in &plan.uids {
+                    db::delete_row(&s.db, account_id, folder, *uid)?;
+                    s.mail_cache
+                        .remove(&StoreData::cache_key(account_id, folder, *uid));
+                }
+            }
+        }
+        IncomingProtocol::Pop3 => {
+            for plan in &plans {
+                for uid in &plan.uids {
+                    db::set_folder(&s.db, account_id, folder, *uid, &plan.target)?;
+                    if plan.mark_read {
+                        db::set_unread(&s.db, account_id, &plan.target, &[*uid], false)?;
+                    }
+                    if let Some(mut full) = s
+                        .mail_cache
+                        .remove(&StoreData::cache_key(account_id, folder, *uid))
+                    {
+                        full.meta.folder = plan.target.clone();
+                        if plan.mark_read {
+                            full.meta.unread = false;
+                        }
+                        s.mail_cache
+                            .insert(StoreData::cache_key(account_id, &plan.target, *uid), full);
+                    }
+                }
+            }
+        }
+    }
     let mut moved = 0u32;
     let mut details = Vec::new();
-    for mail in &mails {
-        let Some(rule) = rules.iter().find(|rule| {
-            rule.enabled
-                && rule
-                    .account_id
-                    .as_ref()
-                    .map(|id| id == account_id)
-                    .unwrap_or(true)
-                && filters::rule_matches(rule, mail)
-        }) else {
-            continue;
-        };
-        move_message(
-            s,
-            account_id,
-            "INBOX",
-            mail.meta.uid,
-            &rule.target_folder,
-            secret,
-        )?;
-        if rule.mark_read {
-            set_read(
-                s,
-                account_id,
-                &rule.target_folder,
-                &[mail.meta.uid],
-                true,
-                secret,
-            )?;
+    for plan in &plans {
+        for subject in &plan.subjects {
+            details.push(format!("「{}」→ {}", subject, plan.target));
+            moved += 1;
         }
-        details.push(format!("「{}」→ {}", mail.meta.subject, rule.target_folder));
-        moved += 1;
     }
     Ok(ApplyResult { moved, details })
 }

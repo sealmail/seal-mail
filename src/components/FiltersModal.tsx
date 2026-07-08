@@ -103,7 +103,7 @@ export function FiltersModal(p: Props) {
           {!editing && (
             <>
               <div style={{ fontSize: 12, color: "var(--mut)", lineHeight: 1.6 }}>
-                规则按顺序匹配收件箱中的邮件，命中后移动到目标目录。可手动「立即整理」，每次刷新收件箱后也可以一键执行。
+                规则按顺序匹配收件箱中的邮件，命中后移动到目标目录。新邮件到达时自动应用；「立即整理」会对收件箱现有邮件全量执行一遍。
               </div>
               {p.filters.length === 0 && (
                 <div className="card-list" style={{ padding: "20px 18px", fontSize: 12.5, color: "var(--mut)" }}>
