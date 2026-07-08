@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import { useState } from "react";
 import { applyFilters, deleteFilter, saveFilter } from "../api";
 import type { Account, FilterRule, FolderInfo } from "../types";
@@ -34,6 +35,7 @@ const emptyRule = (): FilterRule => ({
 });
 
 export function FiltersModal(p: Props) {
+  const t = useI18n();
   const [editing, setEditing] = useState<FilterRule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applyMsg, setApplyMsg] = useState<string | null>(null);
@@ -41,14 +43,17 @@ export function FiltersModal(p: Props) {
 
   const realFolders = p.folders.filter((f) => f.name !== "__risk__" && f.name !== "INBOX");
 
+  // 规则里存的是 IMAP 原始目录名（Modified UTF-7，如 &ZzpWaE66-），展示时换成可读名
+  const folderLabel = (name: string) => t(p.folders.find((f) => f.name === name)?.display ?? name);
+
   async function doSave() {
     if (!editing) return;
-    if (!editing.value.trim()) return setError("请填写匹配内容");
-    if (!editing.targetFolder) return setError("请选择目标目录");
+    if (!editing.value.trim()) return setError(t("请填写匹配内容"));
+    if (!editing.targetFolder) return setError(t("请选择目标目录"));
     setError(null);
     setBusy(true);
     try {
-      const rule = { ...editing, name: editing.name.trim() || `${FIELD_LABEL[editing.field]}${OP_LABEL[editing.op]}「${editing.value}」` };
+      const rule = { ...editing, name: editing.name.trim() || `${t(FIELD_LABEL[editing.field])}${t(OP_LABEL[editing.op])}「${editing.value}」` };
       const rules = await saveFilter(rule);
       p.onChanged(rules);
       setEditing(null);
@@ -79,8 +84,8 @@ export function FiltersModal(p: Props) {
       const r = await applyFilters(p.currentAccountId);
       setApplyMsg(
         r.moved === 0
-          ? "已执行：收件箱中没有匹配的邮件"
-          : `已整理 ${r.moved} 封：\n${r.details.join("\n")}`
+          ? t("已执行：收件箱中没有匹配的邮件")
+          : t("已整理 {n} 封：", { n: r.moved }) + `\n${r.details.join("\n")}`
       );
       p.onApplied();
     } catch (e) {
@@ -94,7 +99,7 @@ export function FiltersModal(p: Props) {
     <div className="overlay">
       <div className="modal" style={{ width: 620 }}>
         <div className="modal-head">
-          <span className="title">过滤规则 · 自动归类</span>
+          <span className="title">{t("过滤规则 · 自动归类")}</span>
           <button className="modal-close" onClick={p.onClose}>
             ×
           </button>
@@ -103,11 +108,11 @@ export function FiltersModal(p: Props) {
           {!editing && (
             <>
               <div style={{ fontSize: 12, color: "var(--mut)", lineHeight: 1.6 }}>
-                规则按顺序匹配收件箱中的邮件，命中后移动到目标目录。新邮件到达时自动应用；「立即整理」会对收件箱现有邮件全量执行一遍。
+                {t("规则按顺序匹配收件箱中的邮件，命中后移动到目标目录。新邮件到达时自动应用；「立即整理」会对收件箱现有邮件全量执行一遍。")}
               </div>
               {p.filters.length === 0 && (
                 <div className="card-list" style={{ padding: "20px 18px", fontSize: 12.5, color: "var(--mut)" }}>
-                  还没有规则。点击下方「新建规则」，例如：发件人 包含 github.com → 移动到「通知」。
+                  {t("还没有规则。点击下方「新建规则」，例如：发件人 包含 github.com → 移动到「通知」。")}
                 </div>
               )}
               {p.filters.map((r) => (
@@ -115,19 +120,19 @@ export function FiltersModal(p: Props) {
                   <div className="desc">
                     <b>{r.name}</b>
                     <br />
-                    {FIELD_LABEL[r.field]} {OP_LABEL[r.op]} 「{r.value}」 <span className="arrow">→</span> {r.targetFolder}
-                    {r.markRead ? " · 标为已读" : ""}
+                    {t(FIELD_LABEL[r.field])} {t(OP_LABEL[r.op])} 「{r.value}」 <span className="arrow">→</span> {folderLabel(r.targetFolder)}
+                    {r.markRead ? ` · ${t("标为已读")}` : ""}
                   </div>
                   <button className="btn-ghost" onClick={() => setEditing({ ...r })}>
-                    编辑
+                    {t("编辑")}
                   </button>
-                  <button className="icon-btn" title="删除" onClick={() => doDelete(r.id)}>
+                  <button className="icon-btn" title={t("删除")} onClick={() => doDelete(r.id)}>
                     ×
                   </button>
                 </div>
               ))}
               <button className="dashed-add" onClick={() => setEditing(emptyRule())}>
-                + 新建规则
+                {t("+ 新建规则")}
               </button>
               {applyMsg && <div className="form-ok" style={{ whiteSpace: "pre-wrap" }}>{applyMsg}</div>}
               {error && <div className="form-error">{error}</div>}
@@ -137,12 +142,12 @@ export function FiltersModal(p: Props) {
           {editing && (
             <>
               <div className="field">
-                <label>规则名称（可留空自动生成）</label>
+                <label>{t("规则名称（可留空自动生成）")}</label>
                 <input className="input" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="field">
-                  <label>匹配字段</label>
+                  <label>{t("匹配字段")}</label>
                   <select
                     className="select"
                     value={editing.field}
@@ -150,13 +155,13 @@ export function FiltersModal(p: Props) {
                   >
                     {Object.entries(FIELD_LABEL).map(([k, v]) => (
                       <option key={k} value={k}>
-                        {v}
+                        {t(v)}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div className="field">
-                  <label>条件</label>
+                  <label>{t("条件")}</label>
                   <select
                     className="select"
                     value={editing.op}
@@ -164,45 +169,45 @@ export function FiltersModal(p: Props) {
                   >
                     {Object.entries(OP_LABEL).map(([k, v]) => (
                       <option key={k} value={k}>
-                        {v}
+                        {t(v)}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
               <div className="field">
-                <label>匹配内容</label>
+                <label>{t("匹配内容")}</label>
                 <input
                   className="input"
-                  placeholder="例如 github.com / 发票 / urgent"
+                  placeholder={t("例如 github.com / 发票 / urgent")}
                   value={editing.value}
                   onChange={(e) => setEditing({ ...editing, value: e.target.value })}
                 />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="field">
-                  <label>移动到目录</label>
+                  <label>{t("移动到目录")}</label>
                   <select
                     className="select"
                     value={editing.targetFolder}
                     onChange={(e) => setEditing({ ...editing, targetFolder: e.target.value })}
                   >
-                    <option value="">选择目录…</option>
+                    <option value="">{t("选择目录…")}</option>
                     {realFolders.map((f) => (
                       <option key={f.name} value={f.name}>
-                        {f.display}
+                        {t(f.display)}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div className="field">
-                  <label>适用账户</label>
+                  <label>{t("适用账户")}</label>
                   <select
                     className="select"
                     value={editing.accountId ?? ""}
                     onChange={(e) => setEditing({ ...editing, accountId: e.target.value || null })}
                   >
-                    <option value="">全部账户</option>
+                    <option value="">{t("全部账户")}</option>
                     {p.accounts
                                             .map((a) => (
                         <option key={a.id} value={a.id}>
@@ -219,7 +224,7 @@ export function FiltersModal(p: Props) {
                   onChange={(e) => setEditing({ ...editing, markRead: e.target.checked })}
                   style={{ accentColor: "#1E6B49" }}
                 />
-                移动后标为已读
+                {t("移动后标为已读")}
               </label>
               {error && <div className="form-error">{error}</div>}
             </>
@@ -228,18 +233,18 @@ export function FiltersModal(p: Props) {
         <div className="modal-foot">
           {!editing ? (
             <>
-              <span className="toolbar-note">{p.filters.length} 条规则</span>
+              <span className="toolbar-note">{t("{n} 条规则", { n: p.filters.length })}</span>
               <button className="btn-primary" style={{ height: 40 }} disabled={busy || p.filters.length === 0} onClick={doApply}>
-                {busy ? "整理中…" : "立即整理收件箱"}
+                {busy ? t("整理中…") : t("立即整理收件箱")}
               </button>
             </>
           ) : (
             <>
               <button className="btn-ghost" style={{ height: 40 }} onClick={() => setEditing(null)}>
-                返回
+                {t("返回")}
               </button>
               <button className="btn-primary" style={{ height: 40 }} disabled={busy} onClick={doSave}>
-                保存规则
+                {t("保存规则")}
               </button>
             </>
           )}

@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import { useState } from "react";
 import { bindLedger, ledgerGetAddresses } from "../api";
 import type { IdentityInfo, LedgerAccountRow } from "../types";
@@ -9,6 +10,7 @@ interface Props {
 
 /** 绑定 Ledger：读取设备前 5 个账户地址，选择一个作为签名身份 */
 export function LedgerBindModal(p: Props) {
+  const t = useI18n();
   const [rows, setRows] = useState<LedgerAccountRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export function LedgerBindModal(p: Props) {
     <div className="overlay">
       <div className="modal" style={{ width: 520 }}>
         <div className="modal-head">
-          <span className="title">绑定 Ledger 硬件密钥</span>
+          <span className="title">{t("绑定 Ledger 硬件密钥")}</span>
           <button className="modal-close" onClick={p.onClose}>
             ×
           </button>
@@ -54,22 +56,21 @@ export function LedgerBindModal(p: Props) {
           {!rows && (
             <>
               <div style={{ fontSize: 13, color: "var(--ink-3)", lineHeight: 1.7 }}>
-                1. 用 USB 连接 Ledger 并解锁
+                {t("1. 用 USB 连接 Ledger 并解锁")}
                 <br />
-                2. 在设备上打开 <b>Ethereum</b> app
+                {t("2. 在设备上打开")} <b>Ethereum</b> app
                 <br />
-                3. 点击下方按钮读取账户地址
+                {t("3. 点击下方按钮读取账户地址")}
               </div>
               <div style={{ fontSize: 11.5, color: "var(--mut-3)", lineHeight: 1.6 }}>
-                绑定后，发邮件签名会改用 Ledger（EIP-191 personal_sign，secp256k1）。
-                每次发送签名邮件需要在设备上按键确认；私钥永不离开硬件。
+                {t("绑定后，发邮件签名会改用 Ledger（EIP-191 personal_sign，secp256k1）。每次发送签名邮件需要在设备上按键确认；私钥永不离开硬件。")}
               </div>
             </>
           )}
 
           {rows && (
             <>
-              <div style={{ fontSize: 12.5, color: "var(--ink-3)" }}>选择用于签名的账户：</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{t("选择用于签名的账户：")}</div>
               <div className="card-list">
                 {rows.map((r) => (
                   <div
@@ -106,15 +107,15 @@ export function LedgerBindModal(p: Props) {
         </div>
         <div className="modal-foot">
           <button className="btn-ghost" style={{ height: 40 }} onClick={p.onClose}>
-            取消
+            {t("取消")}
           </button>
           {!rows ? (
             <button className="btn-primary" style={{ height: 40 }} disabled={busy} onClick={loadAddresses}>
-              {busy ? "正在连接设备…" : "连接 Ledger 并读取地址"}
+              {busy ? t("正在连接设备…") : t("连接 Ledger 并读取地址")}
             </button>
           ) : (
             <button className="btn-primary" style={{ height: 40 }} disabled={busy || !selected} onClick={doBind}>
-              {busy ? "正在绑定…" : "绑定所选账户"}
+              {busy ? t("正在绑定…") : t("绑定所选账户")}
             </button>
           )}
         </div>

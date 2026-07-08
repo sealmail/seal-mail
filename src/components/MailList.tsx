@@ -1,4 +1,5 @@
 import type { UIEvent } from "react";
+import { useI18n } from "../i18n";
 import { CATEGORY_LABEL, CATEGORY_TAG, classifyMail, type MailCategory } from "../mailCategory";
 import { Seal } from "./Seal";
 import { TRUST_LABEL } from "../trust";
@@ -42,6 +43,7 @@ const BAR_COLOR: Record<string, string> = {
 };
 
 export function MailList(p: Props) {
+  const t = useI18n();
   function handleScroll(e: UIEvent<HTMLDivElement>) {
     if (!p.hasMore || p.loadingMore || p.loading || p.error) return;
     const el = e.currentTarget;
@@ -68,7 +70,7 @@ export function MailList(p: Props) {
       count: sorted.length,
       unreadCount: sorted.filter((m) => m.unread).length,
       selected: sorted.some((m) => `${m.accountId}/${m.folder}/${m.uid}` === p.selectedKey),
-      from: senders.length <= 2 ? senders.join(", ") : `${senders.slice(0, 2).join(", ")} 等`,
+      from: senders.length <= 2 ? senders.join(", ") : t("{names} 等", { names: senders.slice(0, 2).join(", ") }),
       flagged: sorted.some((m) => m.flagged),
       hasAttach: sorted.some((m) => m.hasAttach),
       risk: sorted.find((m) => m.risk)?.risk ?? latest.risk,
@@ -78,18 +80,18 @@ export function MailList(p: Props) {
   return (
     <div className="list-pane" style={{ width: p.width }}>
       <div className="list-head">
-        <div className="title">{p.title ?? "邮件"}</div>
+        <div className="title">{p.title ?? t("邮件")}</div>
         <span className="meta">
-          {p.syncing && <span className="sync-dot" title="同步中" />}
-          <span className="cache-count" title="当前筛选显示 / 本地已缓存">
-            显示 {p.loadedCount.toLocaleString()} · 缓存 {p.totalCount.toLocaleString()}
+          {p.syncing && <span className="sync-dot" title={t("同步中")} />}
+          <span className="cache-count" title={t("当前筛选显示 / 本地已缓存")}>
+            {t("显示 {a} · 缓存 {b}", { a: p.loadedCount.toLocaleString(), b: p.totalCount.toLocaleString() })}
           </span>
           {p.unreadCount > 0 && (
-            <button className="icon-btn" title="全部标为已读" onClick={p.onMarkAllRead}>
+            <button className="icon-btn" title={t("全部标为已读")} onClick={p.onMarkAllRead}>
               ✓✓
             </button>
           )}
-          <button className="icon-btn" title="刷新" onClick={p.onRefresh}>
+          <button className="icon-btn" title={t("刷新")} onClick={p.onRefresh}>
             ↻
           </button>
         </span>
@@ -97,28 +99,28 @@ export function MailList(p: Props) {
       <div className="list-filterbar">
         <div className="filter-segs">
           <button className={`seg${p.filterMode === "all" ? " on" : ""}`} onClick={() => p.onFilterMode("all")}>
-            全部
+            {t("全部")}
           </button>
           <button className={`seg${p.filterMode === "unread" ? " on" : ""}`} onClick={() => p.onFilterMode("unread")}>
-            未读{p.unreadCount > 0 ? ` ${p.unreadCount}` : ""}
+            {t("未读")}{p.unreadCount > 0 ? ` ${p.unreadCount}` : ""}
           </button>
           <button className={`seg${p.filterMode === "flagged" ? " on" : ""}`} onClick={() => p.onFilterMode("flagged")}>
-            ★ 星标
+            {t("★ 星标")}
           </button>
         </div>
-        <span className="list-count">{p.hasMore ? "可继续加载" : "已缓存"}</span>
+        <span className="list-count">{p.hasMore ? t("可继续加载") : t("已缓存")}</span>
       </div>
       <div className="list-categorybar">
         {(["personal", "business", "ads", "all"] as const).map((c) => (
           <button className={`category-seg${p.categoryMode === c ? " on" : ""}`} key={c} onClick={() => p.onCategoryMode(c)}>
-            {CATEGORY_LABEL[c]}
+            {t(CATEGORY_LABEL[c])}
             <span>{p.categoryCounts[c]}</span>
             {p.categoryUnreadCounts[c] > 0 && <b className="category-unread">{p.categoryUnreadCounts[c]}</b>}
           </button>
         ))}
       </div>
       <div className="list-scroll" onScroll={handleScroll}>
-        {p.loading && p.messages.length === 0 && <div className="empty-pane">正在读取本地缓存…</div>}
+        {p.loading && p.messages.length === 0 && <div className="empty-pane">{t("正在读取本地缓存…")}</div>}
         {p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
         {!p.error && p.notice && <div className="list-notice-bar">{p.notice}</div>}
         {!p.loading && p.error && p.messages.length === 0 && (
@@ -126,14 +128,14 @@ export function MailList(p: Props) {
             <div style={{ fontSize: 20 }}>⚠</div>
             {p.error}
             <button className="btn-ghost" onClick={p.onRefresh}>
-              重试
+              {t("重试")}
             </button>
           </div>
         )}
         {!p.loading && !p.error && p.messages.length === 0 && (
           <div className="empty-pane">
             <div style={{ fontSize: 22, color: "var(--mut-4)" }}>▤</div>
-            此目录暂无邮件
+            {t("此目录暂无邮件")}
           </div>
         )}
         {rows.map((row) => {
@@ -156,7 +158,7 @@ export function MailList(p: Props) {
                   <span className="from">{row.from || m.fromName}</span>
                   <button
                     className={`star-btn${row.flagged ? " on" : ""}`}
-                    title={row.flagged ? "取消星标" : "加星标"}
+                    title={row.flagged ? t("取消星标") : t("加星标")}
                     onClick={(e) => {
                       e.stopPropagation();
                       p.onToggleFlag(m);
@@ -172,10 +174,10 @@ export function MailList(p: Props) {
                 <div className="subject">{m.subject}</div>
                 <div className="preview">{m.preview || " "}</div>
                 <div className="tags">
-                  <span className={`tag ${m.trust}`}>{TRUST_LABEL[m.trust]}</span>
+                  <span className={`tag ${m.trust}`}>{t(TRUST_LABEL[m.trust])}</span>
                   {p.accountLabels?.[m.accountId] && <span className="tag lang">{p.accountLabels[m.accountId]}</span>}
-                  {row.risk && <span className="tag risk">⚠ 高风险</span>}
-                  <span className={`tag category ${category}`}>{CATEGORY_TAG[category]}</span>
+                  {row.risk && <span className="tag risk">⚠ {t("高风险")}</span>}
+                  <span className={`tag category ${category}`}>{t(CATEGORY_TAG[category])}</span>
                   <span className="tag lang">{m.lang}</span>
                   {row.hasAttach && <span className="tag lang">📎</span>}
                 </div>
@@ -185,7 +187,7 @@ export function MailList(p: Props) {
         })}
         {!p.loading && p.hasMore && (
           <button className="load-more" onClick={p.onLoadMore} disabled={p.loadingMore}>
-            {p.loadingMore ? "正在加载…" : "加载更早的邮件"}
+            {p.loadingMore ? t("正在加载…") : t("加载更早的邮件")}
           </button>
         )}
       </div>

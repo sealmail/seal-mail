@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { listContacts } from "../api";
 import type { Contact } from "../types";
@@ -14,6 +15,7 @@ interface Props {
  * 选中后用纯地址替换该片段（发送解析按分隔符拆，不支持 Name <addr> 形式）。
  */
 export function AddrInput(p: Props) {
+  const t = useI18n();
   const [hits, setHits] = useState<Contact[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -96,7 +98,7 @@ export function AddrInput(p: Props) {
             </span>
           ))}
           {preview.length > 3 && <span className="addr-chip muted">+{preview.length - 3}</span>}
-          <span className="addr-count">已识别 {preview.length} 个地址</span>
+          <span className="addr-count">{t("已识别 {n} 个地址", { n: preview.length })}</span>
         </div>
       )}
       {open && (

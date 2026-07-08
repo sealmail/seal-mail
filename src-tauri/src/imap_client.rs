@@ -28,7 +28,7 @@ impl imap::Authenticator for XOAuth2<'_> {
 // 显示时解码、创建目录时编码；与服务器交互一律用原始（编码后）名字。
 
 /// 改良 base64：用 ',' 代替 '/'，无填充，内容为 UTF-16BE
-fn decode_mutf7(s: &str) -> String {
+pub(crate) fn decode_mutf7(s: &str) -> String {
     use base64::engine::general_purpose::STANDARD_NO_PAD;
     use base64::Engine;
     let mut out = String::new();

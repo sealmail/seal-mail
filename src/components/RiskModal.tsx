@@ -1,12 +1,16 @@
+import { useI18n } from "../i18n";
 import { useState } from "react";
 import type { EmailFull } from "../types";
 
 interface Props {
   mail: EmailFull;
   onClose: () => void;
+  /** 勾选并确认：调用方记录该邮件已确认风险（收起横幅） */
+  onConfirm: () => void;
 }
 
 export function RiskModal(p: Props) {
+  const t = useI18n();
   const [ack, setAck] = useState(false);
   const reasons = p.mail.meta.risk?.reasons ?? [];
   const kind = p.mail.meta.risk?.kind;
@@ -15,8 +19,8 @@ export function RiskModal(p: Props) {
 
   const ackText =
     kind === "fund"
-      ? "我已通过电话或线下渠道独立核实此付款请求"
-      : "我已了解上述风险，并自行承担后续操作的责任";
+      ? t("我已通过电话或线下渠道独立核实此付款请求")
+      : t("我已了解上述风险，并自行承担后续操作的责任");
 
   return (
     <div className="overlay" onClick={p.onClose}>
@@ -34,12 +38,12 @@ export function RiskModal(p: Props) {
           <div style={{ fontSize: 26 }}>🔺</div>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: "var(--red)" }}>
-              {dangerous ? "高风险邮件 · 请勿按邮件要求操作" : "高风险操作 · 需人工核实"}
+              {dangerous ? t("高风险邮件 · 请勿按邮件要求操作") : t("高风险操作 · 需人工核实")}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--red)", opacity: 0.9, marginTop: 4, lineHeight: 1.5 }}>
               {trust === "verified"
-                ? "发件人身份已验证，但此操作不应仅凭一封邮件执行。"
-                : "此邮件未通过身份验证，其中的要求不可信。"}
+                ? t("发件人身份已验证，但此操作不应仅凭一封邮件执行。")
+                : t("此邮件未通过身份验证，其中的要求不可信。")}
             </div>
           </div>
         </div>
@@ -69,7 +73,7 @@ export function RiskModal(p: Props) {
               </div>
             ))}
             {reasons.length === 0 && (
-              <div style={{ fontSize: 12.5, color: "var(--ink-2)" }}>验证未通过：请通过其他渠道与发件人核实。</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-2)" }}>{t("验证未通过：请通过其他渠道与发件人核实。")}</div>
             )}
           </div>
           <div className={`ack-row${ack ? " on" : ""}`} onClick={() => setAck(!ack)}>
@@ -78,7 +82,7 @@ export function RiskModal(p: Props) {
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button className="btn-ghost" style={{ flex: 1, height: 42, borderRadius: 9 }} onClick={p.onClose}>
-              取消
+              {t("取消")}
             </button>
             <button
               style={{
@@ -94,9 +98,9 @@ export function RiskModal(p: Props) {
                 opacity: ack ? 1 : 0.7,
               }}
               disabled={!ack}
-              onClick={p.onClose}
+              onClick={p.onConfirm}
             >
-              确认并继续
+              {t("确认并继续")}
             </button>
           </div>
         </div>

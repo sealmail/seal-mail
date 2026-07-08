@@ -701,7 +701,11 @@ pub fn format_date(ts: i64) -> String {
     if dt.date_naive() == now.date_naive() {
         dt.format("%H:%M").to_string()
     } else if dt.year() == now.year() {
-        format!("{}月{}日", dt.month(), dt.day())
+        if crate::i18n::is_english() {
+            dt.format("%b %-d").to_string()
+        } else {
+            format!("{}月{}日", dt.month(), dt.day())
+        }
     } else {
         dt.format("%Y/%m/%d").to_string()
     }

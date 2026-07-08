@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { addPluginListener } from "@tauri-apps/api/core";
 import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
+import { applyLangPref, t, useI18n } from "./i18n";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
 import { FiltersModal } from "./components/FiltersModal";
@@ -165,7 +166,7 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
   if (!mail) {
     return (
       <div className="popout-shell">
-        <div className="empty-pane">这封邮件窗口的数据已经过期，请从主窗口重新打开。</div>
+        <div className="empty-pane">{t("这封邮件窗口的数据已经过期，请从主窗口重新打开。")}</div>
       </div>
     );
   }
@@ -190,9 +191,9 @@ function PopoutApp({ storageKey }: { storageKey: string }) {
       <div className="popout-body">
         {hasHtml && (
           <div className="body-toolbar">
-            {signed && showHtml && <span className="body-note">签名校验针对纯文本正文，HTML 版式仅供参考</span>}
+            {signed && showHtml && <span className="body-note">{t("签名校验针对纯文本正文，HTML 版式仅供参考")}</span>}
             <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setHtmlMode(!showHtml)}>
-              {showHtml ? "查看纯文本" : "查看 HTML 版式"}
+              {showHtml ? t("查看纯文本") : t("查看 HTML 版式")}
             </button>
           </div>
         )}
@@ -209,6 +210,7 @@ export default function App() {
 }
 
 function MailApp() {
+  useI18n();
   const [state, setState] = useState<AppStateView | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState("");
@@ -253,6 +255,26 @@ function MailApp() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [riskOpen, setRiskOpen] = useState(false);
+  // 已在风险弹窗里勾选确认的邮件（Message-ID 优先，持久化到本机）：横幅收起为一行提示
+  const [riskAcked, setRiskAcked] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("sealmail.riskAcked") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const riskKey = (m: EmailFull) => m.meta.messageId || mailKey(m.meta);
+  function ackRisk(m: EmailFull) {
+    setRiskAcked((prev) => {
+      const next = new Set(prev);
+      next.add(riskKey(m));
+      // 只保留最近 500 条，避免无限增长
+      const arr = [...next].slice(-500);
+      localStorage.setItem("sealmail.riskAcked", JSON.stringify(arr));
+      return new Set(arr);
+    });
+    setRiskOpen(false);
+  }
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderErr, setNewFolderErr] = useState<string | null>(null);
@@ -291,6 +313,8 @@ function MailApp() {
 
   // ── 初始化 ──
   useEffect(() => {
+    // 界面语言尽早生效（默认中文，英文用户首屏可能闪一下中文）
+    api.getLanguagePref().then(applyLangPref).catch(() => {});
     api
       .getState()
       .then((s) => {
@@ -435,7 +459,7 @@ function MailApp() {
       await backfillOlderToTarget(syncedTotal);
       if (seq === fetchSeq.current) await loadCached(Math.max(loadedRef.current, PAGE));
     } catch (e) {
-      if (seq === fetchSeq.current) setListError(`同步失败（本地缓存仍可用）：${e}`);
+      if (seq === fetchSeq.current) setListError(t("同步失败（本地缓存仍可用）：") + e);
     } finally {
       if (seq === fetchSeq.current) setSyncing(false);
     }
@@ -477,9 +501,9 @@ function MailApp() {
         if (!isFilteredView || exhausted || loadedRef.current === beforeRoundLoaded) break;
       }
       if (exhausted) {
-        setLoadMoreNotice("没有更早的邮件了");
+        setLoadMoreNotice(t("没有更早的邮件了"));
       } else if (isFilteredView && loadedRef.current > startedLoaded) {
-        setLoadMoreNotice("已继续加载缓存；如果当前分类没有新增，说明更早邮件不属于这个筛选。");
+        setLoadMoreNotice(t("已继续加载缓存；如果当前分类没有新增，说明更早邮件不属于这个筛选。"));
       }
     } catch (e) {
       setListError(String(e));
@@ -625,7 +649,7 @@ function MailApp() {
       const label = `mail-${m.accountId}-${m.uid}-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "-");
       const win = new WebviewWindow(label, {
         url: `/?popout=${encodeURIComponent(key)}`,
-        title: full.meta.subject || "邮件",
+        title: full.meta.subject || t("邮件"),
         width: 920,
         height: 760,
         minWidth: 680,
@@ -674,6 +698,13 @@ function MailApp() {
           console.warn("同步通知邮件失败，尝试从本地缓存打开", e);
         });
         meta = await locate();
+        // 还找不到：邮件很可能已被过滤规则移出该目录，按 Message-ID 全目录定位后重进
+        if (!meta && target.messageId) {
+          const loc = await api.locateMessage(target.accountId, target.messageId).catch(() => null);
+          if (loc && (loc.folder !== targetFolder || loc.uid !== target.uid)) {
+            return openNotificationMail({ ...target, folder: loc.folder, uid: loc.uid });
+          }
+        }
       } else {
         api.syncMessages(target.accountId, targetFolder).then(() => loadMessages()).catch(() => {});
       }
@@ -690,10 +721,10 @@ function MailApp() {
         setThread([selectedFull.meta]);
         setThreadFulls({ [mailKey(selectedFull.meta)]: selectedFull });
       } else {
-        setListError("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。");
+        setListError(t("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。"));
       }
     } catch (e) {
-      setListError(`打开通知邮件失败：${e}`);
+      setListError(t("打开通知邮件失败：") + e);
     } finally {
       setLoading(false);
       setSyncing(false);
@@ -909,14 +940,14 @@ function MailApp() {
     if (!selected) return;
     const target = preferredBlockFolder();
     if (!target) {
-      setListError("没有找到垃圾邮件或已删除邮件目录，请先创建一个目录后再屏蔽发件人。");
+      setListError(t("没有找到垃圾邮件或已删除邮件目录，请先创建一个目录后再屏蔽发件人。"));
       return;
     }
     const email = selected.meta.fromAddr.trim().toLowerCase();
     try {
       const rules = await api.saveFilter({
         id: "",
-        name: `屏蔽 ${email}`,
+        name: t("屏蔽 {email}", { email }),
         accountId: selected.meta.accountId,
         field: "from",
         op: "contains",
@@ -1081,7 +1112,7 @@ function MailApp() {
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (!name) {
-      setNewFolderErr("请输入目录名称");
+      setNewFolderErr(t("请输入目录名称"));
       return;
     }
     try {
@@ -1157,9 +1188,9 @@ function MailApp() {
                 <circle cx="5.5" cy="5.5" r="4" stroke="var(--mut-4)" strokeWidth="1.4" />
                 <path d="M8.5 8.5l3 3" stroke="var(--mut-4)" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
-              <input ref={searchRef} placeholder="搜索邮件、发件人或地址…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input ref={searchRef} placeholder={t("搜索邮件、发件人或地址…")} value={search} onChange={(e) => setSearch(e.target.value)} />
               {search && (
-                <button className="search-clear" onClick={() => setSearch("")} title="清空搜索">
+                <button className="search-clear" onClick={() => setSearch("")} title={t("清空搜索")}>
                   ×
                 </button>
               )}
@@ -1175,12 +1206,12 @@ function MailApp() {
               setComposeOpen(true);
             }}
           >
-            <span style={{ fontSize: 15, lineHeight: 1, marginTop: -1 }}>✎</span> 写邮件
+            <span style={{ fontSize: 15, lineHeight: 1, marginTop: -1 }}>✎</span> {t("写邮件")}
           </button>
         )}
       </div>
 
-      {bootError && <div className="demo-banner">初始化失败：{bootError}</div>}
+      {bootError && <div className="demo-banner">{t("初始化失败：")}{bootError}</div>}
 
       {!hasAccounts ? (
         // ── 首次使用引导 ──
@@ -1238,7 +1269,7 @@ function MailApp() {
             onOpenFilters={() => setFiltersOpen(true)}
           />
           <PaneResizer
-            title="拖动调整侧栏宽度"
+            title={t("拖动调整侧栏宽度")}
             onStart={() => {
               sidebarDragBase.current = sidebarWidth;
             }}
@@ -1274,7 +1305,7 @@ function MailApp() {
             <>
               <MailList
                 width={listWidth}
-                title={folders.find((f) => f.name === folder)?.display ?? folder}
+                title={t(folders.find((f) => f.name === folder)?.display ?? folder)}
                 messages={shownMessages}
                 selectedKey={selectedKey}
                 accountLabels={folder === UNIFIED_FOLDER ? accountLabels : undefined}
@@ -1301,7 +1332,7 @@ function MailApp() {
                 onRefresh={loadMessages}
               />
               <PaneResizer
-                title="拖动调整列表宽度"
+                title={t("拖动调整列表宽度")}
                 onStart={() => {
                   listDragBase.current = listWidth;
                 }}
@@ -1323,6 +1354,7 @@ function MailApp() {
                 onArchive={handleArchive}
                 onDelete={handleDelete}
                 onShowRisk={() => setRiskOpen(true)}
+                riskAcked={!!selected && riskAcked.has(riskKey(selected))}
                 onTrustSender={handleTrustSender}
                 onOpenProfile={() => setProfileOpen(true)}
                 onMarkUnread={handleMarkUnread}
@@ -1378,30 +1410,30 @@ function MailApp() {
         <ProfileSlideOver mail={selected} trusted={trusted} onClose={() => setProfileOpen(false)} />
       )}
 
-      {riskOpen && selected && <RiskModal mail={selected} onClose={() => setRiskOpen(false)} />}
+      {riskOpen && selected && <RiskModal mail={selected} onClose={() => setRiskOpen(false)} onConfirm={() => ackRisk(selected)} />}
 
       {confirmDelete && selected && (
         <div className="overlay" onClick={() => setConfirmDelete(false)}>
           <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <span className="title">永久删除</span>
+              <span className="title">{t("永久删除")}</span>
               <button className="modal-close" onClick={() => setConfirmDelete(false)}>
                 ×
               </button>
             </div>
             <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
-              「{selected.meta.subject}」已在回收站中，继续删除将<b style={{ color: "#9A2C1D" }}>从服务器上永久移除，无法恢复</b>。
+              「{selected.meta.subject}」{t("已在回收站中，继续删除将")}<b style={{ color: "#9A2C1D" }}>{t("从服务器上永久移除，无法恢复")}</b>。
             </div>
             <div className="modal-foot">
               <button className="btn-ghost" style={{ height: 40 }} onClick={() => setConfirmDelete(false)}>
-                取消
+                {t("取消")}
               </button>
               <button
                 className="btn-primary"
                 style={{ height: 40, background: "#9A2C1D" }}
                 onClick={() => doDelete(true)}
               >
-                永久删除
+                {t("永久删除")}
               </button>
             </div>
           </div>
@@ -1412,14 +1444,13 @@ function MailApp() {
         <div className="overlay" onClick={() => setFolderToDelete(null)}>
           <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <span className="title">删除目录</span>
+              <span className="title">{t("删除目录")}</span>
               <button className="modal-close" onClick={() => setFolderToDelete(null)}>
                 ×
               </button>
             </div>
             <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
-              将移除目录「{folderToDelete.display}」。如果服务器允许删除，会同时删除该目录中的邮件；
-              如果服务器拒绝删除，会从侧栏隐藏这个目录。
+              {t("将移除目录「{name}」。如果服务器允许删除，会同时删除该目录中的邮件；如果服务器拒绝删除，会从侧栏隐藏这个目录。", { name: folderToDelete.display })}
               {deleteFolderErr && (
                 <div className="form-error" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
                   {deleteFolderErr}
@@ -1428,14 +1459,14 @@ function MailApp() {
             </div>
             <div className="modal-foot">
               <button className="btn-ghost" style={{ height: 40 }} onClick={() => setFolderToDelete(null)}>
-                取消
+                {t("取消")}
               </button>
               <button
                 className="btn-primary"
                 style={{ height: 40, background: "#9A2C1D" }}
                 onClick={handleDeleteFolder}
               >
-                删除目录
+                {t("删除目录")}
               </button>
             </div>
           </div>
@@ -1446,14 +1477,13 @@ function MailApp() {
         <div className="overlay" onClick={() => setAccountToRemove(null)}>
           <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <span className="title">删除账户</span>
+              <span className="title">{t("删除账户")}</span>
               <button className="modal-close" onClick={() => setAccountToRemove(null)}>
                 ×
               </button>
             </div>
             <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
-              将从本机移除账户 <b style={{ color: "var(--ink-2)" }}>{accountToRemove.email}</b> 的配置和登录凭据。
-              这不会删除邮箱服务器上的邮件。
+              {t("将从本机移除账户")} <b style={{ color: "var(--ink-2)" }}>{accountToRemove.email}</b> {t("的配置和登录凭据。这不会删除邮箱服务器上的邮件。")}
               {removeAccountErr && (
                 <div className="form-error" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
                   {removeAccountErr}
@@ -1462,14 +1492,14 @@ function MailApp() {
             </div>
             <div className="modal-foot">
               <button className="btn-ghost" style={{ height: 40 }} onClick={() => setAccountToRemove(null)}>
-                取消
+                {t("取消")}
               </button>
               <button
                 className="btn-primary"
                 style={{ height: 40, background: "#9A2C1D" }}
                 onClick={handleRemoveAccount}
               >
-                删除账户
+                {t("删除账户")}
               </button>
             </div>
           </div>
@@ -1480,17 +1510,17 @@ function MailApp() {
         <div className="overlay" onClick={() => setNewFolderOpen(false)}>
           <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <span className="title">新建目录</span>
+              <span className="title">{t("新建目录")}</span>
               <button className="modal-close" onClick={() => setNewFolderOpen(false)}>
                 ×
               </button>
             </div>
             <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="field">
-                <label>目录名称</label>
+                <label>{t("目录名称")}</label>
                 <input
                   className="input"
-                  placeholder="例如：重要客户 / 发票 / 通知"
+                  placeholder={t("例如：重要客户 / 发票 / 通知")}
                   value={newFolderName}
                   autoFocus
                   onChange={(e) => setNewFolderName(e.target.value)}
@@ -1498,14 +1528,14 @@ function MailApp() {
                 />
               </div>
               <div style={{ fontSize: 11, color: "var(--mut-3)", lineHeight: 1.6 }}>
-                IMAP 账户会在邮件服务器上创建真实目录；POP3 账户使用本地目录。配合「过滤规则」可把某一类邮件自动归入该目录。
+                {t("IMAP 账户会在邮件服务器上创建真实目录；POP3 账户使用本地目录。配合「过滤规则」可把某一类邮件自动归入该目录。")}
               </div>
               {newFolderErr && <div className="form-error">{newFolderErr}</div>}
             </div>
             <div className="modal-foot">
               <span />
               <button className="btn-primary" style={{ height: 40 }} onClick={handleCreateFolder}>
-                创建
+                {t("创建")}
               </button>
             </div>
           </div>

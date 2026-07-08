@@ -3,6 +3,7 @@ pub mod core;
 pub mod crypto;
 pub mod db;
 pub mod filters;
+pub mod i18n;
 pub mod imap_client;
 pub mod ledger;
 pub mod logging;
@@ -152,6 +153,7 @@ async fn cli_json(
         .cloned()
         .collect::<Vec<_>>()
         .join(" ");
+    let app2 = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || cli_json_inner(app, args, stdin, env))
         .await
         .map_err(|e| format!("CLI 任务执行失败: {e}"))?;
@@ -160,7 +162,23 @@ async fn cli_json(
         t0.elapsed().as_millis(),
         result.is_ok()
     ));
+    // 偏好由 CLI 子进程写盘：成功后把 GUI 常驻进程的内存态一并刷新，
+    // 否则 close_behavior/notify/language 要重启才生效
+    if result.is_ok() && brief.starts_with("pref") {
+        refresh_prefs_in_memory(&app2);
+    }
     result
+}
+
+fn refresh_prefs_in_memory(app: &AppHandle) {
+    let Ok(dir) = app.path().app_config_dir() else {
+        return;
+    };
+    let prefs = store::StoreData::load_prefs(&dir);
+    crate::i18n::set_lang_from_pref(&prefs.language);
+    if let Some(state) = app.try_state::<AppState>() {
+        state.inner.lock().unwrap().prefs = prefs;
+    }
 }
 
 fn cli_json_inner(

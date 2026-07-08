@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 
@@ -41,8 +42,8 @@ async function shouldOpenExternal(url: string, label?: string | null): Promise<b
   const mismatch = shownDomain && host && shownDomain !== host && !host.endsWith(`.${shownDomain}`);
   if (!mismatch) return true;
   return ask(
-    `链接文字看起来是 ${shownDomain}，实际指向的是 ${host}。\n\n${url}\n\n仍要用系统浏览器打开吗？`,
-    { title: "链接地址与显示不符", kind: "warning", okLabel: "打开", cancelLabel: "取消" }
+    t("链接文字看起来是 {shown}，实际指向的是 {host}。", { shown: shownDomain, host }) + `\n\n${url}\n\n` + t("仍要用系统浏览器打开吗？"),
+    { title: t("链接地址与显示不符"), kind: "warning", okLabel: t("打开"), cancelLabel: t("取消") }
   );
 }
 

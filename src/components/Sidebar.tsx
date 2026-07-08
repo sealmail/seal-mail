@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import type { Account, FolderInfo, IdentityInfo } from "../types";
 
 export const RISK_FOLDER = "__risk__";
@@ -46,10 +47,11 @@ interface Props {
 }
 
 export function Sidebar(p: Props) {
+  const t = useI18n();
   return (
     <div className="sidebar" style={{ width: p.width }}>
       <div className="sidebar-scroll">
-        <div className="side-label">邮箱</div>
+        <div className="side-label">{t("邮箱")}</div>
         {p.folders.map((f) => {
           const active = p.view === "mail" && p.currentFolder === f.name;
           const isInbox = f.name === "INBOX";
@@ -63,13 +65,13 @@ export function Sidebar(p: Props) {
                 onClick={() => p.onSelectFolder(f.name)}
               >
                 <span className="icon">{folderIcon(f.name, f.display)}</span>
-                <span className="label">{f.display}</span>
+                <span className="label">{t(f.display)}</span>
                 {count > 0 && <span className={`count${isRisk ? " red" : ""}`}>{count}</span>}
               </button>
               {deletable && (
                 <button
                   className="side-action"
-                  title={`删除目录 ${f.display}`}
+                  title={t("删除目录 {name}", { name: t(f.display) })}
                   onClick={(e) => {
                     e.stopPropagation();
                     p.onDeleteFolder(f);
@@ -82,18 +84,18 @@ export function Sidebar(p: Props) {
           );
         })}
         <button className="side-add" onClick={p.onNewFolder}>
-          + 新建目录
+          {t("+ 新建目录")}
         </button>
 
         <div style={{ height: 10 }} />
-        <div className="side-label">整理</div>
+        <div className="side-label">{t("整理")}</div>
         <button className="side-item" onClick={p.onOpenFilters}>
           <span className="icon">⧉</span>
-          <span className="label">过滤规则</span>
+          <span className="label">{t("过滤规则")}</span>
         </button>
 
         <div style={{ height: 10 }} />
-        <div className="side-label">已连接账户</div>
+        <div className="side-label">{t("已连接账户")}</div>
         {p.accounts.map((a) => (
           <div key={a.id} className="account-row-wrap">
             <div
@@ -108,7 +110,7 @@ export function Sidebar(p: Props) {
             </div>
             <button
               className="account-action"
-              title={`删除账户 ${a.email}`}
+              title={t("删除账户 {name}", { name: a.email })}
               onClick={(e) => {
                 e.stopPropagation();
                 p.onRemoveAccount(a);
@@ -119,15 +121,15 @@ export function Sidebar(p: Props) {
           </div>
         ))}
         <button className="side-add" onClick={p.onAddAccount}>
-          + 添加账户
+          {t("+ 添加账户")}
         </button>
       </div>
 
       <div className="sidebar-footer">
         <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
           <span className="icon">⊟</span>
-          <span className="label">设置</span>
-          {p.identity && <span className="key-status" title={p.ledgerMode ? "Ledger 已绑定" : "本地密钥已就绪"} />}
+          <span className="label">{t("设置")}</span>
+          {p.identity && <span className="key-status" title={p.ledgerMode ? t("Ledger 已绑定") : t("本地密钥已就绪")} />}
         </button>
       </div>
     </div>

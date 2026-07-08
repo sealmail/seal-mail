@@ -215,6 +215,8 @@ pub struct AppPrefs {
     pub close_behavior: String,
     /// 新邮件系统通知（窗口未聚焦时弹横幅）
     pub notify_new_mail: bool,
+    /// 界面语言："system"（跟随系统）| "zh" | "en"
+    pub language: String,
 }
 
 fn default_close_behavior() -> String {
@@ -230,6 +232,7 @@ impl Default for AppPrefs {
         AppPrefs {
             close_behavior: default_close_behavior(),
             notify_new_mail: true,
+            language: "system".into(),
         }
     }
 }

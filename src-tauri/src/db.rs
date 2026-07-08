@@ -414,6 +414,33 @@ pub fn uids_from(
     Ok(rows)
 }
 
+/// 全目录范围找出原始邮件里含指定子串的候选行（新→旧），ASCII 大小写不敏感
+/// （通知目标里的 Message-ID 已规范化为小写，原始头可能是大写）。
+/// 用于按 Message-ID 定位被过滤规则移走的邮件；命中行还需上层解析头部确认，
+/// 因为回复邮件的 References 里也会出现同一个 Message-ID。
+pub fn find_candidates_containing(
+    conn: &Connection,
+    account: &str,
+    needle: &str,
+    limit: u32,
+) -> Result<Vec<(String, u32, Vec<u8>)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT folder, uid, raw FROM messages
+             WHERE account_id=?1 AND instr(lower(CAST(raw AS TEXT)), lower(?2)) > 0
+             ORDER BY timestamp DESC, uid DESC LIMIT ?3",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![account, needle, limit], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(rows)
+}
+
 pub fn uidvalidity(conn: &Connection, account: &str, folder: &str) -> Result<Option<u32>, String> {
     conn.query_row(
         "SELECT uidvalidity FROM folder_state WHERE account_id=?1 AND folder=?2",

@@ -127,11 +127,9 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
         let n = &notices[0];
         (
             truncate_for_notice(&format_sender(n), 80),
-            format!(
-                "标题：{}\n正文：{}",
-                truncate_for_notice(&n.subject, 80),
-                truncate_for_notice(&n.preview, 140)
-            ),
+            crate::i18n::tr("标题：{a}\n正文：{b}")
+                .replace("{a}", &truncate_for_notice(&n.subject, 80))
+                .replace("{b}", &truncate_for_notice(&n.preview, 140)),
         )
     } else if !notices.is_empty() {
         let mut lines = notices
@@ -147,13 +145,13 @@ fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &
             })
             .collect::<Vec<_>>();
         if new_count as usize > lines.len() {
-            lines.push(format!("还有 {} 封", new_count as usize - lines.len()));
+            lines.push(crate::i18n::tr_n("还有 {n} 封", new_count as usize - lines.len()));
         }
-        (format!("收到 {} 封新邮件", new_count), lines.join("\n"))
+        (crate::i18n::tr_n("收到 {n} 封新邮件", new_count), lines.join("\n"))
     } else if new_count > 1 {
-        (format!("收到 {} 封新邮件", new_count), email)
+        (crate::i18n::tr_n("收到 {n} 封新邮件", new_count), email)
     } else {
-        ("收到新邮件".to_string(), email)
+        (crate::i18n::tr("收到新邮件"), email)
     };
     // 这条通知点击后要打开的邮件（取最新一封）
     let target = notices.first().map(|n| NotificationMailTarget {

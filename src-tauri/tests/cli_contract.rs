@@ -31,6 +31,8 @@ fn run_cli(dir: &Path, args: &[&str]) -> Output {
     Command::new(cli_bin())
         .args(args)
         .env("SEALMAIL_CONFIG_DIR", dir)
+        // 契约断言的是中文文案；宿主 LANG 可能是英文（language 默认跟随系统），固定语言保证确定性
+        .env("LC_ALL", "zh_CN.UTF-8")
         .output()
         .expect("cli process should start")
 }

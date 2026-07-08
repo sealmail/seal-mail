@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import type { EmailFull, RiskInfo, TrustTag, VerifyDetail } from "./types";
 
 export const TRUST_LABEL: Record<TrustTag, string> = {
@@ -12,36 +13,36 @@ export function statusText(v: VerifyDetail): { title: string; sub: string; tone:
   switch (v.status) {
     case "verified":
       return {
-        title: "已验证本人",
-        sub: "数字签名有效 · 发件人身份与可信记录完全匹配",
+        title: t("已验证本人"),
+        sub: t("数字签名有效 · 发件人身份与可信记录完全匹配"),
         tone: "jade",
         railBg: "#F6F8F5",
       };
     case "signedUnknown":
       return {
-        title: "签名有效 · 尚未列入可信",
-        sub: "签名校验通过，但这把密钥还不在你的可信联系人记录中。确认对方身份后可加入可信。",
+        title: t("签名有效 · 尚未列入可信"),
+        sub: t("签名校验通过，但这把密钥还不在你的可信联系人记录中。确认对方身份后可加入可信。"),
         tone: "gold",
         railBg: "#F0F4EE",
       };
     case "unsigned":
       return {
-        title: "未盖印 · 身份未知",
-        sub: "该发件人未签名，无法验证其真实身份。",
+        title: t("未盖印 · 身份未知"),
+        sub: t("该发件人未签名，无法验证其真实身份。"),
         tone: "gray",
         railBg: "#F4F6F3",
       };
     case "tampered":
       return {
-        title: "封印破损 · 内容被改动",
-        sub: "签名存在，但邮件正文在传输中被修改。请勿信任此内容。",
+        title: t("封印破损 · 内容被改动"),
+        sub: t("签名存在，但邮件正文在传输中被修改。请勿信任此内容。"),
         tone: "red",
         railBg: "#FCF4F2",
       };
     case "impersonation":
       return {
-        title: "冒充已知联系人",
-        sub: "显示名与可信联系人相同，但密钥指纹与域名均不符。疑似钓鱼。",
+        title: t("冒充已知联系人"),
+        sub: t("显示名与可信联系人相同，但密钥指纹与域名均不符。疑似钓鱼。"),
         tone: "red",
         railBg: "#FCF1EF",
       };
@@ -68,47 +69,47 @@ export function buildChecks(mail: EmailFull): CheckRow[] {
   switch (v.status) {
     case "verified":
       return [
-        { kind: "ok", label: "发件人身份", val: v.contactName, sub: mail.meta.fromAddr },
-        { kind: "ok", label: "签名方式", val: v.method },
-        { kind: "ok", label: "密钥指纹", val: v.fingerprint, mono: true, sub: "与可信记录一致" },
-        { kind: "ok", label: "内容完整性", val: "正文与签名哈希一致 · 未被改动" },
-        { kind: "ok", label: "密钥历史", val: `自 ${v.since} 起 · 已验证 ${v.verifiedCount} 封` },
+        { kind: "ok", label: t("发件人身份"), val: v.contactName, sub: mail.meta.fromAddr },
+        { kind: "ok", label: t("签名方式"), val: v.method },
+        { kind: "ok", label: t("密钥指纹"), val: v.fingerprint, mono: true, sub: t("与可信记录一致") },
+        { kind: "ok", label: t("内容完整性"), val: t("正文与签名哈希一致 · 未被改动") },
+        { kind: "ok", label: t("密钥历史"), val: t("自 {since} 起 · 已验证 {n} 封", { since: v.since, n: v.verifiedCount }) },
       ];
     case "signedUnknown":
       return [
-        { kind: "ok", label: "签名校验", val: "签名有效 · 内容未被改动" },
-        { kind: "ok", label: "签名方式", val: v.method },
-        { kind: "warn", label: "密钥指纹", val: v.fingerprint, mono: true, sub: "首次见到这把密钥" },
-        { kind: "neu", label: "建议", val: "通过其他渠道核实对方身份后，将其加入可信联系人" },
+        { kind: "ok", label: t("签名校验"), val: t("签名有效 · 内容未被改动") },
+        { kind: "ok", label: t("签名方式"), val: v.method },
+        { kind: "warn", label: t("密钥指纹"), val: v.fingerprint, mono: true, sub: t("首次见到这把密钥") },
+        { kind: "neu", label: t("建议"), val: t("通过其他渠道核实对方身份后，将其加入可信联系人") },
       ];
     case "unsigned":
       return [
-        { kind: "neu", label: "签名", val: "无签名" },
-        { kind: "neu", label: "发件人身份", val: "无法验证" },
-        { kind: "neu", label: "与你的关系", val: "不在可信联系人中" },
-        { kind: "neu", label: "建议", val: "按常规谨慎对待；勿据此执行敏感操作" },
+        { kind: "neu", label: t("签名"), val: t("无签名") },
+        { kind: "neu", label: t("发件人身份"), val: t("无法验证") },
+        { kind: "neu", label: t("与你的关系"), val: t("不在可信联系人中") },
+        { kind: "neu", label: t("建议"), val: t("按常规谨慎对待；勿据此执行敏感操作") },
       ];
     case "tampered":
       return [
-        { kind: "ok", label: "签名存在", val: v.method },
-        { kind: "bad", label: "内容完整性", val: "正文哈希与签名不符 — 内容在传输中被改动" },
-        { kind: "neu", label: "签名时哈希", val: v.signedHash, mono: true },
-        { kind: "bad", label: "收到时哈希", val: v.gotHash, mono: true, sub: "不匹配" },
-        { kind: "warn", label: "结论", val: "签名无效，请勿信任此版本内容" },
+        { kind: "ok", label: t("签名存在"), val: v.method },
+        { kind: "bad", label: t("内容完整性"), val: t("正文哈希与签名不符 — 内容在传输中被改动") },
+        { kind: "neu", label: t("签名时哈希"), val: v.signedHash, mono: true },
+        { kind: "bad", label: t("收到时哈希"), val: v.gotHash, mono: true, sub: t("不匹配") },
+        { kind: "warn", label: t("结论"), val: t("签名无效，请勿信任此版本内容") },
       ];
     case "impersonation":
       return [
-        { kind: "warn", label: "声称身份", val: v.claimed },
-        { kind: "bad", label: "实际域名", val: v.gotDomain, mono: true, sub: `可信记录为 ${v.realDomain}` },
+        { kind: "warn", label: t("声称身份"), val: v.claimed },
+        { kind: "bad", label: t("实际域名"), val: v.gotDomain, mono: true, sub: t("可信记录为 {domain}", { domain: v.realDomain }) },
         {
           kind: "bad",
-          label: "密钥指纹",
-          val: v.gotFingerprint ?? "未签名 / 无可信密钥",
+          label: t("密钥指纹"),
+          val: v.gotFingerprint ?? t("未签名 / 无可信密钥"),
           mono: true,
-          sub: "与可信记录不符",
+          sub: t("与可信记录不符"),
         },
-        { kind: "neu", label: "可信记录指纹", val: v.realFingerprint, mono: true },
-        { kind: "bad", label: "结论", val: "冒充已知联系人" },
+        { kind: "neu", label: t("可信记录指纹"), val: v.realFingerprint, mono: true },
+        { kind: "bad", label: t("结论"), val: t("冒充已知联系人") },
       ];
   }
 }
@@ -129,9 +130,9 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
     return {
       cls: "red-strong",
       icon: "⛔",
-      title: "账号安全警告 · 疑似钓鱼",
-      msg: "此邮件冒充你的可信联系人。任何合法机构都不会索取助记词、私钥或密码。请勿点击其中链接或回复。",
-      btn: "查看风险详情",
+      title: t("账号安全警告 · 疑似钓鱼"),
+      msg: t("此邮件冒充你的可信联系人。任何合法机构都不会索取助记词、私钥或密码。请勿点击其中链接或回复。"),
+      btn: t("查看风险详情"),
       solid: "#9a2f27",
     };
   }
@@ -139,9 +140,9 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
     return {
       cls: "red",
       icon: "⚠",
-      title: "内容在传输中被改动",
-      msg: "这封邮件的签名无法覆盖当前内容。执行任何操作前请向对方核实原始内容。",
-      btn: "查看哈希对比",
+      title: t("内容在传输中被改动"),
+      msg: t("这封邮件的签名无法覆盖当前内容。执行任何操作前请向对方核实原始内容。"),
+      btn: t("查看哈希对比"),
       solid: "#9a2f27",
     };
   }
@@ -150,9 +151,9 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
     return {
       cls: "amber",
       icon: "🔺",
-      title: "高风险资金操作",
-      msg: "已验证 ≠ 应当照做——付款类操作不应仅凭一封邮件执行。请通过电话或线下渠道独立核实。",
-      btn: "查看风险详情",
+      title: t("高风险资金操作"),
+      msg: t("已验证 ≠ 应当照做——付款类操作不应仅凭一封邮件执行。请通过电话或线下渠道独立核实。"),
+      btn: t("查看风险详情"),
       solid: "#5f554c",
     };
   }
@@ -160,18 +161,18 @@ export function riskBanner(mail: EmailFull): BannerSpec | null {
     return {
       cls: "red",
       icon: "⛔",
-      title: "账号安全风险",
-      msg: "此邮件涉及凭据 / 密钥类敏感信息。任何合法机构都不会通过邮件索取助记词或密码。",
-      btn: "查看风险详情",
+      title: t("账号安全风险"),
+      msg: t("此邮件涉及凭据 / 密钥类敏感信息。任何合法机构都不会通过邮件索取助记词或密码。"),
+      btn: t("查看风险详情"),
       solid: "#9a2f27",
     };
   }
   return {
     cls: "amber",
     icon: "⚠",
-    title: "合同 / 条款相关 · 带时限要求",
-    msg: "涉及合同条款且带有时限措辞。签署前请确认条款与此前沟通一致。",
-    btn: "查看风险详情",
+    title: t("合同 / 条款相关 · 带时限要求"),
+    msg: t("涉及合同条款且带有时限措辞。签署前请确认条款与此前沟通一致。"),
+    btn: t("查看风险详情"),
     solid: "#5f554c",
   };
 }

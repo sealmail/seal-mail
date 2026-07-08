@@ -1,3 +1,4 @@
+import { t, useI18n } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { ask as askDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { AppIcon } from "./AppIcon";
@@ -25,6 +26,8 @@ interface Props {
   onArchive: () => void;
   onDelete: () => void;
   onShowRisk: () => void;
+  /** 用户已在风险弹窗里勾选确认：红色横幅收起为一行低调提示 */
+  riskAcked: boolean;
   onTrustSender: () => void;
   onOpenProfile: () => void;
   onMarkUnread: () => void;
@@ -83,13 +86,14 @@ function attachmentWarning(name: string) {
   const doubleExt = parts.length >= 3 && RISKY_ATTACHMENT_EXTS.has(ext);
   if (!risky && !doubleExt && !hasHiddenDirection) return null;
   const reasons = [];
-  if (risky) reasons.push(`扩展名 .${ext} 可能是可执行文件`);
-  if (doubleExt) reasons.push("文件名包含多重扩展名");
-  if (hasHiddenDirection) reasons.push("文件名包含可能伪装扩展名的控制字符");
-  return `这个附件有风险：${reasons.join("，")}。\n\n只在确认来源可信时保存。`;
+  if (risky) reasons.push(t("扩展名 .{ext} 可能是可执行文件", { ext }));
+  if (doubleExt) reasons.push(t("文件名包含多重扩展名"));
+  if (hasHiddenDirection) reasons.push(t("文件名包含可能伪装扩展名的控制字符"));
+  return t("这个附件有风险：{reasons}。", { reasons: reasons.join(t("，")) }) + "\n\n" + t("只在确认来源可信时保存。");
 }
 
 export function MessageView(p: Props) {
+  useI18n();
   // 一键信任确认卡：换邮件时收起
   const [trustConfirm, setTrustConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -121,16 +125,16 @@ export function MessageView(p: Props) {
   async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
     // WKWebView 里 window.confirm 是 no-op（静默返回 false），必须走 dialog 插件
-    if (warning && !(await askDialog(warning, { title: "危险附件", kind: "warning", okLabel: "继续保存", cancelLabel: "取消" }))) return;
-    const path = await saveFileDialog({ defaultPath: name, title: "保存附件" });
+    if (warning && !(await askDialog(warning, { title: t("危险附件"), kind: "warning", okLabel: t("继续保存"), cancelLabel: t("取消") }))) return;
+    const path = await saveFileDialog({ defaultPath: name, title: t("保存附件") });
     if (!path) return;
     const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
-    setAttachState((s) => ({ ...s, [stateKey]: "保存中…" }));
+    setAttachState((s) => ({ ...s, [stateKey]: t("保存中…") }));
     try {
       await saveAttachment(mail.meta.accountId, mail.meta.folder, mail.meta.uid, i, path);
-      setAttachState((s) => ({ ...s, [stateKey]: "已保存 ✓" }));
+      setAttachState((s) => ({ ...s, [stateKey]: t("已保存 ✓") }));
     } catch (e) {
-      setAttachState((s) => ({ ...s, [stateKey]: `失败：${e}` }));
+      setAttachState((s) => ({ ...s, [stateKey]: t("失败：") + e }));
     }
   }
 
@@ -139,7 +143,7 @@ export function MessageView(p: Props) {
       <div className="msg-pane">
         <div className="empty-pane">
           <AppIcon className="empty-icon" alt="" />
-          选择一封邮件查看内容与验证结果
+          {t("选择一封邮件查看内容与验证结果")}
         </div>
       </div>
     );
@@ -161,9 +165,9 @@ export function MessageView(p: Props) {
       <>
         {hasHtml && (
           <div className="body-toolbar">
-            {signed && showHtml && <span className="body-note">⚠ 签名校验针对纯文本正文，HTML 版式仅供参考</span>}
+            {signed && showHtml && <span className="body-note">⚠ {t("签名校验针对纯文本正文，HTML 版式仅供参考")}</span>}
             <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setMode(!showHtml)}>
-              {showHtml ? "查看纯文本" : "查看 HTML 版式"}
+              {showHtml ? t("查看纯文本") : t("查看 HTML 版式")}
             </button>
           </div>
         )}
@@ -183,7 +187,7 @@ export function MessageView(p: Props) {
           className="thread-card thread-card-stub"
           key={key}
           onClick={() => p.onLoadThreadMail(meta)}
-          title="点击加载这封邮件的正文"
+          title={t("点击加载这封邮件的正文")}
         >
           <div className="thread-card-head">
             <div className="msg-fromline">
@@ -197,7 +201,7 @@ export function MessageView(p: Props) {
           </div>
           <div className="thread-stub-preview">{meta.preview || "…"}</div>
           <button className="btn-ghost thread-stub-load" onClick={(e) => { e.stopPropagation(); p.onLoadThreadMail(meta); }}>
-            展开正文
+            {t("展开正文")}
           </button>
         </div>
       );
@@ -219,13 +223,13 @@ export function MessageView(p: Props) {
           <div className="msg-rcpts">
             {mail.to.length > 0 && (
               <div className="rcpt-line">
-                <span className="rcpt-label">收件人</span>
+                <span className="rcpt-label">{t("收件人")}</span>
                 <span className="rcpt-list">{mail.to.join("、")}</span>
               </div>
             )}
             {mail.cc.length > 0 && (
               <div className="rcpt-line">
-                <span className="rcpt-label">抄送</span>
+                <span className="rcpt-label">{t("抄送")}</span>
                 <span className="rcpt-list">{mail.cc.join("、")}</span>
               </div>
             )}
@@ -246,7 +250,7 @@ export function MessageView(p: Props) {
                     </div>
                   </div>
                   <button className="btn-ghost attach-save" onClick={() => downloadAttachment(mail, i, a.name)}>
-                    保存
+                    {t("保存")}
                   </button>
                 </div>
               );
@@ -274,7 +278,7 @@ export function MessageView(p: Props) {
               >
                 <button
                   className="verify-trigger"
-                  title="查看验证详情"
+                  title={t("查看验证详情")}
                   onClick={() => {
                     setVerifyPinned((v) => !v);
                     setVerifyOpen(true);
@@ -308,11 +312,11 @@ export function MessageView(p: Props) {
                     <div className="verify-pop-actions">
                       {canTrust && (
                         <button className="btn-ghost" onClick={p.onTrustSender}>
-                          加入可信联系人
+                          {t("加入可信联系人")}
                         </button>
                       )}
                       <button className="btn-ghost" onClick={p.onOpenProfile}>
-                        发件人档案
+                        {t("发件人档案")}
                       </button>
                     </div>
                   </div>
@@ -323,7 +327,7 @@ export function MessageView(p: Props) {
                 <div className="msg-addr">{m.meta.fromAddr}</div>
                 {m.verify.status === "signedUnknown" && !trustConfirm && (
                   <button className="trust-chip" onClick={() => setTrustConfirm(true)}>
-                    ✓ 信任此发件人
+                    ✓ {t("信任此发件人")}
                   </button>
                 )}
               </div>
@@ -332,13 +336,13 @@ export function MessageView(p: Props) {
               <span className="msg-date">{m.meta.dateDisplay}</span>
               <div className="msg-actions">
                 <button className="btn-ghost" onClick={p.onReply}>
-                  回复
+                  {t("回复")}
                 </button>
                 <button className="btn-ghost" onClick={p.onReplyAll}>
-                  回复全部
+                  {t("回复全部")}
                 </button>
                 <button className="btn-ghost" onClick={p.onForward}>
-                  转发
+                  {t("转发")}
                 </button>
                 {p.canMove && (
                   <select
@@ -347,30 +351,30 @@ export function MessageView(p: Props) {
                     value=""
                     onChange={(e) => e.target.value && p.onMove(e.target.value)}
                   >
-                    <option value="">移动到…</option>
+                    <option value="">{t("移动到…")}</option>
                     {moveTargets.map((f) => (
                       <option key={f.name} value={f.name}>
-                        {f.display}
+                        {t(f.display)}
                       </option>
                     ))}
                   </select>
                 )}
                 {p.canArchive && (
-                  <button className="btn-ghost" onClick={p.onArchive} title="归档">
-                    归档
+                  <button className="btn-ghost" onClick={p.onArchive} title={t("归档")}>
+                    {t("归档")}
                   </button>
                 )}
-                <button className="btn-ghost" onClick={p.onToggleFlag} title={m.meta.flagged ? "取消星标" : "加星标"}>
-                  {m.meta.flagged ? "★ 已星标" : "☆ 星标"}
+                <button className="btn-ghost" onClick={p.onToggleFlag} title={m.meta.flagged ? t("取消星标") : t("加星标")}>
+                  {m.meta.flagged ? t("★ 已星标") : t("☆ 星标")}
                 </button>
-                <button className="btn-ghost" onClick={p.onMarkUnread} title="标为未读">
-                  标为未读
+                <button className="btn-ghost" onClick={p.onMarkUnread} title={t("标为未读")}>
+                  {t("标为未读")}
                 </button>
-                <button className="btn-ghost" onClick={p.onBlockSender} title="后续来自该邮箱的邮件移入垃圾邮件">
-                  屏蔽发件人
+                <button className="btn-ghost" onClick={p.onBlockSender} title={t("后续来自该邮箱的邮件移入垃圾邮件")}>
+                  {t("屏蔽发件人")}
                 </button>
-                <button className="btn-ghost" onClick={p.onDelete} title="删除">
-                  删除
+                <button className="btn-ghost" onClick={p.onDelete} title={t("删除")}>
+                  {t("删除")}
                 </button>
               </div>
             </div>
@@ -379,13 +383,13 @@ export function MessageView(p: Props) {
             <div className="msg-rcpts">
               {m.to.length > 0 && (
                 <div className="rcpt-line">
-                  <span className="rcpt-label">收件人</span>
+                  <span className="rcpt-label">{t("收件人")}</span>
                   <span className="rcpt-list">{m.to.join("、")}</span>
                 </div>
               )}
               {m.cc.length > 0 && (
                 <div className="rcpt-line">
-                  <span className="rcpt-label">抄送</span>
+                  <span className="rcpt-label">{t("抄送")}</span>
                   <span className="rcpt-list">{m.cc.join("、")}</span>
                 </div>
               )}
@@ -406,7 +410,7 @@ export function MessageView(p: Props) {
                       </div>
                     </div>
                     <button className="btn-ghost attach-save" onClick={() => downloadAttachment(m, i, a.name)}>
-                      保存
+                      {t("保存")}
                     </button>
                   </div>
                 );
@@ -418,13 +422,13 @@ export function MessageView(p: Props) {
         {trustConfirm && unknownFpr && (
           <div className="trust-confirm">
             <div className="title">
-              将 {m.meta.fromName} 加入可信联系人？
+              {t("将 {name} 加入可信联系人？", { name: m.meta.fromName })}
             </div>
             <div className="row">
               <span className="mono">{m.meta.fromAddr}</span>
             </div>
             <div className="row">
-              <span className="mono">指纹 {unknownFpr}</span>
+              <span className="mono">{t("指纹")} {unknownFpr}</span>
               <button
                 className="btn-ghost"
                 style={{ height: 24, padding: "0 8px", fontSize: 11 }}
@@ -433,27 +437,32 @@ export function MessageView(p: Props) {
                   setCopied(true);
                 }}
               >
-                {copied ? "已复制" : "复制指纹"}
+                {copied ? t("已复制") : t("复制指纹")}
               </button>
             </div>
             <div className="msg">
-              签名只能证明「这封信出自这把密钥、内容未被改动」，并不能证明密钥背后就是 TA
-              本人。建议先通过微信、电话等<b>邮件以外的渠道</b>与对方核对一遍指纹再确认。
-              确认后，今后凡是这把密钥签名的邮件都会直接显示绿色「已验证本人」；若有人换用别的密钥冒充这个地址，SealMail
-              会立即标红警告。
+              {t("签名只能证明「这封信出自这把密钥、内容未被改动」，并不能证明密钥背后就是 TA 本人。建议先通过")}<b>{t("邮件以外的渠道")}</b>{t("（微信、电话等）与对方核对一遍指纹再确认。确认后，今后凡是这把密钥签名的邮件都会直接显示绿色「已验证本人」；若有人换用别的密钥冒充这个地址，SealMail 会立即标红警告。")}
             </div>
             <div className="actions">
               <button className="btn-solid" style={{ background: "var(--jade)" }} onClick={p.onTrustSender}>
-                ✓ 确认信任
+                ✓ {t("确认信任")}
               </button>
               <button className="btn-ghost" onClick={() => setTrustConfirm(false)}>
-                取消
+                {t("取消")}
               </button>
             </div>
           </div>
         )}
 
-        {banner && (
+        {banner && p.riskAcked && (
+          <div className="risk-acked-row">
+            <span>✓ {t("已确认风险提示")} · {banner.title}</span>
+            <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={p.onShowRisk}>
+              {t("重新查看")}
+            </button>
+          </div>
+        )}
+        {banner && !p.riskAcked && (
           <div className={`risk-banner ${banner.cls}`}>
             <div className="icon">{banner.icon}</div>
             <div style={{ flex: 1 }}>
@@ -469,7 +478,7 @@ export function MessageView(p: Props) {
         )}
 
         {conversation.length > 0 ? (
-          <div className="thread-conversation" aria-label={`会话，共 ${conversation.length} 封`}>
+          <div className="thread-conversation" aria-label={t("会话，共 {n} 封", { n: conversation.length })}>
             {conversation.map(renderThreadCard)}
           </div>
         ) : (

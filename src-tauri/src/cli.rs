@@ -19,7 +19,7 @@ fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "SealMail CLI\n\nUSAGE:\n  sealmail-cli <command> [--json]\n\nCOMMANDS:\n  state                Show accounts, identity, trusted contacts, filters, and local folders\n  accounts             Show configured accounts without secrets\n  account add          Test and save a password/app-password account\n  account test         Test a password/app-password account without saving\n  account remove       Remove a saved account by id\n  folders              List folders for a saved account\n  folder create        Create a server folder for a saved account\n  folder delete        Delete a server folder for a saved account\n  sync                 Sync a folder from the server\n  sync-older           Backfill older cached messages for a folder\n  list                 List locally cached messages\n  read                 Read a locally cached message\n  thread               List locally cached messages in a conversation\n  send                 Send mail from a saved account\n  move                 Move a message to another folder\n  archive              Archive a message\n  delete               Delete a message, soft by default\n  mark                 Mark messages read or unread\n  flag                 Flag or unflag a message\n  attachment save      Save an attachment from a cached message\n  draft save           Save or overwrite a local draft\n  draft delete         Delete a local draft\n  drafts               Show local drafts\n  filter save          Save or overwrite a filter rule\n  filter delete        Delete a filter rule\n  filter apply         Apply filter rules to INBOX\n  filters              Show filter rules\n  trust add            Add or overwrite a trusted sender\n  trust remove         Remove a trusted sender\n  trusted              Show trusted contacts\n  real-test daily-flow Run a real IMAP/SMTP daily user flow against a saved test account\n  identity             Show active signing identity\n  identity use-local   Switch signing back to the local key\n  identity bind-ledger Bind a Ledger-derived signing address\n  prefs                Show local preferences\n  pref set             Update local preferences\n  contacts             Show collected contacts\n  config-dir           Show the config directory used by the CLI\n  help                 Show this help\n\nACCOUNT FLAGS:\n  --id <id>\n  --label <label>\n  --email <email>\n  --display-name <name>\n  --protocol <imap|pop3>\n  --incoming-host <host>\n  --incoming-port <port>\n  --smtp-host <host>\n  --smtp-port <port>\n  --smtp-security <ssl|starttls>\n  --username <username>\n\nCOMMON FLAGS:\n  --account <id>\n  --folder <name>\n  --uid <uid>\n  --target <folder>\n  --thread <thread-id>\n  --limit <n>\n  --offset <n>\n  --id <id>\n\nSEND/DRAFT FLAGS:\n  --to <a@b,c@d>\n  --cc <a@b,c@d>\n  --subject <subject>\n  --body <text>\n  --body-file <path>\n  --attach <path>  May be repeated\n  --no-sign        Send without SealMail signature\n\nFILTER FLAGS:\n  --name <name>\n  --field <from|to|subject|body>\n  --op <contains|not_contains|equals|starts_with|ends_with>\n  --value <text>\n  --target <folder>\n  --mark-read <true|false>\n  --enabled <true|false>\n\nTRUST/ATTACHMENT/IDENTITY/PREF FLAGS:\n  --name <name>\n  --email <email>\n  --fingerprint <fingerprint>\n  --org <org>\n  --index <n>\n  --path <file>\n  --ledger-path <path>\n  --address <0x...>\n  --close-behavior <hide|quit>\n  --notify-new-mail <true|false>\n\nENV:\n  SEALMAIL_CONFIG_DIR      Override the default SealMail config directory\n  SEALMAIL_PASSWORD        Incoming password or app-specific password for account add/test\n  SEALMAIL_SMTP_PASSWORD   Optional SMTP password when different from incoming password"
+        "SealMail CLI\n\nUSAGE:\n  sealmail-cli <command> [--json]\n\nCOMMANDS:\n  state                Show accounts, identity, trusted contacts, filters, and local folders\n  accounts             Show configured accounts without secrets\n  account add          Test and save a password/app-password account\n  account test         Test a password/app-password account without saving\n  account remove       Remove a saved account by id\n  folders              List folders for a saved account\n  folder create        Create a server folder for a saved account\n  folder delete        Delete a server folder for a saved account\n  sync                 Sync a folder from the server\n  sync-older           Backfill older cached messages for a folder\n  list                 List locally cached messages\n  read                 Read a locally cached message\n  locate               Find which folder a message is in by Message-ID\n  thread               List locally cached messages in a conversation\n  send                 Send mail from a saved account\n  move                 Move a message to another folder\n  archive              Archive a message\n  delete               Delete a message, soft by default\n  mark                 Mark messages read or unread\n  flag                 Flag or unflag a message\n  attachment save      Save an attachment from a cached message\n  draft save           Save or overwrite a local draft\n  draft delete         Delete a local draft\n  drafts               Show local drafts\n  filter save          Save or overwrite a filter rule\n  filter delete        Delete a filter rule\n  filter apply         Apply filter rules to INBOX\n  filters              Show filter rules\n  trust add            Add or overwrite a trusted sender\n  trust remove         Remove a trusted sender\n  trusted              Show trusted contacts\n  real-test daily-flow Run a real IMAP/SMTP daily user flow against a saved test account\n  identity             Show active signing identity\n  identity use-local   Switch signing back to the local key\n  identity bind-ledger Bind a Ledger-derived signing address\n  prefs                Show local preferences\n  pref set             Update local preferences\n  contacts             Show collected contacts\n  config-dir           Show the config directory used by the CLI\n  help                 Show this help\n\nACCOUNT FLAGS:\n  --id <id>\n  --label <label>\n  --email <email>\n  --display-name <name>\n  --protocol <imap|pop3>\n  --incoming-host <host>\n  --incoming-port <port>\n  --smtp-host <host>\n  --smtp-port <port>\n  --smtp-security <ssl|starttls>\n  --username <username>\n\nCOMMON FLAGS:\n  --account <id>\n  --folder <name>\n  --uid <uid>\n  --target <folder>\n  --thread <thread-id>\n  --limit <n>\n  --offset <n>\n  --id <id>\n\nSEND/DRAFT FLAGS:\n  --to <a@b,c@d>\n  --cc <a@b,c@d>\n  --subject <subject>\n  --body <text>\n  --body-file <path>\n  --attach <path>  May be repeated\n  --no-sign        Send without SealMail signature\n\nFILTER FLAGS:\n  --name <name>\n  --field <from|to|subject|body>\n  --op <contains|not_contains|equals|starts_with|ends_with>\n  --value <text>\n  --target <folder>\n  --mark-read <true|false>\n  --enabled <true|false>\n\nTRUST/ATTACHMENT/IDENTITY/PREF FLAGS:\n  --name <name>\n  --email <email>\n  --fingerprint <fingerprint>\n  --org <org>\n  --index <n>\n  --path <file>\n  --ledger-path <path>\n  --address <0x...>\n  --close-behavior <hide|quit>\n  --notify-new-mail <true|false>\n  --language <system|zh|en>\n\nENV:\n  SEALMAIL_CONFIG_DIR      Override the default SealMail config directory\n  SEALMAIL_PASSWORD        Incoming password or app-specific password for account add/test\n  SEALMAIL_SMTP_PASSWORD   Optional SMTP password when different from incoming password"
     );
 }
 
@@ -463,6 +463,21 @@ pub fn run() -> Result<(), String> {
                 Ok(())
             }
         }
+        "locate" => {
+            let account_id = required_flag(&args, "--account")?;
+            let message_id = required_flag(&args, "--message-id")?;
+            let secret = account_secret(&core, &account_id)?;
+            let loc = core::locate_message(&mut core.data, &account_id, &secret, &message_id)?;
+            if json {
+                print_json(&loc)
+            } else {
+                match loc {
+                    Some(l) => println!("{}  {}", l.folder, l.uid),
+                    None => println!("not found"),
+                }
+                Ok(())
+            }
+        }
         "thread" => {
             let account_id = required_flag(&args, "--account")?;
             let folder = required_flag(&args, "--folder")?;
@@ -830,8 +845,12 @@ pub fn run() -> Result<(), String> {
                     let value = core::set_notify_new_mail(&mut core.data, enabled)?;
                     changed.insert("notifyNewMail".into(), serde_json::Value::Bool(value));
                 }
+                if let Some(language) = flag_value(&args, "--language")? {
+                    let value = core::set_language(&mut core.data, language)?;
+                    changed.insert("language".into(), serde_json::Value::String(value));
+                }
                 if changed.is_empty() {
-                    return Err("pref set 需要 --close-behavior 或 --notify-new-mail".into());
+                    return Err("pref set 需要 --close-behavior、--notify-new-mail 或 --language".into());
                 }
                 if json {
                     print_json(&serde_json::Value::Object(changed))
@@ -903,7 +922,9 @@ pub fn run() -> Result<(), String> {
 
 pub fn main_entry() {
     if let Err(err) = run() {
-        eprintln!("error: {err}");
+        // 用户可见错误的唯一出口：GUI 的 cli_json 把 stderr 作为错误信息展示，
+        // 双语翻译统一在这里做（见 i18n::tr_error）
+        eprintln!("error: {}", crate::i18n::tr_error(&err));
         std::process::exit(1);
     }
 }

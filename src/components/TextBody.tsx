@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import { normalizeExternalUrl, openExternalUrl } from "../url";
 
 const URL_RE = /((?:https?:\/\/|www\.)[^\s<>"']+)/gi;
@@ -11,7 +12,8 @@ function splitTrailingPunctuation(url: string): [string, string] {
 }
 
 export function TextBody({ text }: { text: string }) {
-  if (!text) return <div className="msg-body">(无正文)</div>;
+  const t = useI18n();
+  if (!text) return <div className="msg-body">{t("(无正文)")}</div>;
 
   const parts: React.ReactNode[] = [];
   let key = 0;

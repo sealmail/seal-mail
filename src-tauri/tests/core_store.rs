@@ -287,3 +287,73 @@ fn drafts_filters_and_trusted_contacts_are_persisted_with_overwrite_semantics() 
 
     fs::remove_dir_all(dir).ok();
 }
+
+/// 「屏蔽发件人」按钮多次点击会重复提交内容完全相同的新规则；
+/// 保存时应去重（更新现有规则）而不是无限追加。
+#[test]
+fn saving_identical_new_rule_is_deduplicated() {
+    let (dir, mut store) = load_store("filter-dedupe");
+    let rule = FilterRule {
+        id: String::new(),
+        name: "屏蔽 support@vultr.com".into(),
+        account_id: Some("acc1".into()),
+        field: "from".into(),
+        op: "contains".into(),
+        value: "support@vultr.com".into(),
+        target_folder: "&V4NXPpCuTvY-".into(),
+        mark_read: true,
+        enabled: true,
+    };
+    let filters = core::save_filter(&mut store, rule.clone()).expect("first save");
+    assert_eq!(filters.len(), 1);
+    let first_id = filters[0].id.clone();
+
+    let filters = core::save_filter(&mut store, rule.clone()).expect("duplicate save");
+    assert_eq!(filters.len(), 1, "相同匹配条件+目标的新规则不应重复追加");
+    assert_eq!(filters[0].id, first_id, "应更新现有规则而不是新建");
+
+    // 匹配条件不同的规则仍然可以新增
+    let filters = core::save_filter(
+        &mut store,
+        FilterRule {
+            value: "billing@vultr.com".into(),
+            ..rule.clone()
+        },
+    )
+    .expect("different rule saves");
+    assert_eq!(filters.len(), 2);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+/// 点通知时邮件可能已被过滤规则移出 INBOX：要能按 Message-ID 在本地缓存
+/// 全目录范围内定位它现在所在的目录和 UID。
+#[test]
+fn locate_in_db_finds_mail_moved_out_of_inbox() {
+    let (dir, mut store) = load_store("locate-by-msgid");
+
+    // 原始头里的 Message-ID 可能是大写（如 Outlook），而通知目标里的 id 已被规范化为小写，
+    // 定位必须大小写不敏感
+    let moved = b"Message-ID: <BUILD-42@wanchain.org>\r\nFrom: jenkins@wanchain.org\r\nSubject: build ok\r\n\r\nbody".to_vec();
+    // 同一 Message-ID 出现在另一封邮件的 References 里（回复），不能被误定位
+    let reply = b"Message-ID: <re-1@example.test>\r\nReferences: <build-42@wanchain.org>\r\nFrom: mara@example.test\r\nSubject: Re: build ok\r\n\r\nreply".to_vec();
+    sealmail_lib::db::upsert_message(&store.db, "acc1", "&ZzpWaE66-", 90, None, false, false, 2000, &moved)
+        .expect("insert moved mail");
+    sealmail_lib::db::upsert_message(&store.db, "acc1", "INBOX", 500, None, true, false, 3000, &reply)
+        .expect("insert reply mail");
+
+    let loc = core::locate_in_db(&mut store, "acc1", "build-42@wanchain.org")
+        .expect("locate should not error")
+        .expect("mail should be found by message id");
+    assert_eq!(loc.folder, "&ZzpWaE66-");
+    assert_eq!(loc.uid, 90);
+
+    assert!(
+        core::locate_in_db(&mut store, "acc1", "no-such-id@example.test")
+            .expect("locate should not error")
+            .is_none(),
+        "不存在的 Message-ID 应返回 None"
+    );
+
+    fs::remove_dir_all(dir).ok();
+}

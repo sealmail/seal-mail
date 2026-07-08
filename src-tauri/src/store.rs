@@ -54,6 +54,9 @@ impl StoreData {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let identity = crate::crypto::load_or_create_identity(&dir)?;
         let db = crate::db::open(&dir)?;
+        let prefs: AppPrefs = read_json(&dir.join("prefs.json"));
+        // 用户可见文案（错误/通知）的语言全局：加载偏好时同步
+        crate::i18n::set_lang_from_pref(&prefs.language);
         Ok(StoreData {
             db,
             accounts: read_json(&dir.join("accounts.json")),
@@ -67,7 +70,7 @@ impl StoreData {
             contacts: read_json(&dir.join("contacts.json")),
             drafts: read_json(&dir.join("drafts.json")),
             identity_config: read_json(&dir.join("identity.json")),
-            prefs: read_json(&dir.join("prefs.json")),
+            prefs,
             mail_cache: HashMap::new(),
             identity,
             dir,
@@ -80,6 +83,11 @@ impl StoreData {
 
     pub fn save_prefs(&self) -> Result<(), String> {
         write_json(&self.dir.join("prefs.json"), &self.prefs)
+    }
+
+    /// 只重读偏好（GUI 常驻进程在 CLI 子进程改完 prefs 后刷新内存态用）
+    pub fn load_prefs(dir: &std::path::Path) -> AppPrefs {
+        read_json(&dir.join("prefs.json").to_path_buf())
     }
 
     /// 当前生效的签名身份标识（本地=Ed25519 指纹，Ledger=0x 地址）

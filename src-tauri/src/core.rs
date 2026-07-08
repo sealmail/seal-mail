@@ -48,6 +48,13 @@ pub struct ApplyResult {
     pub details: Vec<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailLocation {
+    pub folder: String,
+    pub uid: u32,
+}
+
 pub struct Core {
     pub data: StoreData,
 }
@@ -142,6 +149,16 @@ pub fn get_notify_new_mail(s: &StoreData) -> bool {
     s.prefs.notify_new_mail
 }
 
+pub fn set_language(s: &mut StoreData, language: String) -> Result<String, String> {
+    if language != "system" && language != "zh" && language != "en" {
+        return Err(format!("{}: {}", crate::i18n::tr("无效的语言"), language));
+    }
+    s.prefs.language = language.clone();
+    s.save_prefs()?;
+    crate::i18n::set_lang_from_pref(&language);
+    Ok(language)
+}
+
 pub fn set_notify_new_mail(s: &mut StoreData, enabled: bool) -> Result<bool, String> {
     s.prefs.notify_new_mail = enabled;
     s.save_prefs()?;
@@ -187,10 +204,24 @@ pub fn delete_draft(s: &mut StoreData, id: String) -> Result<(), String> {
 
 pub fn save_filter(s: &mut StoreData, mut rule: FilterRule) -> Result<Vec<FilterRule>, String> {
     if rule.id.is_empty() {
-        rule.id = gen_id();
+        // 新规则先查重：「屏蔽发件人」按钮重复点击会提交完全相同的规则，
+        // 匹配条件+目标一致时更新现有规则而不是追加一条重复的
+        match s.filters.iter().find(|f| {
+            f.account_id == rule.account_id
+                && f.field == rule.field
+                && f.op == rule.op
+                && f.value == rule.value
+                && f.target_folder == rule.target_folder
+        }) {
+            Some(existing) => rule.id = existing.id.clone(),
+            None => rule.id = gen_id(),
+        }
     }
-    s.filters.retain(|f| f.id != rule.id);
-    s.filters.push(rule);
+    // 规则按顺序优先匹配：更新已有规则时原位替换，不改变它的顺位
+    match s.filters.iter_mut().find(|f| f.id == rule.id) {
+        Some(slot) => *slot = rule,
+        None => s.filters.push(rule),
+    }
     s.save_filters()?;
     Ok(s.filters.clone())
 }
@@ -1050,12 +1081,70 @@ pub fn organize_by_filters(
     let mut moved = 0u32;
     let mut details = Vec::new();
     for plan in &plans {
+        // 目录名是 IMAP Modified UTF-7 编码，展示给用户前要解码（如 &ZzpWaE66- → 机器人）
+        let target_display = imap_client::decode_mutf7(&plan.target);
         for subject in &plan.subjects {
-            details.push(format!("「{}」→ {}", subject, plan.target));
+            details.push(format!("「{}」→ {}", subject, target_display));
             moved += 1;
         }
     }
     Ok(ApplyResult { moved, details })
+}
+
+/// 在本地缓存里按 Message-ID 定位邮件当前所在的目录和 UID。
+/// 候选行还要解析头部核对——回复邮件的 References 里也含同一个 Message-ID。
+pub fn locate_in_db(
+    s: &mut StoreData,
+    account_id: &str,
+    message_id: &str,
+) -> Result<Option<MailLocation>, String> {
+    let candidates = db::find_candidates_containing(&s.db, account_id, message_id, 20)?;
+    for (folder, uid, raw) in candidates {
+        let Ok(full) = mail::parse_email(&raw, uid, account_id, &folder, false, false, &[]) else {
+            continue;
+        };
+        if full.meta.message_id.as_deref() == Some(message_id) {
+            return Ok(Some(MailLocation { folder, uid }));
+        }
+    }
+    Ok(None)
+}
+
+/// 点通知跳转的兜底定位：邮件可能已被过滤规则移出 INBOX。
+/// 先查本地缓存；未命中时把启用规则的目标目录同步一遍（移动刚发生、目标目录
+/// 本地还没同步到的情况）再查一次。
+pub fn locate_message(
+    s: &mut StoreData,
+    account_id: &str,
+    secret: &AccountSecret,
+    message_id: &str,
+) -> Result<Option<MailLocation>, String> {
+    if let Some(loc) = locate_in_db(s, account_id, message_id)? {
+        return Ok(Some(loc));
+    }
+    let mut targets: Vec<String> = s
+        .filters
+        .iter()
+        .filter(|r| {
+            r.enabled
+                && r.account_id
+                    .as_ref()
+                    .map(|id| id == account_id)
+                    .unwrap_or(true)
+        })
+        .map(|r| r.target_folder.clone())
+        .collect();
+    targets.sort();
+    targets.dedup();
+    if targets.is_empty() {
+        return Ok(None);
+    }
+    for folder in &targets {
+        if let Err(e) = sync_messages(s, account_id, folder, secret) {
+            crate::logging::log(format!("[locate] 同步规则目标目录 {folder} 失败: {e}"));
+        }
+    }
+    locate_in_db(s, account_id, message_id)
 }
 
 #[derive(Serialize)]

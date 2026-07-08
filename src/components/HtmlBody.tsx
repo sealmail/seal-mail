@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openExternalUrl } from "../url";
 
@@ -139,6 +140,7 @@ function closestAnchor(target: EventTarget | null): Element | null {
 
 /** 沙箱 iframe 渲染（无脚本执行；同源仅用于父页面接管链接点击和自适应高度） */
 export function HtmlBody(p: Props) {
+  const t = useI18n();
   const [allowRemote, setAllowRemote] = useState(false);
   const ref = useRef<HTMLIFrameElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -249,13 +251,13 @@ export function HtmlBody(p: Props) {
       {blocked > 0 && !allowRemote && (
         <div
           className="img-blocked-chip"
-          title={`已阻止 ${blocked} 处远程内容：远程图片可被用来追踪你是否打开了邮件，确认来源可信后再显示`}
+          title={t("已阻止 {n} 处远程内容：远程图片可被用来追踪你是否打开了邮件，确认来源可信后再显示", { n: blocked })}
         >
-          已阻止远程图片
-          <button onClick={() => setAllowRemote(true)}>显示</button>
+          {t("已阻止远程图片")}
+          <button onClick={() => setAllowRemote(true)}>{t("显示")}</button>
         </div>
       )}
-      <iframe key={frameKey} ref={ref} className="html-body" sandbox="allow-same-origin" srcDoc={doc} onLoad={onLoad} title="邮件正文" />
+      <iframe key={frameKey} ref={ref} className="html-body" sandbox="allow-same-origin" srcDoc={doc} onLoad={onLoad} title={t("邮件正文")} />
     </div>
   );
 }

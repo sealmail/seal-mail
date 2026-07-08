@@ -27,6 +27,7 @@ type CliEnv = Record<string, string>;
 interface AppPrefsJson {
   closeBehavior: "hide" | "quit";
   notifyNewMail: boolean;
+  language: "system" | "zh" | "en";
 }
 
 type CliArg = string | number | boolean;
@@ -75,6 +76,16 @@ export async function setCloseBehavior(behavior: "hide" | "quit"): Promise<"hide
 export async function getNotifyNewMail(): Promise<boolean> {
   const prefs = await cliJson<AppPrefsJson>(["prefs"]);
   return prefs.notifyNewMail;
+}
+
+export async function getLanguagePref(): Promise<"system" | "zh" | "en"> {
+  const prefs = await cliJson<AppPrefsJson>(["prefs"]);
+  return prefs.language ?? "system";
+}
+
+export async function setLanguagePref(language: "system" | "zh" | "en"): Promise<"system" | "zh" | "en"> {
+  const result = await cliJson<Pick<AppPrefsJson, "language">>(["pref", "set", "--language", language]);
+  return result.language;
 }
 
 export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
@@ -158,6 +169,11 @@ export async function listCached(accountId: string, folder: string, offset: numb
 /** 与服务器增量同步（只下载新邮件 + 回扫已读/星标/删除） */
 export async function syncMessages(accountId: string, folder: string): Promise<SyncResult> {
   return cliJson(["sync", "--account", accountId, "--folder", folder]);
+}
+
+/** 按 Message-ID 定位邮件当前所在目录（点通知时邮件可能已被过滤规则移出 INBOX） */
+export async function locateMessage(accountId: string, messageId: string): Promise<{ folder: string; uid: number } | null> {
+  return cliJson(["locate", "--account", accountId, "--message-id", messageId]);
 }
 
 /** 按需回填更早邮件（用户继续向下翻页时触发） */
