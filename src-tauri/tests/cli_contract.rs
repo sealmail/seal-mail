@@ -163,6 +163,7 @@ fn help_and_unknown_command_have_distinct_exit_contracts() {
     assert!(help_out.contains("account add"));
     assert!(help_out.contains("sync-older"));
     assert!(help_out.contains("attachment save"));
+    assert!(help_out.contains("attachment data"));
     assert!(help_out.contains("draft save"));
     assert!(help_out.contains("filter apply"));
     assert!(help_out.contains("trust add"));

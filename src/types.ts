@@ -102,6 +102,15 @@ export interface AttachmentMeta {
   mime: string;
 }
 
+export interface AttachmentData {
+  uid: number;
+  index: number;
+  filename: string;
+  mime: string;
+  bytes: number;
+  dataBase64: string;
+}
+
 export interface EmailMeta {
   uid: number;
   accountId: string;

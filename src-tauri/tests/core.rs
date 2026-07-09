@@ -6,7 +6,7 @@ use mail_builder::headers::raw::Raw;
 use mail_builder::MessageBuilder;
 use sealmail_lib::crypto::{self, Identity};
 use sealmail_lib::filters::rule_matches;
-use sealmail_lib::mail::{detect_lang, detect_risk, parse_email};
+use sealmail_lib::mail::{detect_lang, detect_risk, extract_attachment, parse_email};
 use sealmail_lib::models::*;
 
 fn test_identity() -> Identity {
@@ -211,6 +211,15 @@ fn decodes_nested_legacy_chinese_body_with_attachments() {
     assert!(!mail.body_text.contains('\u{FFFD}'));
     assert_eq!(mail.meta.preview, "爱乐评留言回复");
     assert_eq!(mail.attachments.len(), 1);
+    assert_eq!(mail.attachments[0].name, "screenshot.jpg");
+    assert_eq!(mail.attachments[0].mime, "image/jpeg");
+
+    let extracted = extract_attachment(&raw, 0).unwrap();
+    assert_eq!(extracted.filename, "screenshot.jpg");
+    assert_eq!(extracted.mime, "image/jpeg");
+    assert!(!extracted.contents.is_empty());
+    // JPEG SOI marker from the fixture base64 payload
+    assert_eq!(&extracted.contents[..2], &[0xff, 0xd8]);
 }
 
 #[test]

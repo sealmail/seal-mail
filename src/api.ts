@@ -4,6 +4,7 @@ import type {
   AccountSecret,
   AppStateView,
   ApplyResult,
+  AttachmentData,
   BrowserFlowStart,
   Contact,
   Draft,
@@ -21,6 +22,8 @@ import type {
   SendResult,
   TrustedContact,
 } from "./types";
+
+export type { AttachmentData };
 
 type CliEnv = Record<string, string>;
 
@@ -244,6 +247,16 @@ export async function saveAttachment(
   path: string
 ): Promise<void> {
   await cliJson(["attachment", "save", "--account", accountId, "--folder", folder, "--uid", uid, "--index", index, "--path", path]);
+}
+
+/** 读取附件内容（base64），用于图片预览 */
+export async function readAttachment(
+  accountId: string,
+  folder: string,
+  uid: number,
+  index: number
+): Promise<AttachmentData> {
+  return cliJson(["attachment", "data", "--account", accountId, "--folder", folder, "--uid", uid, "--index", index]);
 }
 
 // ── 联系人（自动补全）──

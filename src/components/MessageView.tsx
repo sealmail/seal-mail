@@ -1,13 +1,14 @@
 import { t, useI18n } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { ask as askDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { downloadDir, join } from "@tauri-apps/api/path";
 import { AppIcon } from "./AppIcon";
 import { HtmlBody } from "./HtmlBody";
 import { Seal } from "./Seal";
 import { TextBody } from "./TextBody";
-import { saveAttachment } from "../api";
+import { readAttachment, saveAttachment } from "../api";
 import { buildChecks, riskBanner, statusText, TONE_COLOR } from "../trust";
-import type { EmailFull, EmailMeta, FolderInfo } from "../types";
+import type { AttachmentMeta, EmailFull, EmailMeta, FolderInfo } from "../types";
 
 interface Props {
   mail: EmailFull | null;
@@ -92,6 +93,21 @@ function attachmentWarning(name: string) {
   return t("这个附件有风险：{reasons}。", { reasons: reasons.join(t("，")) }) + "\n\n" + t("只在确认来源可信时保存。");
 }
 
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif", "tif", "tiff"]);
+
+function isImageAttachment(a: AttachmentMeta): boolean {
+  const mime = a.mime.toLowerCase();
+  if (mime.startsWith("image/")) return true;
+  const ext = a.name.split(".").pop()?.toLowerCase() ?? "";
+  return IMAGE_EXTS.has(ext);
+}
+
+interface ImagePreviewState {
+  name: string;
+  src: string | null;
+  error: string | null;
+}
+
 export function MessageView(p: Props) {
   useI18n();
   // 一键信任确认卡：换邮件时收起
@@ -104,6 +120,8 @@ export function MessageView(p: Props) {
   const [threadHtmlModes, setThreadHtmlModes] = useState<Record<string, boolean | null>>({});
   /** 附件下载状态：mail/index → 状态文案 */
   const [attachState, setAttachState] = useState<Record<string, string>>({});
+  /** 图片附件预览（lightbox） */
+  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const selectedCardRef = useRef<HTMLDivElement | null>(null);
   const uid = p.mail?.meta.uid;
   useEffect(() => {
@@ -114,6 +132,7 @@ export function MessageView(p: Props) {
     setHtmlMode(null);
     setThreadHtmlModes({});
     setAttachState({});
+    setImagePreview(null);
   }, [uid]);
 
   useEffect(() => {
@@ -122,11 +141,22 @@ export function MessageView(p: Props) {
     }
   }, [uid, p.thread.length]);
 
+  useEffect(() => {
+    if (!imagePreview) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setImagePreview(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [imagePreview]);
+
   async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
     // WKWebView 里 window.confirm 是 no-op（静默返回 false），必须走 dialog 插件
     if (warning && !(await askDialog(warning, { title: t("危险附件"), kind: "warning", okLabel: t("继续保存"), cancelLabel: t("取消") }))) return;
-    const path = await saveFileDialog({ defaultPath: name, title: t("保存附件") });
+    // 默认落到系统「下载」目录，而不是「文稿」
+    const defaultPath = await join(await downloadDir(), name);
+    const path = await saveFileDialog({ defaultPath, title: t("保存附件") });
     if (!path) return;
     const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
     setAttachState((s) => ({ ...s, [stateKey]: t("保存中…") }));
@@ -136,6 +166,61 @@ export function MessageView(p: Props) {
     } catch (e) {
       setAttachState((s) => ({ ...s, [stateKey]: t("失败：") + e }));
     }
+  }
+
+  async function previewImageAttachment(mail: EmailFull, i: number, a: AttachmentMeta) {
+    setImagePreview({ name: a.name, src: null, error: null });
+    try {
+      const data = await readAttachment(mail.meta.accountId, mail.meta.folder, mail.meta.uid, i);
+      const mime = data.mime.startsWith("image/") ? data.mime : a.mime.startsWith("image/") ? a.mime : "image/jpeg";
+      setImagePreview({ name: data.filename || a.name, src: `data:${mime};base64,${data.dataBase64}`, error: null });
+    } catch (e) {
+      setImagePreview({ name: a.name, src: null, error: t("预览失败：") + e });
+    }
+  }
+
+  function renderAttachment(mail: EmailFull, a: AttachmentMeta, i: number) {
+    const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
+    const image = isImageAttachment(a);
+    return (
+      <div
+        className={`attach${image ? " attach-image" : ""}`}
+        key={i}
+        role={image ? "button" : undefined}
+        tabIndex={image ? 0 : undefined}
+        title={image ? t("点击预览图片") : undefined}
+        onClick={image ? () => previewImageAttachment(mail, i, a) : undefined}
+        onKeyDown={
+          image
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  previewImageAttachment(mail, i, a);
+                }
+              }
+            : undefined
+        }
+      >
+        <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
+        <div className="attach-main">
+          <div className="name">{a.name}</div>
+          <div className="info">
+            {fmtSize(a.size)} · {a.mime}
+            {image && <span className="attach-preview-hint">{t("点击预览")}</span>}
+            {attachState[stateKey] && <span className="attach-state">{attachState[stateKey]}</span>}
+          </div>
+        </div>
+        <button
+          className="btn-ghost attach-save"
+          onClick={(e) => {
+            e.stopPropagation();
+            downloadAttachment(mail, i, a.name);
+          }}
+        >
+          {t("保存")}
+        </button>
+      </div>
+    );
   }
 
   if (!p.mail) {
@@ -236,26 +321,7 @@ export function MessageView(p: Props) {
           </div>
         )}
         {mail.attachments.length > 0 && (
-          <div className="attach-row">
-            {mail.attachments.map((a, i) => {
-              const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
-              return (
-                <div className="attach" key={i}>
-                  <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
-                  <div className="attach-main">
-                    <div className="name">{a.name}</div>
-                    <div className="info">
-                      {fmtSize(a.size)} · {a.mime}
-                      {attachState[stateKey] && <span className="attach-state">{attachState[stateKey]}</span>}
-                    </div>
-                  </div>
-                  <button className="btn-ghost attach-save" onClick={() => downloadAttachment(mail, i, a.name)}>
-                    {t("保存")}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+          <div className="attach-row">{mail.attachments.map((a, i) => renderAttachment(mail, a, i))}</div>
         )}
         <div className="thread-card-body">
           {renderBody(mail, mode, (next) => setThreadHtmlModes((s) => ({ ...s, [key]: next })))}
@@ -396,26 +462,7 @@ export function MessageView(p: Props) {
             </div>
           )}
           {conversation.length === 0 && m.attachments.length > 0 && (
-            <div className="attach-row">
-              {m.attachments.map((a, i) => {
-                const stateKey = `${m.meta.accountId}/${m.meta.folder}/${m.meta.uid}/${i}`;
-                return (
-                  <div className="attach" key={i}>
-                    <div className="ext">{(a.name.split(".").pop() || "?").toUpperCase().slice(0, 4)}</div>
-                    <div className="attach-main">
-                      <div className="name">{a.name}</div>
-                      <div className="info">
-                        {fmtSize(a.size)} · {a.mime}
-                        {attachState[stateKey] && <span className="attach-state">{attachState[stateKey]}</span>}
-                      </div>
-                    </div>
-                    <button className="btn-ghost attach-save" onClick={() => downloadAttachment(m, i, a.name)}>
-                      {t("保存")}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+            <div className="attach-row">{m.attachments.map((a, i) => renderAttachment(m, a, i))}</div>
           )}
         </div>
 
@@ -485,6 +532,36 @@ export function MessageView(p: Props) {
           renderBody(m, htmlMode, setHtmlMode)
         )}
       </div>
+
+      {imagePreview && (
+        <div
+          className="image-preview-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("图片预览")}
+          onClick={() => setImagePreview(null)}
+        >
+          <div className="image-preview-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="image-preview-head">
+              <div className="image-preview-title" title={imagePreview.name}>
+                {imagePreview.name}
+              </div>
+              <button className="modal-close" onClick={() => setImagePreview(null)} aria-label={t("关闭预览")}>
+                ×
+              </button>
+            </div>
+            <div className="image-preview-body">
+              {imagePreview.error ? (
+                <div className="image-preview-status image-preview-error">{imagePreview.error}</div>
+              ) : imagePreview.src ? (
+                <img src={imagePreview.src} alt={imagePreview.name} className="image-preview-img" />
+              ) : (
+                <div className="image-preview-status">{t("加载预览…")}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

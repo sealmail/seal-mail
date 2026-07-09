@@ -591,6 +591,18 @@ input, textarea, select { font-family: inherit; }
   display: flex; align-items: center; gap: 10px; border: 1px solid var(--border-2);
   border-radius: 9px; padding: 10px 12px; background: #fff; max-width: min(100%, 420px);
 }
+.attach-image {
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.attach-image:hover {
+  border-color: var(--border-3);
+  background: var(--bg-hover);
+}
+.attach-image:focus-visible {
+  outline: 2px solid var(--jade);
+  outline-offset: 2px;
+}
 .attach .ext {
   width: 30px; height: 30px; border-radius: 6px; background: var(--bg-chip);
   display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--mut); font-weight: 600; flex-shrink: 0;
@@ -598,8 +610,60 @@ input, textarea, select { font-family: inherit; }
 .attach-main { min-width: 0; flex: 1; }
 .attach .name { font-size: 12px; font-weight: 600; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach .info { font-size: 10.5px; color: var(--mut-3); }
+.attach-preview-hint { margin-left: 6px; color: var(--jade); }
 .attach-state { margin-left: 6px; color: var(--jade); }
 .attach-save { height: 28px; padding: 0 12px; font-size: 11px; flex-shrink: 0; }
+
+/* 图片附件预览 lightbox */
+.image-preview-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(12, 16, 13, 0.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: 28px;
+}
+.image-preview-panel {
+  background: var(--bg);
+  border-radius: 14px;
+  box-shadow: 0 28px 80px -18px rgba(8, 12, 9, 0.55);
+  max-width: min(96vw, 1100px);
+  max-height: 92vh;
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.image-preview-head {
+  height: 48px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 0 16px 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+.image-preview-title {
+  font-size: 13px; font-weight: 600; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.image-preview-body {
+  flex: 1; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  background: #111411;
+  overflow: auto;
+}
+.image-preview-img {
+  max-width: min(90vw, 1040px);
+  max-height: calc(92vh - 96px);
+  width: auto; height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+}
+.image-preview-status {
+  color: #d5dbd4;
+  font-size: 13px;
+  padding: 40px 28px;
+  text-align: center;
+}
+.image-preview-error { color: #f0b4ad; }
 
 /* 写信附件 chip */
 .attach-chip {

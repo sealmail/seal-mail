@@ -43,6 +43,17 @@ pub struct AttachmentSaveResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AttachmentDataResult {
+    pub uid: u32,
+    pub index: usize,
+    pub filename: String,
+    pub mime: String,
+    pub bytes: usize,
+    pub data_base64: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApplyResult {
     pub moved: u32,
     pub details: Vec<String>,
@@ -927,6 +938,27 @@ pub fn delete_message(
     Ok(())
 }
 
+fn load_raw_message(
+    s: &StoreData,
+    account_id: &str,
+    folder: &str,
+    uid: u32,
+    secret: Option<&AccountSecret>,
+) -> Result<Vec<u8>, String> {
+    let account = s.account(account_id)?;
+    let cached = db::get_raw(&s.db, account_id, folder, uid)?.map(|r| r.raw);
+    match cached {
+        Some(raw) => Ok(raw),
+        None => match account.protocol {
+            IncomingProtocol::Imap => {
+                let secret = secret.ok_or("邮件不在本地缓存中，回源下载附件需要账户凭据")?;
+                imap_client::fetch_raw(&account, secret, folder, uid)
+            }
+            IncomingProtocol::Pop3 => Err("邮件不在本地缓存中，请刷新列表后重试".into()),
+        },
+    }
+}
+
 pub fn save_attachment(
     s: &StoreData,
     account_id: &str,
@@ -936,27 +968,40 @@ pub fn save_attachment(
     path: &str,
     secret: Option<&AccountSecret>,
 ) -> Result<AttachmentSaveResult, String> {
-    let account = s.account(account_id)?;
-    let cached = db::get_raw(&s.db, account_id, folder, uid)?.map(|r| r.raw);
-    let raw = match cached {
-        Some(raw) => raw,
-        None => match account.protocol {
-            IncomingProtocol::Imap => {
-                let secret = secret.ok_or("邮件不在本地缓存中，回源下载附件需要账户凭据")?;
-                imap_client::fetch_raw(&account, secret, folder, uid)?
-            }
-            IncomingProtocol::Pop3 => return Err("邮件不在本地缓存中，请刷新列表后重试".into()),
-        },
-    };
-    let (filename, contents) = mail::extract_attachment(&raw, index)?;
-    let bytes = contents.len();
-    std::fs::write(path, contents).map_err(|e| format!("写入文件失败: {}", e))?;
+    let raw = load_raw_message(s, account_id, folder, uid, secret)?;
+    let extracted = mail::extract_attachment(&raw, index)?;
+    let bytes = extracted.contents.len();
+    let filename = extracted.filename.clone();
+    std::fs::write(path, extracted.contents).map_err(|e| format!("写入文件失败: {}", e))?;
     Ok(AttachmentSaveResult {
         uid,
         index,
         filename,
         path: path.to_string(),
         bytes,
+    })
+}
+
+/// 读取附件内容（base64），供前端图片预览等场景使用
+pub fn read_attachment(
+    s: &StoreData,
+    account_id: &str,
+    folder: &str,
+    uid: u32,
+    index: usize,
+    secret: Option<&AccountSecret>,
+) -> Result<AttachmentDataResult, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let raw = load_raw_message(s, account_id, folder, uid, secret)?;
+    let extracted = mail::extract_attachment(&raw, index)?;
+    let bytes = extracted.contents.len();
+    Ok(AttachmentDataResult {
+        uid,
+        index,
+        filename: extracted.filename,
+        mime: extracted.mime,
+        bytes,
+        data_base64: STANDARD.encode(extracted.contents),
     })
 }
 

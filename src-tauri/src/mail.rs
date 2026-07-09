@@ -711,8 +711,15 @@ pub fn format_date(ts: i64) -> String {
     }
 }
 
-/// 从原始邮件中取出第 index 个附件（名字, 内容）
-pub fn extract_attachment(raw: &[u8], index: usize) -> Result<(String, Vec<u8>), String> {
+/// 从原始邮件中取出第 index 个附件
+pub struct ExtractedAttachment {
+    pub filename: String,
+    pub mime: String,
+    pub contents: Vec<u8>,
+}
+
+/// 从原始邮件中取出第 index 个附件（名字, MIME, 内容）
+pub fn extract_attachment(raw: &[u8], index: usize) -> Result<ExtractedAttachment, String> {
     let msg = MessageParser::default()
         .parse(raw)
         .ok_or("无法解析邮件内容")?;
@@ -720,10 +727,15 @@ pub fn extract_attachment(raw: &[u8], index: usize) -> Result<(String, Vec<u8>),
         .attachments()
         .nth(index)
         .ok_or("附件不存在（邮件可能已变化，请刷新后重试）")?;
-    Ok((
-        part.attachment_name().unwrap_or("attachment").to_string(),
-        part.contents().to_vec(),
-    ))
+    let mime = part
+        .content_type()
+        .map(|c| format!("{}/{}", c.ctype(), c.subtype().unwrap_or("octet-stream")))
+        .unwrap_or_else(|| "application/octet-stream".into());
+    Ok(ExtractedAttachment {
+        filename: part.attachment_name().unwrap_or("attachment").to_string(),
+        mime,
+        contents: part.contents().to_vec(),
+    })
 }
 
 /// 解析原始邮件 → EmailFull（含验证、风险、语言识别）

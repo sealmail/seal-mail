@@ -37,8 +37,8 @@ const coreUserCapabilities = [
   },
   {
     name: "attachments",
-    cliCommands: ["attachment save"],
-    guiExports: ["saveAttachment"],
+    cliCommands: ["attachment save", "attachment data"],
+    guiExports: ["saveAttachment", "readAttachment"],
     scenarios: ["S06"],
   },
   {
