@@ -7,6 +7,13 @@ const REMOVE_TAGS = "script,iframe,object,embed,form,base,meta,link,svg,math,app
 
 const RESOURCE_ATTRS = new Set(["src", "srcset", "poster", "background", "data"]);
 
+export const EMAIL_DOCUMENT_BASE_CSS = `
+    /* 透明邮件区域统一使用纯白底，避免透出应用暖白背景形成色差。 */
+    html { background: #fff; width: 100% !important; min-width: 0 !important; overflow-x: auto; overflow-y: hidden; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { background: #fff; margin: 0; width: 100% !important; min-width: 0 !important; overflow-x: auto; }
+`;
+
 function isRemoteUrl(value: string) {
   return /^(https?:)?\/\//i.test(value.trim());
 }
@@ -95,9 +102,7 @@ export function sanitizeEmailHtml(html: string, allowRemote: boolean): { doc: st
   style.textContent = `
     /* overflow-y hidden：iframe 高度由父页面按内容精确设置，内部永远不该出现
        纵向滚动条（否则缩放时会闪烁）；超宽邮件仍允许横向滚动 */
-    html { width: 100% !important; min-width: 0 !important; overflow-x: auto; overflow-y: hidden; }
-    *, *::before, *::after { box-sizing: border-box; }
-    body { margin: 0; width: 100% !important; min-width: 0 !important; overflow-x: auto; }
+    ${EMAIL_DOCUMENT_BASE_CSS}
     body > :first-child { margin-top: 0 !important; }
     body > :last-child { margin-bottom: 0 !important; }
     [width] { max-width: 100% !important; }
