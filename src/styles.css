@@ -1,11 +1,11 @@
 /* ─── SealMail 信印 设计系统 ───
-   明亮暖白底 + 近黑文字；火漆青绿/朱红做信任状态；
+   明亮纯白底 + 近黑文字；火漆青绿/朱红做信任状态；
    地址/指纹/哈希一律 IBM Plex Mono，UI 用 IBM Plex Sans，印章字 IBM Plex Serif */
 
 :root {
-  --bg: #fbfbf8;
-  --bg-warm: #f6f4ef;
-  --bg-side: #f4f6f2;
+  --bg: #fff;
+  --bg-warm: #fff;
+  --bg-side: #fff;
   --bg-chip: #edf1eb;
   --bg-hover: #f2f5ef;
   --bg-active: #eaf5ee;
@@ -714,7 +714,7 @@ input, textarea, select { font-family: inherit; }
   position: absolute; top: 8px; right: 8px; z-index: 2;
   display: flex; align-items: center; gap: 2px;
   font-size: 11px; color: var(--mut);
-  background: rgba(251, 251, 248, 0.92);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--border);
   border-radius: 999px; padding: 2px 4px 2px 11px;
   box-shadow: 0 1px 4px rgba(21, 25, 22, 0.06);
@@ -870,7 +870,7 @@ input, textarea, select { font-family: inherit; }
 .keys-sub { margin: 8px 0 28px; font-size: 13.5px; color: var(--mut); max-width: 560px; line-height: 1.6; }
 .keys-hero {
   border: 1px solid var(--border-3); border-radius: 16px; padding: 24px;
-  background: linear-gradient(135deg, #f5faf4, #fffdfa); margin-bottom: 22px;
+  background: linear-gradient(135deg, #f5faf4, #fff); margin-bottom: 22px;
   display: flex; align-items: center; gap: 18px;
 }
 .keys-hero-icon {
@@ -947,7 +947,7 @@ input, textarea, select { font-family: inherit; }
 .onboard {
   flex: 1; min-height: 0; overflow-y: auto;
   display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(120% 120% at 20% 0%, #f8f6ef 0%, var(--bg) 60%);
+  background: #fff;
   padding: 40px;
 }
 .onboard-card { max-width: 560px; width: 100%; }
