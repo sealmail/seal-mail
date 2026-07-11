@@ -19,6 +19,7 @@ import { TextBody } from "./components/TextBody";
 import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./components/Sidebar";
 import { Seal } from "./components/Seal";
 import { classifyMail, type MailCategory } from "./mailCategory";
+import { LatestRequest, type RequestToken } from "./latestRequest";
 import type { Account, AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo, NotificationMailTarget } from "./types";
 import "./styles.css";
 
@@ -284,7 +285,7 @@ function MailApp() {
   const [accountToRemove, setAccountToRemove] = useState<Account | null>(null);
   const [removeAccountErr, setRemoveAccountErr] = useState<string | null>(null);
 
-  const fetchSeq = useRef(0);
+  const fetchRequests = useRef(new LatestRequest());
   const selectSeq = useRef(0);
   // 始终指向最新已加载列表，供 selectMail 本地筛会话用（避免后端全量扫描整个目录）
   const messagesRef = useRef<EmailMeta[]>(messages);
@@ -367,19 +368,21 @@ function MailApp() {
   const listDragBase = useRef(listWidth);
 
   const loadCached = useCallback(
-    async (count: number) => {
+    async (count: number, request: RequestToken) => {
       if (folder === UNIFIED_FOLDER) {
         const pages = await Promise.all(accounts.map((a) => api.listCached(a.id, "INBOX", 0, count)));
+        if (!fetchRequests.current.isCurrent(request)) return false;
         const metas = pages.flatMap((p) => p.metas).sort((a, b) => b.timestamp - a.timestamp);
         loadedRef.current = metas.length;
         setTotal(pages.reduce((sum, p) => sum + p.total, 0));
         setInboxMetas(metas);
         setMessages(metas);
         retainSelection(metas);
-        return;
+        return true;
       }
       const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
       const res = await api.listCached(accountId, realFolder, 0, count);
+      if (!fetchRequests.current.isCurrent(request)) return false;
       loadedRef.current = res.metas.length;
       setTotal(res.total);
       if (realFolder === "INBOX") setInboxMetas(res.metas);
@@ -387,17 +390,20 @@ function MailApp() {
       metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
       setMessages(metas);
       retainSelection(metas);
+      return true;
     },
     [accountId, accounts, folder, retainSelection]
   );
 
   const backfillOlderToTarget = useCallback(
-    async (cachedTotal: number) => {
+    async (cachedTotal: number, request: RequestToken) => {
       if (folder === RISK_FOLDER || folder === DRAFTS_FOLDER || cachedTotal >= AUTO_CACHE_TARGET) return;
       let nextTotal = cachedTotal;
       for (let round = 0; round < AUTO_BACKFILL_ROUNDS && nextTotal < AUTO_CACHE_TARGET; round += 1) {
+        if (!fetchRequests.current.isCurrent(request)) return;
         if (folder === UNIFIED_FOLDER) {
           const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
+          if (!fetchRequests.current.isCurrent(request)) return;
           if (results.every((r) => r.added === 0)) {
             setOlderExhausted(true);
             return;
@@ -406,6 +412,7 @@ function MailApp() {
         } else {
           const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
           const res = await api.syncOlderMessages(accountId, realFolder);
+          if (!fetchRequests.current.isCurrent(request)) return;
           if (res.added === 0) {
             setOlderExhausted(true);
             return;
@@ -420,27 +427,27 @@ function MailApp() {
   const loadMessages = useCallback(async () => {
     if (!accountId) return;
     if (folder === DRAFTS_FOLDER) return; // 草稿是本地数据，不走邮件拉取
-    const seq = ++fetchSeq.current;
+    const request = fetchRequests.current.begin();
     setListError(null);
     // 1) 本地缓存先上屏（离线也能看）
     setLoading(loadedRef.current === 0);
     const firstBatch = loadedRef.current > 0 ? loadedRef.current : INITIAL_PAGE;
     try {
-      await loadCached(firstBatch);
+      await loadCached(firstBatch, request);
     } catch (e) {
-      if (seq === fetchSeq.current) setListError(String(e));
+      if (fetchRequests.current.isCurrent(request)) setListError(String(e));
     } finally {
-      if (seq === fetchSeq.current) setLoading(false);
+      if (fetchRequests.current.isCurrent(request)) setLoading(false);
     }
-    if (seq !== fetchSeq.current) return;
+    if (!fetchRequests.current.isCurrent(request)) return;
     // 首屏只取了小批：上屏后在后台补齐到整页（列表已可交互，不再白屏）
     if (loadedRef.current >= firstBatch && loadedRef.current < PAGE) {
       try {
-        await loadCached(PAGE);
+        await loadCached(PAGE, request);
       } catch (e) {
-        if (seq === fetchSeq.current) setListError(String(e));
+        if (fetchRequests.current.isCurrent(request)) setListError(String(e));
       }
-      if (seq !== fetchSeq.current) return;
+      if (!fetchRequests.current.isCurrent(request)) return;
     }
     // 2) 后台与服务器增量同步，再回填
     setSyncing(true);
@@ -456,12 +463,12 @@ function MailApp() {
         const res = await api.syncMessages(accountId, realFolder);
         syncedTotal = res.total;
       }
-      await backfillOlderToTarget(syncedTotal);
-      if (seq === fetchSeq.current) await loadCached(Math.max(loadedRef.current, PAGE));
+      await backfillOlderToTarget(syncedTotal, request);
+      if (fetchRequests.current.isCurrent(request)) await loadCached(Math.max(loadedRef.current, PAGE), request);
     } catch (e) {
-      if (seq === fetchSeq.current) setListError(t("同步失败（本地缓存仍可用）：") + e);
+      if (fetchRequests.current.isCurrent(request)) setListError(t("同步失败（本地缓存仍可用）：") + e);
     } finally {
-      if (seq === fetchSeq.current) setSyncing(false);
+      if (fetchRequests.current.isCurrent(request)) setSyncing(false);
     }
   }, [accountId, accounts, backfillOlderToTarget, folder, loadCached]);
 
@@ -474,6 +481,8 @@ function MailApp() {
 
   async function handleLoadMore() {
     if (loadingMore) return;
+    const request = fetchRequests.current.begin();
+    setSyncing(false);
     setLoadingMore(true);
     setLoadMoreNotice(null);
     try {
@@ -484,19 +493,21 @@ function MailApp() {
       for (let round = 0; round < rounds; round += 1) {
         const beforeRoundLoaded = loadedRef.current;
         if (loadedRef.current < total) {
-          await loadCached(loadedRef.current + PAGE);
+          if (!(await loadCached(loadedRef.current + PAGE, request))) return;
         } else {
           const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
           if (folder === UNIFIED_FOLDER) {
             const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
+            if (!fetchRequests.current.isCurrent(request)) return;
             exhausted = results.every((r) => r.added === 0);
             if (exhausted) setOlderExhausted(true);
           } else {
             const res = await api.syncOlderMessages(accountId, realFolder);
+            if (!fetchRequests.current.isCurrent(request)) return;
             exhausted = res.added === 0;
             if (exhausted) setOlderExhausted(true);
           }
-          await loadCached(loadedRef.current + PAGE);
+          if (!(await loadCached(loadedRef.current + PAGE, request))) return;
         }
         if (!isFilteredView || exhausted || loadedRef.current === beforeRoundLoaded) break;
       }
@@ -506,9 +517,9 @@ function MailApp() {
         setLoadMoreNotice(t("已继续加载缓存；如果当前分类没有新增，说明更早邮件不属于这个筛选。"));
       }
     } catch (e) {
-      setListError(String(e));
+      if (fetchRequests.current.isCurrent(request)) setListError(String(e));
     } finally {
-      setLoadingMore(false);
+      if (fetchRequests.current.isCurrent(request)) setLoadingMore(false);
     }
   }
 
@@ -1247,10 +1258,18 @@ function MailApp() {
             view={view}
             ledgerMode={ledgerMode}
             onSelectAccount={(id) => {
+              fetchRequests.current.invalidate();
+              setLoading(false);
+              setLoadingMore(false);
+              setSyncing(false);
               setAccountId(id);
               setView("mail");
             }}
             onSelectFolder={(f) => {
+              fetchRequests.current.invalidate();
+              setLoading(false);
+              setLoadingMore(false);
+              setSyncing(false);
               setFolder(f);
               clearSelection();
               setView("mail");
