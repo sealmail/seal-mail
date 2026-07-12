@@ -336,12 +336,6 @@ input, textarea, select { font-family: inherit; }
 .category-seg span {
   color: var(--mut-3); font-family: var(--mono); font-size: 10px;
 }
-.category-seg .category-unread {
-  min-width: 16px; height: 16px; padding: 0 5px; border-radius: 999px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: #e14f3f; color: #fff; font-family: var(--mono); font-size: 9.5px; font-weight: 700;
-  line-height: 1;
-}
 .category-seg.on {
   background: #fff; border-color: var(--border-2); color: var(--ink-3); font-weight: 600;
 }

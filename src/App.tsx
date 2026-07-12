@@ -852,16 +852,6 @@ function MailApp() {
     });
     return counts;
   }, [messages]);
-  const categoryUnreadCounts = useMemo(() => {
-    const counts: Record<MailCategory, number> = { all: 0, personal: 0, business: 0, ads: 0 };
-    messages.forEach((m) => {
-      if (!m.unread) return;
-      counts.all++;
-      counts[classifyMail(m)]++;
-    });
-    return counts;
-  }, [messages]);
-
   function markLocal(keys: string[], unread: boolean) {
     const set = new Set(keys);
     const patch = (ms: EmailMeta[]) => ms.map((x) => (set.has(mailKey(x)) ? { ...x, unread } : x));
@@ -1335,7 +1325,6 @@ function MailApp() {
                 filterMode={filterMode}
                 categoryMode={categoryMode}
                 categoryCounts={categoryCounts}
-                categoryUnreadCounts={categoryUnreadCounts}
                 unreadCount={listUnread}
                 loadedCount={shownThreadMessages.length}
                 totalCount={folder === RISK_FOLDER ? messages.length : total}
