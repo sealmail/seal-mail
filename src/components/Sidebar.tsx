@@ -86,7 +86,9 @@ export function Sidebar(p: Props) {
         <button className="side-add" onClick={p.onNewFolder}>
           {t("+ 新建目录")}
         </button>
+      </div>
 
+      <div className="sidebar-pinned">
         <div style={{ height: 10 }} />
         <div className="side-label">{t("整理")}</div>
         <button className="side-item" onClick={p.onOpenFilters}>

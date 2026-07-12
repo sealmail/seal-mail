@@ -224,32 +224,41 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
     let names = sess
         .list(None, Some("*"))
         .map_err(|e| format!("获取目录失败: {}", e))?;
-    let mut out: Vec<FolderInfo> = names
-        .iter()
-        .filter(|n| {
-            !n.attributes()
-                .iter()
-                .any(|a| matches!(a, imap::types::NameAttribute::NoSelect))
-        })
-        .map(|n| {
-            let name = n.name().to_string();
-            let last = name
-                .rsplit(n.delimiter().unwrap_or("/"))
-                .next()
-                .unwrap_or(&name);
-            FolderInfo {
-                display: decode_mutf7(last),
-                role: if name_is_trash(n) {
-                    Some("trash".into())
-                } else if name_is_archive(n) {
-                    Some("archive".into())
-                } else {
-                    None
-                },
-                name,
-            }
-        })
-        .collect();
+    let mut out = Vec::new();
+    for n in &names {
+        if n.attributes()
+            .iter()
+            .any(|a| matches!(a, imap::types::NameAttribute::NoSelect))
+        {
+            continue;
+        }
+        let name = n.name().to_string();
+        let exists = if name.eq_ignore_ascii_case("INBOX") {
+            0
+        } else {
+            sess.examine(&name)
+                .map_err(|e| format!("获取目录邮件数失败 {}: {}", decode_mutf7(&name), e))?
+                .exists
+        };
+        if !folder_is_visible(&name, exists) {
+            continue;
+        }
+        let last = name
+            .rsplit(n.delimiter().unwrap_or("/"))
+            .next()
+            .unwrap_or(&name);
+        out.push(FolderInfo {
+            display: decode_mutf7(last),
+            role: if name_is_trash(n) {
+                Some("trash".into())
+            } else if name_is_archive(n) {
+                Some("archive".into())
+            } else {
+                None
+            },
+            name,
+        });
+    }
     let _ = sess.logout();
     // INBOX 永远排第一
     out.sort_by_key(|f| {
@@ -260,6 +269,10 @@ pub fn list_folders(account: &Account, secret: &AccountSecret) -> Result<Vec<Fol
         }
     });
     Ok(out)
+}
+
+fn folder_is_visible(name: &str, exists: u32) -> bool {
+    name.eq_ignore_ascii_case("INBOX") || exists > 0
 }
 
 pub struct RawMail {
@@ -309,6 +322,10 @@ pub fn sync_fetch(
     let mailbox = sess
         .select(folder)
         .map_err(|e| format!("无法打开目录 {}: {}", folder, e))?;
+    eprintln!(
+        "[sync] selected folder={} exists={} uidvalidity={:?} stored_validity={:?} max_uid={:?}",
+        folder, mailbox.exists, mailbox.uid_validity, stored_validity, max_uid
+    );
     let uidvalidity = mailbox.uid_validity.unwrap_or(0);
     let reset = stored_validity != Some(uidvalidity) || max_uid.is_none();
 
@@ -716,7 +733,14 @@ pub fn delete_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_mutf7, encode_mutf7};
+    use super::{decode_mutf7, encode_mutf7, folder_is_visible};
+
+    #[test]
+    fn empty_server_folders_are_hidden_but_inbox_remains_visible() {
+        assert!(folder_is_visible("INBOX", 0));
+        assert!(folder_is_visible("Archive", 1));
+        assert!(!folder_is_visible("Archive", 0));
+    }
 
     #[test]
     fn mutf7_rfc3501_examples() {
