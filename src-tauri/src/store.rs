@@ -111,6 +111,20 @@ impl StoreData {
         restrict_perms(&p);
         Ok(())
     }
+
+    /// 合并更新单个账户凭据。GUI 常驻进程的内存状态可能落后于 CLI 子进程；
+    /// 写入前必须重读磁盘，避免 OAuth 刷新把后来新增的账户凭据整表覆盖掉。
+    pub fn update_secret(&mut self, account_id: &str, secret: AccountSecret) -> Result<(), String> {
+        let p = self.dir.join("secrets.json");
+        let raw = fs::read_to_string(&p).map_err(|e| format!("读取账户凭据失败: {e}"))?;
+        let mut latest: HashMap<String, AccountSecret> =
+            serde_json::from_str(&raw).map_err(|e| format!("解析账户凭据失败: {e}"))?;
+        latest.insert(account_id.to_string(), secret);
+        write_json(&p, &latest)?;
+        restrict_perms(&p);
+        self.secrets = latest;
+        Ok(())
+    }
     pub fn save_filters(&self) -> Result<(), String> {
         write_json(&self.dir.join("filters.json"), &self.filters)
     }

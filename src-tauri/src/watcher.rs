@@ -293,12 +293,11 @@ fn creds(app: &AppHandle, account_id: &str) -> Result<Option<(Account, AccountSe
     let refreshed = oauth::refresh_tokens_blocking(&tokens)?;
     let s2 = app.state::<AppState>();
     let mut s = s2.inner.lock().unwrap();
-    let Some(entry) = s.secrets.get_mut(account_id) else {
+    let Some(mut updated) = s.secrets.get(account_id).cloned() else {
         return Ok(None);
     };
-    entry.oauth = Some(refreshed);
-    let updated = entry.clone();
-    s.save_secrets()?;
+    updated.oauth = Some(refreshed);
+    s.update_secret(account_id, updated.clone())?;
     Ok(Some((account, updated)))
 }
 

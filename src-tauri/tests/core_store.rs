@@ -26,6 +26,57 @@ fn load_store(test_name: &str) -> (PathBuf, StoreData) {
     (dir, store)
 }
 
+#[test]
+fn updating_one_secret_preserves_accounts_added_by_another_process() {
+    let (dir, mut stale_gui_store) = load_store("merge-secret-update");
+    stale_gui_store.secrets.insert(
+        "exchange".into(),
+        AccountSecret {
+            password: "old-token".into(),
+            smtp_password: None,
+            oauth: None,
+        },
+    );
+    stale_gui_store.save_secrets().expect("save initial secret");
+
+    let mut cli_store = StoreData::load(dir.clone()).expect("CLI loads current secrets");
+    cli_store.secrets.insert(
+        "qq".into(),
+        AccountSecret {
+            password: "qq-authorization-code".into(),
+            smtp_password: None,
+            oauth: None,
+        },
+    );
+    cli_store
+        .save_secrets()
+        .expect("CLI saves newly added account");
+
+    stale_gui_store
+        .update_secret(
+            "exchange",
+            AccountSecret {
+                password: "refreshed-token".into(),
+                smtp_password: None,
+                oauth: None,
+            },
+        )
+        .expect("GUI updates only the refreshed account");
+
+    let reloaded = StoreData::load(dir.clone()).expect("reload merged secrets");
+    assert_eq!(
+        reloaded.secret("exchange").unwrap().password,
+        "refreshed-token"
+    );
+    assert_eq!(
+        reloaded.secret("qq").unwrap().password,
+        "qq-authorization-code",
+        "refreshing stale GUI state must not delete a credential added by the CLI"
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
 fn sample_account(id: &str, email: &str) -> Account {
     Account {
         id: id.into(),

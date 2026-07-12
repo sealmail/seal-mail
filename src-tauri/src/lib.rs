@@ -408,13 +408,13 @@ async fn fresh_secret(
     }
     let refreshed = oauth::refresh_tokens(tokens).await?;
     let mut s = state.inner.lock().unwrap();
-    let entry = s
+    let mut updated = s
         .secrets
-        .get_mut(account_id)
+        .get(account_id)
+        .cloned()
         .ok_or_else(|| format!("账户密码缺失: {}", account_id))?;
-    entry.oauth = Some(refreshed);
-    let updated = entry.clone();
-    s.save_secrets()?;
+    updated.oauth = Some(refreshed);
+    s.update_secret(account_id, updated.clone())?;
     Ok(updated)
 }
 
