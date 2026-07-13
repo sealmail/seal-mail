@@ -306,6 +306,22 @@ fn flags_of(f: &imap::types::Fetch) -> (bool, bool) {
     (unread, flagged)
 }
 
+const MAX_IMAP_ERROR_RESPONSE_BYTES: usize = 4 * 1024;
+
+/// 提取旧 imap 解析器隐藏的原始响应，仅用于命令失败诊断。
+/// 转义控制字符并限制长度，避免日志换行注入和无上限增长。
+fn imap_parse_error_detail(error: &imap::error::Error) -> Option<String> {
+    let imap::error::Error::Parse(imap::error::ParseError::Invalid(raw)) = error else {
+        return None;
+    };
+    let shown = &raw[..raw.len().min(MAX_IMAP_ERROR_RESPONSE_BYTES)];
+    let mut detail = shown.escape_ascii().to_string();
+    if raw.len() > shown.len() {
+        detail.push_str("...[truncated]");
+    }
+    Some(detail)
+}
+
 /// 增量同步：
 /// - UIDVALIDITY 变化/首次 → 抓最近 initial_window 封全文
 /// - 否则只抓 uid > max_uid 的新邮件全文，并对最近窗口做 FLAGS 回扫（已读/星标/删除）
@@ -366,16 +382,26 @@ pub fn sync_fetch(
     }
 
     let max = max_uid.expect("checked above");
-    // 先只探测新 UID（UID FETCH n:* 在没有新邮件时也会返回最大 uid 那封，需过滤），
-    // 有新邮件才拉全文，避免每轮同步重复下载最新一封
-    let probe = sess
-        .uid_fetch(format!("{}:*", max + 1), "UID")
-        .map_err(|e| format!("探测新邮件失败: {}", e))?;
-    let new_uids: Vec<u32> = probe
-        .iter()
-        .filter_map(|f| f.uid)
-        .filter(|u| *u > max)
-        .collect();
+    // 先用 UID SEARCH 探测新 UID。有些服务器会返回 `FETCH (UID n )`（右括号前多空格），
+    // 旧 imap-proto 无法解析；SEARCH 不经过 FETCH 响应解析器。
+    // n:* 在没有新邮件时也可能命中最大 uid 那封，仍需过滤。
+    let probe_query = format!("UID {}:*", max + 1);
+    let probe = sess.uid_search(&probe_query).map_err(|e| {
+        if let Some(raw) = imap_parse_error_detail(&e) {
+            crate::logging::log(format!(
+                "[DEBUG-imap-status] UID SEARCH query={} error={} raw={}",
+                probe_query, e, raw
+            ));
+        } else {
+            crate::logging::log(format!(
+                "[DEBUG-imap-status] UID SEARCH query={} error={:?}",
+                probe_query, e
+            ));
+        }
+        format!("探测新邮件失败: {}", e)
+    })?;
+    let mut new_uids: Vec<u32> = probe.into_iter().filter(|u| *u > max).collect();
+    new_uids.sort_unstable();
     if !new_uids.is_empty() {
         let set = new_uids
             .iter()
@@ -733,7 +759,19 @@ pub fn delete_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_mutf7, encode_mutf7, folder_is_visible};
+    use super::{decode_mutf7, encode_mutf7, folder_is_visible, imap_parse_error_detail};
+
+    #[test]
+    fn imap_parse_error_detail_escapes_raw_response() {
+        let error = imap::error::Error::Parse(imap::error::ParseError::Invalid(
+            b"* 148 EXISTS\r\na3 OK done\r\n".to_vec(),
+        ));
+
+        assert_eq!(
+            imap_parse_error_detail(&error),
+            Some("* 148 EXISTS\\r\\na3 OK done\\r\\n".to_string())
+        );
+    }
 
     #[test]
     fn empty_server_folders_are_hidden_but_inbox_remains_visible() {
