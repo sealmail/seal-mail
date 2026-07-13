@@ -219,6 +219,7 @@ function MailApp() {
   const [folder, setFolder] = useState("INBOX");
   const [messages, setMessages] = useState<EmailMeta[]>([]);
   const [inboxMetas, setInboxMetas] = useState<EmailMeta[]>([]);
+  const [inboxUnreadByAccount, setInboxUnreadByAccount] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<EmailFull | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [thread, setThread] = useState<EmailMeta[]>([]);
@@ -344,6 +345,29 @@ function MailApp() {
 
   useEffect(loadDrafts, [loadDrafts]);
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(
+      accounts.map(async (account) => {
+        const result = await api.listCached(account.id, "INBOX", 0, 0);
+        return [account.id, result.unreadCount] as const;
+      })
+    )
+      .then((counts) => {
+        if (cancelled) return;
+        setInboxUnreadByAccount(Object.fromEntries(counts));
+      })
+      .catch((e) => console.error("读取统一收件箱未读数失败", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts]);
+
+  const refreshInboxUnread = useCallback(async (accId: string) => {
+    const result = await api.listCached(accId, "INBOX", 0, 0);
+    setInboxUnreadByAccount((counts) => ({ ...counts, [accId]: result.unreadCount }));
+  }, []);
+
   // ── 切账户：拉目录 ──
   useEffect(() => {
     if (!accountId) return;
@@ -375,6 +399,9 @@ function MailApp() {
         const metas = pages.flatMap((p) => p.metas).sort((a, b) => b.timestamp - a.timestamp);
         loadedRef.current = metas.length;
         setTotal(pages.reduce((sum, p) => sum + p.total, 0));
+        setInboxUnreadByAccount(
+          Object.fromEntries(pages.map((page, index) => [accounts[index].id, page.unreadCount]))
+        );
         setInboxMetas(metas);
         setMessages(metas);
         retainSelection(metas);
@@ -385,7 +412,10 @@ function MailApp() {
       if (!fetchRequests.current.isCurrent(request)) return false;
       loadedRef.current = res.metas.length;
       setTotal(res.total);
-      if (realFolder === "INBOX") setInboxMetas(res.metas);
+      if (realFolder === "INBOX") {
+        setInboxMetas(res.metas);
+        setInboxUnreadByAccount((counts) => ({ ...counts, [accountId]: res.unreadCount }));
+      }
       let metas = folder === RISK_FOLDER ? res.metas.filter(isRisky) : res.metas;
       metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
       setMessages(metas);
@@ -559,7 +589,10 @@ function MailApp() {
     setView("mail");
     const shouldMarkRead = opts.markRead !== false && m.unread;
     if (shouldMarkRead) {
-      api.setRead(m.accountId, m.folder, m.uid, true).catch(() => {});
+      api
+        .setRead(m.accountId, m.folder, m.uid, true)
+        .then(() => refreshInboxUnread(m.accountId))
+        .catch((e) => setListError(String(e)));
       setMessages((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
       setInboxMetas((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
     }
@@ -595,7 +628,10 @@ function MailApp() {
       if (opts.markRead !== false) {
         const unreadInThread = sortedThread.filter((x) => x.unread);
         if (unreadInThread.length > 0) {
-          api.markRead(m.accountId, m.folder, unreadInThread.map((x) => x.uid)).catch(() => {});
+          api
+            .markRead(m.accountId, m.folder, unreadInThread.map((x) => x.uid))
+            .then(() => refreshInboxUnread(m.accountId))
+            .catch((e) => setListError(String(e)));
           const unreadKeys = new Set(unreadInThread.map(mailKey));
           const clearUnread = (ms: EmailMeta[]) => ms.map((x) => (unreadKeys.has(mailKey(x)) ? { ...x, unread: false } : x));
           setMessages(clearUnread);
@@ -844,6 +880,13 @@ function MailApp() {
 
   const riskUnread = useMemo(() => inboxMetas.filter((m) => m.unread && isRisky(m)).length, [inboxMetas]);
   const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
+  const unifiedUnread = useMemo(() => {
+    const activeAccountIds = new Set(accounts.map((account) => account.id));
+    return Object.entries(inboxUnreadByAccount).reduce(
+      (sum, [id, unread]) => (activeAccountIds.has(id) ? sum + unread : sum),
+      0
+    );
+  }, [accounts, inboxUnreadByAccount]);
   const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
   const categoryCounts = useMemo(() => {
     const counts: Record<MailCategory, number> = { all: messages.length, personal: 0, business: 0, ads: 0 };
@@ -863,6 +906,7 @@ function MailApp() {
     if (!selected) return;
     try {
       await api.setRead(selected.meta.accountId, selected.meta.folder, selected.meta.uid, false);
+      await refreshInboxUnread(selected.meta.accountId);
       markLocal([mailKey(selected.meta)], true);
     } catch (e) {
       setListError(String(e));
@@ -884,6 +928,7 @@ function MailApp() {
           return api.markRead(accId, fld, rows.map((m) => m.uid));
         })
       );
+      await Promise.all([...groups.keys()].map((key) => refreshInboxUnread(key.split("\0")[0])));
       markLocal(unread.map(mailKey), false);
     } catch (e) {
       setListError(String(e));
@@ -1243,6 +1288,7 @@ function MailApp() {
             folders={folders}
             currentFolder={folder}
             riskCount={riskUnread}
+            unifiedUnread={unifiedUnread}
             inboxUnread={inboxUnread}
             draftCount={drafts.filter((d) => d.accountId === accountId).length}
             view={view}

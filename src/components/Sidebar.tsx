@@ -32,6 +32,7 @@ interface Props {
   folders: FolderInfo[];
   currentFolder: string;
   riskCount: number;
+  unifiedUnread: number;
   inboxUnread: number;
   draftCount: number;
   view: "mail" | "keys";
@@ -55,9 +56,18 @@ export function Sidebar(p: Props) {
         {p.folders.map((f) => {
           const active = p.view === "mail" && p.currentFolder === f.name;
           const isInbox = f.name === "INBOX";
+          const isUnified = f.name === UNIFIED_FOLDER;
           const isRisk = f.name === RISK_FOLDER;
           const deletable = !f.role && ![UNIFIED_FOLDER, "INBOX", RISK_FOLDER, DRAFTS_FOLDER].includes(f.name);
-          const count = isRisk ? p.riskCount : isInbox ? p.inboxUnread : f.name === DRAFTS_FOLDER ? p.draftCount : 0;
+          const count = isRisk
+            ? p.riskCount
+            : isUnified
+              ? p.unifiedUnread
+              : isInbox
+                ? p.inboxUnread
+                : f.name === DRAFTS_FOLDER
+                  ? p.draftCount
+                  : 0;
           return (
             <div key={f.name} className="side-row">
               <button

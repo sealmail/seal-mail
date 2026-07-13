@@ -22,6 +22,7 @@ pub const POP3_ARCHIVE: &str = "归档";
 pub struct CachedList {
     pub metas: Vec<EmailMeta>,
     pub total: i64,
+    pub unread_count: i64,
 }
 
 #[derive(Serialize)]
@@ -426,6 +427,7 @@ pub fn list_cached(
     // 只读元信息缓存（不含 raw），命中即秒出；未命中才读 raw 解析一次并写回缓存。
     let rows = db::list_meta(&s.db, account_id, folder, offset, limit.min(200))?;
     let total = db::count(&s.db, account_id, folder)?;
+    let unread_count = db::count_unread(&s.db, account_id, folder)?;
     let mut metas = Vec::with_capacity(rows.len());
     for r in rows {
         let cached = r
@@ -463,7 +465,11 @@ pub fn list_cached(
         meta.flagged = r.flagged;
         metas.push(meta);
     }
-    Ok(CachedList { metas, total })
+    Ok(CachedList {
+        metas,
+        total,
+        unread_count,
+    })
 }
 
 pub fn sync_messages(

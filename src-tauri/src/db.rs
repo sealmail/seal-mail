@@ -104,6 +104,15 @@ pub fn count(conn: &Connection, account: &str, folder: &str) -> Result<i64, Stri
     .map_err(err)
 }
 
+pub fn count_unread(conn: &Connection, account: &str, folder: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM messages WHERE account_id=?1 AND folder=?2 AND unread=1",
+        params![account, folder],
+        |r| r.get(0),
+    )
+    .map_err(err)
+}
+
 /// 读取整个目录的“元信息缓存”（newest-first，不含 raw），用于本地会话分组。
 /// 命中缓存的行不必读取/解析完整邮件，会话分组因此大幅加速。
 pub fn list_folder_meta(
@@ -540,6 +549,7 @@ mod tests {
             .unwrap();
         }
         assert_eq!(count(&conn, "a", "INBOX").unwrap(), 5);
+        assert_eq!(count_unread(&conn, "a", "INBOX").unwrap(), 5);
         // 时间倒序：第一页是最新的
         let page = list(&conn, "a", "INBOX", 0, 2).unwrap();
         assert_eq!(page[0].uid, 5);
@@ -552,6 +562,7 @@ mod tests {
         // 标记与移动
         set_unread(&conn, "a", "INBOX", &[5], false).unwrap();
         assert!(!list(&conn, "a", "INBOX", 0, 1).unwrap()[0].unread);
+        assert_eq!(count_unread(&conn, "a", "INBOX").unwrap(), 4);
         set_flagged(&conn, "a", "INBOX", 5, true).unwrap();
         assert!(list(&conn, "a", "INBOX", 0, 1).unwrap()[0].flagged);
         set_folder(&conn, "a", "INBOX", 5, "归档").unwrap();

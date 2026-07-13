@@ -157,6 +157,7 @@ export async function deleteFolder(accountId: string, name: string): Promise<voi
 export interface CachedList {
   metas: EmailMeta[];
   total: number;
+  unreadCount: number;
 }
 
 export interface SyncResult {
