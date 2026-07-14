@@ -372,10 +372,12 @@ input, textarea, select { font-family: inherit; }
 .icon-btn:hover { background: var(--bg-chip); color: var(--ink-3); }
 
 .list-scroll { flex: 1; overflow-y: auto; }
+.list-virtual { width: 100%; }
 .mail-row {
   display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start;
   column-gap: 8px; padding: 8px 12px 8px 10px; border-bottom: 1px solid var(--border-soft);
   cursor: pointer; border-left: 3px solid transparent; position: relative;
+  overflow: hidden;
 }
 .mail-row.unread { grid-template-columns: 8px 34px minmax(0, 1fr); column-gap: 6px; }
 .mail-row:hover { background: var(--bg-hover); }

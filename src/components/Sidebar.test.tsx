@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Sidebar, UNIFIED_FOLDER } from "./Sidebar";
 
 test("shows the aggregated unread count for all inboxes", () => {
+  // 统一 = 各账户 INBOX 全量 COUNT 之和；收件箱 = 当前账户全量 COUNT（不是列表窗口）
   const html = renderToStaticMarkup(
     <Sidebar
       identity={null}
@@ -14,8 +15,8 @@ test("shows the aggregated unread count for all inboxes", () => {
       ]}
       currentFolder="INBOX"
       riskCount={0}
-      unifiedUnread={34}
-      inboxUnread={29}
+      unifiedUnread={551}
+      inboxUnread={318}
       draftCount={0}
       view="mail"
       ledgerMode={false}
@@ -30,8 +31,8 @@ test("shows the aggregated unread count for all inboxes", () => {
     />
   );
 
-  expect(html).toContain('<span class="label">统一收件箱</span><span class="count">34</span>');
-  expect(html).toContain('<span class="label">收件箱</span><span class="count">29</span>');
+  expect(html).toContain('<span class="label">统一收件箱</span><span class="count">551</span>');
+  expect(html).toContain('<span class="label">收件箱</span><span class="count">318</span>');
 });
 
 test("keeps organization and account controls outside the folder scroller", () => {

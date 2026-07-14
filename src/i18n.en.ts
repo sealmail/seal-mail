@@ -72,11 +72,13 @@ export const EN: Record<string, string> = {
   "显示 {a} · 缓存 {b}": "Showing {a} · Cached {b}",
   "全部标为已读": "Mark all as read",
   "可继续加载": "More available",
+  "可从服务器补全更早邮件": "Older mail can be fetched",
   "已缓存": "Cached",
   "正在读取本地缓存…": "Reading local cache…",
   "此目录暂无邮件": "No mail in this folder",
   "正在加载…": "Loading…",
   "加载更早的邮件": "Load older messages",
+  "从服务器加载更早的邮件": "Fetch older mail from server",
   "没有更早的邮件了": "No older messages",
   "已继续加载缓存；如果当前分类没有新增，说明更早邮件不属于这个筛选。":
     "Loaded more from cache; if nothing new appears in this filter, older mail doesn't match it.",

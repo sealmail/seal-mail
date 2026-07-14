@@ -120,26 +120,8 @@ pub fn list_folder_meta(
     account: &str,
     folder: &str,
 ) -> Result<Vec<MetaRow>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT uid, unread, flagged, meta_json FROM messages
-             WHERE account_id=?1 AND folder=?2
-             ORDER BY timestamp DESC, uid DESC",
-        )
-        .map_err(err)?;
-    let rows = stmt
-        .query_map(params![account, folder], |r| {
-            Ok(MetaRow {
-                uid: r.get(0)?,
-                unread: r.get::<_, i64>(1)? != 0,
-                flagged: r.get::<_, i64>(2)? != 0,
-                meta_json: r.get(3)?,
-            })
-        })
-        .map_err(err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(err)?;
-    Ok(rows)
+    // 与 list_meta(limit=0) 相同：目录内本地全量 meta
+    list_meta(conn, account, folder, 0, 0)
 }
 
 pub fn get_raw(
@@ -170,10 +152,22 @@ pub struct MetaRow {
     pub uid: u32,
     pub unread: bool,
     pub flagged: bool,
+    pub timestamp: i64,
     pub meta_json: Option<String>,
 }
 
-/// 按时间倒序分页读取“元信息缓存”（不含 raw）。
+fn map_meta_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MetaRow> {
+    Ok(MetaRow {
+        uid: r.get(0)?,
+        unread: r.get::<_, i64>(1)? != 0,
+        flagged: r.get::<_, i64>(2)? != 0,
+        timestamp: r.get(3)?,
+        meta_json: r.get(4)?,
+    })
+}
+
+/// 按时间倒序读取“元信息缓存”（不含 raw）。
+/// `limit == 0` 表示不限制条数（本地全量列表）；SQLite 的 LIMIT -1 等价于无上限。
 pub fn list_meta(
     conn: &Connection,
     account: &str,
@@ -181,22 +175,16 @@ pub fn list_meta(
     offset: u32,
     limit: u32,
 ) -> Result<Vec<MetaRow>, String> {
+    let sql_limit = if limit == 0 { -1i64 } else { limit as i64 };
     let mut stmt = conn
         .prepare(
-            "SELECT uid, unread, flagged, meta_json FROM messages
+            "SELECT uid, unread, flagged, timestamp, meta_json FROM messages
              WHERE account_id=?1 AND folder=?2
              ORDER BY timestamp DESC, uid DESC LIMIT ?3 OFFSET ?4",
         )
         .map_err(err)?;
     let rows = stmt
-        .query_map(params![account, folder, limit, offset], |r| {
-            Ok(MetaRow {
-                uid: r.get(0)?,
-                unread: r.get::<_, i64>(1)? != 0,
-                flagged: r.get::<_, i64>(2)? != 0,
-                meta_json: r.get(3)?,
-            })
-        })
+        .query_map(params![account, folder, sql_limit, offset], map_meta_row)
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
@@ -214,6 +202,21 @@ pub fn set_meta_json(
     conn.execute(
         "UPDATE messages SET meta_json=?4 WHERE account_id=?1 AND folder=?2 AND uid=?3",
         params![account, folder, uid, meta_json],
+    )
+    .map(|_| ())
+    .map_err(err)
+}
+
+/// 清掉单封 meta，交给后台 backfill 重新解析（乱码缓存等）。
+pub fn clear_meta_json(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    uid: u32,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE messages SET meta_json=NULL WHERE account_id=?1 AND folder=?2 AND uid=?3",
+        params![account, folder, uid],
     )
     .map(|_| ())
     .map_err(err)

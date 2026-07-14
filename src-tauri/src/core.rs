@@ -415,42 +415,47 @@ pub fn create_folder(s: &mut StoreData, account_id: &str, name: String) -> Resul
     }
 }
 
-/// 旧版本解码错误写入的 meta（预览/主题含 U+FFFD）视为失效，强制重解析。
+/// 旧版本解码错误写入的 meta（预览/主题含 U+FFFD）视为失效。
 fn meta_cache_stale(meta: &EmailMeta) -> bool {
     mail::looks_like_mojibake(&meta.preview)
         || mail::looks_like_mojibake(&meta.subject)
         || mail::looks_like_mojibake(&meta.from_name)
 }
 
-fn parse_and_cache_meta(
-    s: &mut StoreData,
+/// 列表占位：缺 meta 时不读 raw，后台 backfill 再补全主题/预览。
+fn stub_meta(
     account_id: &str,
     folder: &str,
     uid: u32,
     unread: bool,
     flagged: bool,
-    trusted: &[TrustedContact],
-) -> Result<EmailMeta, String> {
-    let raw = db::get_raw(&s.db, account_id, folder, uid)?
-        .ok_or_else(|| "邮件不在本地缓存中，请刷新列表".to_string())?;
-    let full = mail::parse_email(
-        &raw.raw,
+    timestamp: i64,
+) -> EmailMeta {
+    EmailMeta {
         uid,
-        account_id,
-        folder,
+        account_id: account_id.to_string(),
+        folder: folder.to_string(),
+        message_id: None,
+        thread_id: format!("uid:{uid}"),
+        from_name: "…".into(),
+        from_addr: String::new(),
+        subject: "…".into(),
+        preview: String::new(),
+        date_display: mail::format_date(timestamp),
+        timestamp,
         unread,
         flagged,
-        trusted,
-    )?;
-    if let Ok(json) = serde_json::to_string(&full.meta) {
-        let _ = db::set_meta_json(&s.db, account_id, folder, uid, &json);
+        lang: "EN".into(),
+        trust: "unsigned".into(),
+        risk: None,
+        has_attach: false,
     }
-    let meta = full.meta.clone();
-    s.mail_cache
-        .insert(StoreData::cache_key(account_id, folder, uid), full);
-    Ok(meta)
 }
 
+/// 列出本地缓存的邮件 meta。
+/// - `limit == 0`：返回该目录本地**全量** meta（不做分页上限）
+/// - 已有 meta_json：直接用（毫秒级）
+/// - 缺失/乱码：返回占位行，**不**同步解析 raw；由启动后台 backfill 补全
 pub fn list_cached(
     s: &mut StoreData,
     account_id: &str,
@@ -458,34 +463,31 @@ pub fn list_cached(
     offset: u32,
     limit: u32,
 ) -> Result<CachedList, String> {
-    let account = s.account(account_id)?;
-    let trusted = s.trusted_for_verify(&account);
-    // 只读元信息缓存（不含 raw），命中即秒出；未命中/乱码缓存才读 raw 解析一次并写回。
-    let rows = db::list_meta(&s.db, account_id, folder, offset, limit.min(200))?;
+    let _account = s.account(account_id)?;
+    let rows = db::list_meta(&s.db, account_id, folder, offset, limit)?;
     let total = db::count(&s.db, account_id, folder)?;
     let unread_count = db::count_unread(&s.db, account_id, folder)?;
     let mut metas = Vec::with_capacity(rows.len());
     for r in rows {
-        let cached = r
+        let parsed = r
             .meta_json
             .as_deref()
-            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok())
-            .filter(|m| !meta_cache_stale(m));
-        let mut meta = match cached {
-            Some(m) => m,
-            None => match parse_and_cache_meta(
-                s, account_id, folder, r.uid, r.unread, r.flagged, &trusted,
-            ) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    eprintln!("[cache] 解析缓存邮件失败 uid={}: {}", r.uid, e);
-                    continue;
-                }
-            },
+            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok());
+        let mut meta = match parsed {
+            Some(m) if !meta_cache_stale(&m) => m,
+            Some(_) => {
+                // 乱码缓存：清掉交给后台重解析，列表先用占位
+                let _ = db::clear_meta_json(&s.db, account_id, folder, r.uid);
+                stub_meta(account_id, folder, r.uid, r.unread, r.flagged, r.timestamp)
+            }
+            None => stub_meta(account_id, folder, r.uid, r.unread, r.flagged, r.timestamp),
         };
         // 已读/星标以 DB 当前列为准（标记操作只更新列、不动元信息缓存）。
         meta.unread = r.unread;
         meta.flagged = r.flagged;
+        meta.uid = r.uid;
+        meta.account_id = account_id.to_string();
+        meta.folder = folder.to_string();
         metas.push(meta);
     }
     Ok(CachedList {
@@ -782,30 +784,27 @@ pub fn list_thread(
     folder: &str,
     thread_id: &str,
 ) -> Result<Vec<EmailMeta>, String> {
-    let account = s.account(account_id)?;
-    let trusted = s.trusted_for_verify(&account);
+    let _account = s.account(account_id)?;
     let mut metas = Vec::new();
-    // 走元信息缓存（不含 raw）：命中即用，未命中/乱码缓存才读 raw 解析一次并写回。
+    // 与 list_cached 相同：只用 meta 缓存，缺省占位，不在列表路径同步解析 raw。
     for r in db::list_folder_meta(&s.db, account_id, folder)? {
-        let cached = r
+        let parsed = r
             .meta_json
             .as_deref()
-            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok())
-            .filter(|m| !meta_cache_stale(m));
-        let mut meta = match cached {
-            Some(m) => m,
-            None => match parse_and_cache_meta(
-                s, account_id, folder, r.uid, r.unread, r.flagged, &trusted,
-            ) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    eprintln!("[thread] 解析缓存邮件失败 uid={}: {}", r.uid, e);
-                    continue;
-                }
-            },
+            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok());
+        let mut meta = match parsed {
+            Some(m) if !meta_cache_stale(&m) => m,
+            Some(_) => {
+                let _ = db::clear_meta_json(&s.db, account_id, folder, r.uid);
+                stub_meta(account_id, folder, r.uid, r.unread, r.flagged, r.timestamp)
+            }
+            None => stub_meta(account_id, folder, r.uid, r.unread, r.flagged, r.timestamp),
         };
         meta.unread = r.unread;
         meta.flagged = r.flagged;
+        meta.uid = r.uid;
+        meta.account_id = account_id.to_string();
+        meta.folder = folder.to_string();
         if meta.thread_id == thread_id {
             metas.push(meta);
         }

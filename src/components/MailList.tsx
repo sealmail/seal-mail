@@ -1,4 +1,4 @@
-import type { UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useI18n } from "../i18n";
 import { CATEGORY_LABEL, CATEGORY_TAG, classifyMail, type MailCategory } from "../mailCategory";
 import { Seal } from "./Seal";
@@ -41,16 +41,25 @@ const BAR_COLOR: Record<string, string> = {
   impersonation: "#9f2f24",
 };
 
-export function MailList(p: Props) {
-  const t = useI18n();
-  function handleScroll(e: UIEvent<HTMLDivElement>) {
-    if (!p.hasMore || p.loadingMore || p.loading || p.error) return;
-    const el = e.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 180) p.onLoadMore();
-  }
+/** 固定行高（与 .mail-row 视觉一致），虚拟列表用 */
+const ROW_HEIGHT = 92;
+const OVERSCAN = 8;
 
-  const rows = Array.from(
-    p.messages
+type ThreadRow = {
+  key: string;
+  latest: EmailMeta;
+  count: number;
+  unreadCount: number;
+  selected: boolean;
+  from: string;
+  flagged: boolean;
+  hasAttach: boolean;
+  risk: EmailMeta["risk"];
+};
+
+function groupThreads(messages: EmailMeta[], selectedKey: string | null, t: (k: string, vars?: Record<string, string>) => string): ThreadRow[] {
+  return Array.from(
+    messages
       .reduce((groups, m) => {
         const key = `${m.accountId}/${m.folder}/${m.threadId || m.messageId || m.uid}`;
         const existing = groups.get(key);
@@ -68,13 +77,55 @@ export function MailList(p: Props) {
       latest,
       count: sorted.length,
       unreadCount: sorted.filter((m) => m.unread).length,
-      selected: sorted.some((m) => `${m.accountId}/${m.folder}/${m.uid}` === p.selectedKey),
+      selected: sorted.some((m) => `${m.accountId}/${m.folder}/${m.uid}` === selectedKey),
       from: senders.length <= 2 ? senders.join(", ") : t("{names} 等", { names: senders.slice(0, 2).join(", ") }),
       flagged: sorted.some((m) => m.flagged),
       hasAttach: sorted.some((m) => m.hasAttach),
       risk: sorted.find((m) => m.risk)?.risk ?? latest.risk,
     };
   });
+}
+
+export function MailList(p: Props) {
+  const t = useI18n();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(600);
+
+  const rows = useMemo(() => groupThreads(p.messages, p.selectedKey, t), [p.messages, p.selectedKey, t]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewportH(el.clientHeight || 600);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 筛选/目录变化时滚回顶部
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = 0;
+    setScrollTop(0);
+  }, [p.filterMode, p.categoryMode, p.title]);
+
+  function handleScroll(e: UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    setScrollTop(el.scrollTop);
+    // 接近底部且服务器还有更早邮件时，触发从网络补缓存（本地列表本身已是全量）
+    if (!p.hasMore || p.loadingMore || p.loading || p.error) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) p.onLoadMore();
+  }
+
+  const totalH = rows.length * ROW_HEIGHT;
+  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const visibleCount = Math.ceil(viewportH / ROW_HEIGHT) + OVERSCAN * 2;
+  const end = Math.min(rows.length, start + visibleCount);
+  const padTop = start * ROW_HEIGHT;
+  const padBottom = Math.max(0, totalH - end * ROW_HEIGHT);
+  const visibleRows = rows.slice(start, end);
 
   return (
     <div className="list-pane" style={{ width: p.width }}>
@@ -107,7 +158,7 @@ export function MailList(p: Props) {
             {t("★ 星标")}
           </button>
         </div>
-        <span className="list-count">{p.hasMore ? t("可继续加载") : t("已缓存")}</span>
+        <span className="list-count">{p.hasMore ? t("可从服务器补全更早邮件") : t("已缓存")}</span>
       </div>
       <div className="list-categorybar">
         {(["personal", "business", "ads", "all"] as const).map((c) => (
@@ -117,7 +168,7 @@ export function MailList(p: Props) {
           </button>
         ))}
       </div>
-      <div className="list-scroll" onScroll={handleScroll}>
+      <div className="list-scroll" ref={scrollRef} onScroll={handleScroll}>
         {p.loading && p.messages.length === 0 && <div className="empty-pane">{t("正在读取本地缓存…")}</div>}
         {p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
         {!p.error && p.notice && <div className="list-notice-bar">{p.notice}</div>}
@@ -136,56 +187,66 @@ export function MailList(p: Props) {
             {t("此目录暂无邮件")}
           </div>
         )}
-        {rows.map((row) => {
-          const m = row.latest;
-          const category = classifyMail(m);
-          return (
-            <div
-              key={row.key}
-              className={`mail-row${row.selected ? " selected" : ""}${row.unreadCount > 0 ? " unread" : ""}`}
-              style={{ borderLeftColor: row.selected ? BAR_COLOR[m.trust] : "transparent" }}
-              onClick={() => p.onSelect(m)}
-              onDoubleClick={() => p.onOpenWindow(m)}
-            >
-              {row.unreadCount > 0 && <div className="mail-unread-dot" />}
-              <div className="mail-seal-cell">
-                <Seal trust={m.trust} size={28} />
-              </div>
-              <div className="mail-main">
-                <div className="top">
-                  <span className="from">{row.from || m.fromName}</span>
-                  <button
-                    className={`star-btn${row.flagged ? " on" : ""}`}
-                    title={row.flagged ? t("取消星标") : t("加星标")}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      p.onToggleFlag(m);
-                    }}
-                  >
-                    {row.flagged ? "★" : "☆"}
-                  </button>
-                  <span className="time">
-                    {row.count > 1 && <b className="thread-count">{row.count}</b>}
-                    {m.dateDisplay}
-                  </span>
+        {rows.length > 0 && (
+          <div className="list-virtual" style={{ height: totalH, position: "relative" }}>
+            <div style={{ height: padTop }} />
+            {visibleRows.map((row) => {
+              const m = row.latest;
+              const category = classifyMail(m);
+              return (
+                <div
+                  key={row.key}
+                  className={`mail-row${row.selected ? " selected" : ""}${row.unreadCount > 0 ? " unread" : ""}`}
+                  style={{
+                    borderLeftColor: row.selected ? BAR_COLOR[m.trust] : "transparent",
+                    height: ROW_HEIGHT,
+                    boxSizing: "border-box",
+                  }}
+                  onClick={() => p.onSelect(m)}
+                  onDoubleClick={() => p.onOpenWindow(m)}
+                >
+                  {row.unreadCount > 0 && <div className="mail-unread-dot" />}
+                  <div className="mail-seal-cell">
+                    <Seal trust={m.trust} size={28} />
+                  </div>
+                  <div className="mail-main">
+                    <div className="top">
+                      <span className="from">{row.from || m.fromName}</span>
+                      <button
+                        className={`star-btn${row.flagged ? " on" : ""}`}
+                        title={row.flagged ? t("取消星标") : t("加星标")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          p.onToggleFlag(m);
+                        }}
+                      >
+                        {row.flagged ? "★" : "☆"}
+                      </button>
+                      <span className="time">
+                        {row.count > 1 && <b className="thread-count">{row.count}</b>}
+                        {m.dateDisplay}
+                      </span>
+                    </div>
+                    <div className="subject">{m.subject}</div>
+                    <div className="preview">{m.preview || " "}</div>
+                    <div className="tags">
+                      <span className={`tag ${m.trust}`}>{t(TRUST_LABEL[m.trust])}</span>
+                      {p.accountLabels?.[m.accountId] && <span className="tag lang">{p.accountLabels[m.accountId]}</span>}
+                      {row.risk && <span className="tag risk">⚠ {t("高风险")}</span>}
+                      <span className={`tag category ${category}`}>{t(CATEGORY_TAG[category])}</span>
+                      <span className="tag lang">{m.lang}</span>
+                      {row.hasAttach && <span className="tag lang">📎</span>}
+                    </div>
+                  </div>
                 </div>
-                <div className="subject">{m.subject}</div>
-                <div className="preview">{m.preview || " "}</div>
-                <div className="tags">
-                  <span className={`tag ${m.trust}`}>{t(TRUST_LABEL[m.trust])}</span>
-                  {p.accountLabels?.[m.accountId] && <span className="tag lang">{p.accountLabels[m.accountId]}</span>}
-                  {row.risk && <span className="tag risk">⚠ {t("高风险")}</span>}
-                  <span className={`tag category ${category}`}>{t(CATEGORY_TAG[category])}</span>
-                  <span className="tag lang">{m.lang}</span>
-                  {row.hasAttach && <span className="tag lang">📎</span>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+              );
+            })}
+            <div style={{ height: padBottom }} />
+          </div>
+        )}
         {!p.loading && p.hasMore && (
           <button className="load-more" onClick={p.onLoadMore} disabled={p.loadingMore}>
-            {p.loadingMore ? t("正在加载…") : t("加载更早的邮件")}
+            {p.loadingMore ? t("正在加载…") : t("从服务器加载更早的邮件")}
           </button>
         )}
       </div>

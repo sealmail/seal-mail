@@ -380,21 +380,18 @@ function MailApp() {
     });
   }, [accountId, clearSelection, refreshFolders]);
 
-  // ── 拉邮件：本地缓存秒出 → 后台增量同步 → 回填 ──
-  const PAGE = 200;
-  // 首屏只取一小批，尽快结束白屏；上屏后再后台补齐到整页
-  const INITIAL_PAGE = 60;
-  const AUTO_CACHE_TARGET = 1000;
-  const AUTO_BACKFILL_ROUNDS = 4;
-  const MANUAL_FILTER_LOAD_ROUNDS = 4;
+  // ── 拉邮件：本地全量 meta 一次上屏 → 后台增量同步/回填更早邮件 ──
+  // limit=0 表示目录内本地全量；列表不做分页。网络同步慢一次，缓存齐后即可离线浏览。
+  const FULL_LOCAL = 0;
+  const MAX_OLDER_BACKFILL_ROUNDS = 50;
   const loadedRef = useRef(0);
   const sidebarDragBase = useRef(sidebarWidth);
   const listDragBase = useRef(listWidth);
 
   const loadCached = useCallback(
-    async (count: number, request: RequestToken) => {
+    async (request: RequestToken) => {
       if (folder === UNIFIED_FOLDER) {
-        const pages = await Promise.all(accounts.map((a) => api.listCached(a.id, "INBOX", 0, count)));
+        const pages = await Promise.all(accounts.map((a) => api.listCached(a.id, "INBOX", 0, FULL_LOCAL)));
         if (!fetchRequests.current.isCurrent(request)) return false;
         const metas = pages.flatMap((p) => p.metas).sort((a, b) => b.timestamp - a.timestamp);
         loadedRef.current = metas.length;
@@ -408,7 +405,7 @@ function MailApp() {
         return true;
       }
       const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-      const res = await api.listCached(accountId, realFolder, 0, count);
+      const res = await api.listCached(accountId, realFolder, 0, FULL_LOCAL);
       if (!fetchRequests.current.isCurrent(request)) return false;
       loadedRef.current = res.metas.length;
       setTotal(res.total);
@@ -425,11 +422,11 @@ function MailApp() {
     [accountId, accounts, folder, retainSelection]
   );
 
-  const backfillOlderToTarget = useCallback(
-    async (cachedTotal: number, request: RequestToken) => {
-      if (folder === RISK_FOLDER || folder === DRAFTS_FOLDER || cachedTotal >= AUTO_CACHE_TARGET) return;
-      let nextTotal = cachedTotal;
-      for (let round = 0; round < AUTO_BACKFILL_ROUNDS && nextTotal < AUTO_CACHE_TARGET; round += 1) {
+  /** 从服务器把更早邮件拉进本地库，直到没有更多（或达上限）。 */
+  const backfillOlderUntilExhausted = useCallback(
+    async (request: RequestToken) => {
+      if (folder === RISK_FOLDER || folder === DRAFTS_FOLDER) return;
+      for (let round = 0; round < MAX_OLDER_BACKFILL_ROUNDS; round += 1) {
         if (!fetchRequests.current.isCurrent(request)) return;
         if (folder === UNIFIED_FOLDER) {
           const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
@@ -438,7 +435,6 @@ function MailApp() {
             setOlderExhausted(true);
             return;
           }
-          nextTotal = results.reduce((sum, r) => sum + r.total, 0);
         } else {
           const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
           const res = await api.syncOlderMessages(accountId, realFolder);
@@ -447,11 +443,12 @@ function MailApp() {
             setOlderExhausted(true);
             return;
           }
-          nextTotal = res.total;
         }
+        // 每轮回填后刷新全量列表，用户能看到更早邮件陆续出现
+        await loadCached(request);
       }
     },
-    [accountId, accounts, folder]
+    [accountId, accounts, folder, loadCached]
   );
 
   const loadMessages = useCallback(async () => {
@@ -459,48 +456,39 @@ function MailApp() {
     if (folder === DRAFTS_FOLDER) return; // 草稿是本地数据，不走邮件拉取
     const request = fetchRequests.current.begin();
     setListError(null);
-    // 1) 本地缓存先上屏（离线也能看）
-    setLoading(loadedRef.current === 0);
-    const firstBatch = loadedRef.current > 0 ? loadedRef.current : INITIAL_PAGE;
+    setLoadMoreNotice(null);
+    // 1) 本地全量 meta 先上屏（不碰网络、不解析 raw）
+    setLoading(true);
     try {
-      await loadCached(firstBatch, request);
+      await loadCached(request);
     } catch (e) {
       if (fetchRequests.current.isCurrent(request)) setListError(String(e));
     } finally {
       if (fetchRequests.current.isCurrent(request)) setLoading(false);
     }
     if (!fetchRequests.current.isCurrent(request)) return;
-    // 首屏只取了小批：上屏后在后台补齐到整页（列表已可交互，不再白屏）
-    if (loadedRef.current >= firstBatch && loadedRef.current < PAGE) {
-      try {
-        await loadCached(PAGE, request);
-      } catch (e) {
-        if (fetchRequests.current.isCurrent(request)) setListError(String(e));
-      }
-      if (!fetchRequests.current.isCurrent(request)) return;
-    }
-    // 2) 后台与服务器增量同步，再回填
+    // 2) 后台与服务器增量同步，再尽量把本地缓存补全
     setSyncing(true);
     try {
-      let syncedTotal = 0;
       if (folder === UNIFIED_FOLDER) {
         const settled = await Promise.allSettled(accounts.map((a) => api.syncMessages(a.id, "INBOX")));
         const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
         if (failed) throw failed.reason;
-        syncedTotal = settled.reduce((sum, r) => (r.status === "fulfilled" ? sum + r.value.total : sum), 0);
       } else {
         const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-        const res = await api.syncMessages(accountId, realFolder);
-        syncedTotal = res.total;
+        await api.syncMessages(accountId, realFolder);
       }
-      await backfillOlderToTarget(syncedTotal, request);
-      if (fetchRequests.current.isCurrent(request)) await loadCached(Math.max(loadedRef.current, PAGE), request);
+      if (!fetchRequests.current.isCurrent(request)) return;
+      await loadCached(request);
+      if (!fetchRequests.current.isCurrent(request)) return;
+      await backfillOlderUntilExhausted(request);
+      if (fetchRequests.current.isCurrent(request)) await loadCached(request);
     } catch (e) {
       if (fetchRequests.current.isCurrent(request)) setListError(t("同步失败（本地缓存仍可用）：") + e);
     } finally {
       if (fetchRequests.current.isCurrent(request)) setSyncing(false);
     }
-  }, [accountId, accounts, backfillOlderToTarget, folder, loadCached]);
+  }, [accountId, accounts, backfillOlderUntilExhausted, folder, loadCached, t]);
 
   useEffect(() => {
     loadedRef.current = 0;
@@ -509,43 +497,29 @@ function MailApp() {
     loadMessages();
   }, [loadMessages]);
 
+  /** 仅从服务器拉取更早邮件进本地缓存（本地列表已是全量，不再做分页）。 */
   async function handleLoadMore() {
-    if (loadingMore) return;
+    if (loadingMore || folder === RISK_FOLDER) return;
     const request = fetchRequests.current.begin();
-    setSyncing(false);
     setLoadingMore(true);
     setLoadMoreNotice(null);
     try {
-      const startedLoaded = loadedRef.current;
-      const isFilteredView = categoryMode !== "all" || filterMode !== "all" || search.trim() !== "";
-      const rounds = isFilteredView ? MANUAL_FILTER_LOAD_ROUNDS : 1;
       let exhausted = false;
-      for (let round = 0; round < rounds; round += 1) {
-        const beforeRoundLoaded = loadedRef.current;
-        if (loadedRef.current < total) {
-          if (!(await loadCached(loadedRef.current + PAGE, request))) return;
-        } else {
-          const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-          if (folder === UNIFIED_FOLDER) {
-            const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
-            if (!fetchRequests.current.isCurrent(request)) return;
-            exhausted = results.every((r) => r.added === 0);
-            if (exhausted) setOlderExhausted(true);
-          } else {
-            const res = await api.syncOlderMessages(accountId, realFolder);
-            if (!fetchRequests.current.isCurrent(request)) return;
-            exhausted = res.added === 0;
-            if (exhausted) setOlderExhausted(true);
-          }
-          if (!(await loadCached(loadedRef.current + PAGE, request))) return;
-        }
-        if (!isFilteredView || exhausted || loadedRef.current === beforeRoundLoaded) break;
+      if (folder === UNIFIED_FOLDER) {
+        const results = await Promise.all(accounts.map((a) => api.syncOlderMessages(a.id, "INBOX")));
+        if (!fetchRequests.current.isCurrent(request)) return;
+        exhausted = results.every((r) => r.added === 0);
+      } else {
+        const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
+        const res = await api.syncOlderMessages(accountId, realFolder);
+        if (!fetchRequests.current.isCurrent(request)) return;
+        exhausted = res.added === 0;
       }
       if (exhausted) {
+        setOlderExhausted(true);
         setLoadMoreNotice(t("没有更早的邮件了"));
-      } else if (isFilteredView && loadedRef.current > startedLoaded) {
-        setLoadMoreNotice(t("已继续加载缓存；如果当前分类没有新增，说明更早邮件不属于这个筛选。"));
       }
+      await loadCached(request);
     } catch (e) {
       if (fetchRequests.current.isCurrent(request)) setListError(String(e));
     } finally {
@@ -724,11 +698,14 @@ function MailApp() {
     setSyncing(true);
     // 本地缓存里定位目标邮件；命中则立即打开
     const locate = async (): Promise<EmailMeta | undefined> => {
-      const res = await api.listCached(target.accountId, targetFolder, 0, Math.max(loadedRef.current, PAGE));
+      const res = await api.listCached(target.accountId, targetFolder, 0, FULL_LOCAL);
       const metas = [...res.metas].sort((a, b) => b.timestamp - a.timestamp);
       loadedRef.current = metas.length;
       setTotal(res.total);
-      if (targetFolder === "INBOX") setInboxMetas(metas);
+      if (targetFolder === "INBOX") {
+        setInboxMetas(metas);
+        setInboxUnreadByAccount((counts) => ({ ...counts, [target.accountId]: res.unreadCount }));
+      }
       setMessages(metas);
       retainSelection(metas);
       return target.uid != null
@@ -879,7 +856,8 @@ function MailApp() {
   }, [folder, loading, selectedKey, shownMessages, shownThreadMessages, view]);
 
   const riskUnread = useMemo(() => inboxMetas.filter((m) => m.unread && isRisky(m)).length, [inboxMetas]);
-  const inboxUnread = useMemo(() => inboxMetas.filter((m) => m.unread).length, [inboxMetas]);
+  // 收件箱角标：当前账户 INBOX 的 DB 全量 COUNT（不是「列表窗口里数一下」）
+  const inboxUnread = inboxUnreadByAccount[accountId] ?? 0;
   const unifiedUnread = useMemo(() => {
     const activeAccountIds = new Set(accounts.map((account) => account.id));
     return Object.entries(inboxUnreadByAccount).reduce(
@@ -887,6 +865,7 @@ function MailApp() {
       0
     );
   }, [accounts, inboxUnreadByAccount]);
+  // 列表「未读」筛选旁数字：当前已加载的本地全量列表（与缓存一致）
   const listUnread = useMemo(() => messages.filter((m) => m.unread).length, [messages]);
   const categoryCounts = useMemo(() => {
     const counts: Record<MailCategory, number> = { all: messages.length, personal: 0, business: 0, ads: 0 };
@@ -1374,7 +1353,7 @@ function MailApp() {
                 unreadCount={listUnread}
                 loadedCount={shownThreadMessages.length}
                 totalCount={folder === RISK_FOLDER ? messages.length : total}
-                hasMore={folder !== RISK_FOLDER && (loadedRef.current < total || !olderExhausted)}
+                hasMore={folder !== RISK_FOLDER && !olderExhausted}
                 loadingMore={loadingMore}
                 onFilterMode={setFilterMode}
                 onCategoryMode={setCategoryMode}
