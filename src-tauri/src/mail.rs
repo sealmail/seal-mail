@@ -257,6 +257,127 @@ fn header_param(value: &str, param: &str) -> Option<String> {
     })
 }
 
+/// 解码 MIME 参数里的文件名（RFC 2047 encoded-word / RFC 2231 filename*）。
+fn decode_mime_filename(value: &str) -> String {
+    let value = value.trim().trim_matches('"').trim_matches('\'').trim();
+    if value.is_empty() {
+        return value.to_string();
+    }
+    if let Some(decoded) = decode_rfc2047_words(value.as_bytes()) {
+        return decoded;
+    }
+    // RFC 2231：charset'lang'percent-encoded
+    if let Some((charset, rest)) = value.split_once('\'') {
+        if let Some((_lang, encoded)) = rest.split_once('\'') {
+            let bytes = decode_percent_encoded(encoded.as_bytes());
+            return decode_bytes_best(&bytes, Some(charset));
+        }
+    }
+    value.to_string()
+}
+
+fn decode_percent_encoded(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(s) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(v) = u8::from_str_radix(s, 16) {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// 从邮件 part 头里取出并解码附件文件名。
+fn filename_from_part_headers(headers: &[u8]) -> Option<String> {
+    let content_disp = header_value_ascii(headers, "Content-Disposition").unwrap_or_default();
+    let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
+    header_param(&content_disp, "filename*")
+        .or_else(|| header_param(&content_disp, "filename"))
+        .or_else(|| header_param(&content_type, "name*"))
+        .or_else(|| header_param(&content_type, "name"))
+        .map(|v| decode_mime_filename(&v))
+        .filter(|s| !s.is_empty())
+}
+
+/// 遍历 MIME 树，按与 mail-parser attachments() 相近的顺序收集附件文件名。
+fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<String>) {
+    let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
+    let content_type_lower = content_type.to_ascii_lowercase();
+    if let Some(boundary) = header_param(&content_type, "boundary") {
+        let marker = format!("--{}", boundary);
+        let marker = marker.as_bytes();
+        let mut cursor = 0;
+        while let Some(pos) = find_subslice(&body[cursor..], marker) {
+            let start = cursor + pos + marker.len();
+            let mut after = &body[start..];
+            if after.starts_with(b"--") {
+                break;
+            }
+            if after.starts_with(b"\r\n") {
+                after = &after[2..];
+            } else if after.starts_with(b"\n") {
+                after = &after[1..];
+            }
+            let next = find_subslice(after, marker).unwrap_or(after.len());
+            let part = &after[..next];
+            cursor = start + next;
+            let Some((part_headers, part_body)) = split_message(part) else {
+                continue;
+            };
+            collect_attachment_filenames(part_headers, part_body, out);
+        }
+        return;
+    }
+
+    let content_disp = header_value_ascii(headers, "Content-Disposition").unwrap_or_default();
+    let cd_lower = content_disp.to_ascii_lowercase();
+    let is_attachment = cd_lower.contains("attachment")
+        || (header_param(&content_type, "name").is_some()
+            && !content_type_lower.starts_with("text/")
+            && !content_type_lower.starts_with("multipart/"));
+    if is_attachment {
+        if let Some(name) = filename_from_part_headers(headers) {
+            out.push(name);
+        } else {
+            out.push("attachment".into());
+        }
+    }
+}
+
+fn attachment_filenames_from_raw(raw: &[u8]) -> Vec<String> {
+    let Some((headers, body)) = split_message(raw) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    collect_attachment_filenames(headers, body, &mut names);
+    names
+}
+
+/// 修正附件文件名：优先保留 mail-parser 结果；若含乱码/未解码 encoded-word，用 raw 头回退。
+fn fix_attachment_name(current: String, fallback: Option<&str>) -> String {
+    if !looks_mojibake(&current) && !has_encoded_word(&current) {
+        return current;
+    }
+    if has_encoded_word(&current) {
+        if let Some(decoded) = decode_rfc2047_words(current.as_bytes()) {
+            return prefer_decoded(current, decoded);
+        }
+    }
+    if let Some(fb) = fallback {
+        let fb = decode_mime_filename(fb);
+        return prefer_decoded(current, fb);
+    }
+    current
+}
+
 fn decode_quoted_printable(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -731,8 +852,12 @@ pub fn extract_attachment(raw: &[u8], index: usize) -> Result<ExtractedAttachmen
         .content_type()
         .map(|c| format!("{}/{}", c.ctype(), c.subtype().unwrap_or("octet-stream")))
         .unwrap_or_else(|| "application/octet-stream".into());
+    let parsed_name = part.attachment_name().unwrap_or("attachment").to_string();
+    let fallback_names = attachment_filenames_from_raw(raw);
+    let filename =
+        fix_attachment_name(parsed_name, fallback_names.get(index).map(|s| s.as_str()));
     Ok(ExtractedAttachment {
-        filename: part.attachment_name().unwrap_or("attachment").to_string(),
+        filename,
         mime,
         contents: part.contents().to_vec(),
     })
@@ -807,10 +932,15 @@ pub fn parse_email(
         }
     }
 
+    let fallback_names = attachment_filenames_from_raw(raw);
     let attachments: Vec<AttachmentMeta> = msg
         .attachments()
-        .map(|p| AttachmentMeta {
-            name: p.attachment_name().unwrap_or("attachment").to_string(),
+        .enumerate()
+        .map(|(i, p)| AttachmentMeta {
+            name: fix_attachment_name(
+                p.attachment_name().unwrap_or("attachment").to_string(),
+                fallback_names.get(i).map(|s| s.as_str()),
+            ),
             size: p.contents().len(),
             mime: p
                 .content_type()

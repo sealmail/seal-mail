@@ -1,6 +1,6 @@
 [package]
 name = "sealmail"
-version = "0.1.53"
+version = "0.1.54"
 description = "SealMail 信印 — 可信邮件客户端"
 authors = ["SealMail"]
 edition = "2021"
@@ -35,7 +35,9 @@ serde_json = "1"
 imap = "2.4"
 native-tls = "0.2"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "native-tls", "pool", "hostname"] }
-mail-parser = "0.11"
+# full_encoding：启用 encoding_rs，正确解码 gb2312/gbk 等中文 MIME 字符集
+# （附件 filename 的 RFC2047 编码词、HTML 正文 charset 等都依赖它）
+mail-parser = { version = "0.11", features = ["full_encoding"] }
 mail-builder = "0.4"
 encoding_rs = "0.8"
 

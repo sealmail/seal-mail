@@ -2482,6 +2482,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8a2420e9ce11c2b0583ca97ddff7ab2398c8a613154e9b72e3bafdbf767f1d7"
 dependencies = [
+ "encoding_rs",
  "hashify",
 ]
 
@@ -3787,7 +3788,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sealmail"
-version = "0.1.53"
+version = "0.1.54"
 dependencies = [
  "base64 0.22.1",
  "chrono",

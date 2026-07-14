@@ -178,6 +178,53 @@ fn decodes_gbk_encoded_word_headers() {
 }
 
 #[test]
+fn decodes_gb2312_rfc2047_attachment_filename() {
+    // 真实 Outlook/Exchange 常见写法：filename="=?gb2312?B?...?="
+    // 回归：AI代码审计结果评估.docx（base64+gb2312）
+    let raw = concat!(
+        "From: Weijia Zhang <weijia@example.com>\r\n",
+        "To: molin@example.com\r\n",
+        "Subject: MPC review from Zhongzhong\r\n",
+        "Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n",
+        "--outer\r\n",
+        "Content-Type: text/html; charset=\"gb2312\"\r\n",
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n",
+        // 背景： (gb2312 QP)
+        "=B1=B3=BE=B0=A3=BAThorchain\r\n",
+        "--outer\r\n",
+        "Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document;\r\n",
+        "\tname=\"=?gb2312?B?QUm0+sLryfO8xr3hufvGwLnALmRvY3g=?=\"\r\n",
+        "Content-Disposition: attachment;\r\n",
+        "\tfilename=\"=?gb2312?B?QUm0+sLryfO8xr3hufvGwLnALmRvY3g=?=\"; size=12;\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "UEsDBAoAAAAAAA==\r\n",
+        "--outer--\r\n",
+    )
+    .as_bytes();
+
+    let mail = parse_email(raw, 1, "acc1", "INBOX", true, false, &[]).unwrap();
+    assert_eq!(mail.attachments.len(), 1);
+    assert_eq!(mail.attachments[0].name, "AI代码审计结果评估.docx");
+    assert!(
+        !mail.attachments[0].name.contains('\u{FFFD}'),
+        "filename must not contain replacement chars: {}",
+        mail.attachments[0].name
+    );
+
+    let extracted = extract_attachment(raw, 0).unwrap();
+    assert_eq!(extracted.filename, "AI代码审计结果评估.docx");
+
+    // HTML 正文也应按 charset=gb2312 正确解码（列表预览/纯文本回退依赖此路径）
+    assert!(
+        mail.body_html
+            .as_deref()
+            .is_some_and(|h| h.contains("背景") && h.contains("Thorchain")),
+        "html body should decode gb2312: {:?}",
+        mail.body_html.as_ref().map(|s| s.chars().take(80).collect::<String>())
+    );
+}
+
+#[test]
 fn decodes_nested_legacy_chinese_body_with_attachments() {
     let (body, _, _) = GB18030.encode("爱乐评留言回复\r\n你于2025年6月17日收到一条新回复。\r\n");
     let body_b64 = STANDARD.encode(body);
