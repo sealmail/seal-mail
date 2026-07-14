@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { AddrInput } from "./AddrInput";
 import { Seal } from "./Seal";
+import { SendCountdownDialog } from "./SendCountdownDialog";
 import { deleteDraft, saveDraft, sendMail } from "../api";
 import { shortFpr } from "../trust";
 import type { Account, Draft, IdentityInfo, SendResult } from "../types";
@@ -138,8 +139,9 @@ export function ComposeModal(p: Props) {
   const titles = [t("写邮件 · 撰写"), sign ? t("写邮件 · 签名并发送") : t("写邮件 · 发送中"), t("写邮件 · 完成")];
 
   return (
-    <div className="overlay">
-      <div className="modal" style={{ width: 640 }}>
+    <>
+      <div className="overlay">
+        <div className="modal compose-modal" aria-hidden={countdown !== null}>
         <div className="modal-head">
           <span className="title">{countdown !== null ? t("写邮件 · {n} 秒后发送", { n: countdown }) : titles[step]}</span>
           <button
@@ -160,9 +162,9 @@ export function ComposeModal(p: Props) {
           ))}
         </div>
 
-        <div className="modal-body">
+        <div className="modal-body compose-modal-body">
           {step === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div className="compose-form">
               {error && <div className="form-error">{error}</div>}
               <div
                 style={{
@@ -201,7 +203,7 @@ export function ComposeModal(p: Props) {
               <AddrInput placeholder={t("收件人地址（多个用逗号分隔）")} value={to} onChange={setTo} />
               <AddrInput placeholder={t("抄送（可选）")} value={cc} onChange={setCc} />
               <input className="input" style={{ fontWeight: 500 }} placeholder={t("主题")} value={subject} onChange={(e) => setSubject(e.target.value)} />
-              <textarea className="textarea" style={{ minHeight: 180 }} placeholder={t("正文…")} value={body} onChange={(e) => setBody(e.target.value)} />
+              <textarea className="textarea compose-body-input" placeholder={t("正文…")} value={body} onChange={(e) => setBody(e.target.value)} />
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <button className="btn-ghost" style={{ height: 30 }} onClick={pickAttachments}>
                   📎 {t("添加附件")}
@@ -302,31 +304,11 @@ export function ComposeModal(p: Props) {
         </div>
 
         <div className="modal-foot">
-          <span className="toolbar-note">
-            {countdown !== null && (
-              <span style={{ color: "var(--amber)", fontSize: 12, fontWeight: 600 }}>
-                ⏳ {t("{n} 秒后发送，反悔还来得及", { n: countdown })}
-              </span>
-            )}
-          </span>
+          <span className="toolbar-note" />
           {step === 0 && countdown === null && (
             <button className="btn-primary" style={{ height: 40, padding: "0 22px" }} onClick={startSend}>
               {sign ? (isLedger ? t("用 Ledger 签名并发送") : t("签名并发送")) : t("发送")}
             </button>
-          )}
-          {step === 0 && countdown !== null && (
-            <div style={{ display: "flex", gap: 9 }}>
-              <button
-                className="btn-ghost"
-                style={{ height: 40, padding: "0 18px", borderColor: "var(--gold)", color: "var(--amber)", fontWeight: 700 }}
-                onClick={() => setCountdown(null)}
-              >
-                ↩ {t("撤销发送")}
-              </button>
-              <button className="btn-primary" style={{ height: 40, padding: "0 18px" }} onClick={() => setCountdown(0)}>
-                {t("立即发送")}
-              </button>
-            </div>
           )}
           {step === 1 && (
             <button className="btn-ghost" style={{ height: 40 }} disabled>
@@ -339,7 +321,19 @@ export function ComposeModal(p: Props) {
             </button>
           )}
         </div>
+        </div>
       </div>
-    </div>
+      {countdown !== null && (
+        <SendCountdownDialog
+          seconds={countdown}
+          title={t("邮件即将发送")}
+          description={t("倒计时结束后将自动发送。需要修改内容，请撤销发送。")}
+          statusLabel={t("等待发送")}
+          secondsLabel={t("秒")}
+          undoLabel={t("撤销发送")}
+          onUndo={() => setCountdown(null)}
+        />
+      )}
+    </>
   );
 }

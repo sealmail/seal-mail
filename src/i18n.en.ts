@@ -290,7 +290,11 @@ export const EN: Record<string, string> = {
   "签名并发送": "Sign & Send",
   "发送": "Send",
   "撤销发送": "Undo send",
-  "立即发送": "Send now",
+  "邮件即将发送": "Your email is about to send",
+  "等待发送": "Waiting to send",
+  "秒": "seconds",
+  "倒计时结束后将自动发送。需要修改内容，请撤销发送。":
+    "It will be sent automatically when the countdown ends. Undo to make changes.",
   "发送中…": "Sending…",
   "原始邮件": "Original message",
   "转发邮件（发件人 {from}）": "Forwarded message (from {from})",

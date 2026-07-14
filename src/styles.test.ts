@@ -12,3 +12,20 @@ describe("window surface colors", () => {
     }
   });
 });
+
+describe("compose experience", () => {
+  test("gives the composer and message body substantial working space", () => {
+    expect(styles).toContain(".compose-modal {");
+    expect(styles).toContain("width: min(920px, calc(100vw - 48px));");
+    expect(styles).toContain("height: min(820px, calc(100vh - 48px));");
+    expect(styles).toContain(".compose-body-input {");
+    expect(styles).toContain("flex: 1;");
+    expect(styles).toContain("min-height: 280px;");
+  });
+
+  test("presents undo send as a separate prominent dialog", () => {
+    expect(styles).toContain(".send-countdown-overlay {");
+    expect(styles).toContain(".send-countdown-dialog {");
+    expect(styles).toContain("font-variant-numeric: tabular-nums;");
+  });
+});
