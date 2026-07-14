@@ -30,9 +30,14 @@ fn contains_cjk(s: &str) -> bool {
     })
 }
 
-fn looks_mojibake(s: &str) -> bool {
+/// 检测 UTF-8 替换字符造成的乱码（列表 meta 缓存失效判断也用这个）。
+pub fn looks_like_mojibake(s: &str) -> bool {
     let replacements = replacement_count(s);
     replacements >= 2 || (replacements > 0 && s.chars().count() <= 24)
+}
+
+fn looks_mojibake(s: &str) -> bool {
+    looks_like_mojibake(s)
 }
 
 fn has_encoded_word(s: &str) -> bool {
@@ -490,6 +495,31 @@ fn fallback_body(raw: &[u8], want_html: bool) -> Option<String> {
     }
 }
 
+/// 极简 HTML→纯文本，仅用于列表预览与回退正文（不追求完美排版）。
+fn html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag && c != '\r' => out.push(c),
+            _ => {}
+        }
+    }
+    let decoded = out
+        .replace("&nbsp;", " ")
+        .replace("&#160;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'");
+    // 块级标签剥掉后可能粘在一起；空白折叠便于 preview
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn normalize_msg_id(s: &str) -> Option<String> {
     let trimmed = s.trim().trim_matches('<').trim_matches('>').trim();
     if trimmed.is_empty() {
@@ -929,6 +959,18 @@ pub fn parse_email(
     if body_html.as_deref().is_some_and(looks_mojibake) {
         if let Some(fallback) = fallback_body(raw, true) {
             body_html = body_html.map(|current| prefer_body(current, fallback));
+        }
+    }
+    // 仅 HTML 正文（无 text/plain）时，mail-parser 抽文本可能仍是乱码；
+    // 用已正确解码的 HTML 剥标签生成列表预览/纯文本。
+    if looks_mojibake(&body_text) || body_text.trim().is_empty() {
+        if let Some(html) = body_html.as_deref().filter(|h| !looks_mojibake(h) && !h.trim().is_empty())
+        {
+            body_text = prefer_body(body_text, html_to_text(html));
+        } else if let Some(fallback_html) = fallback_body(raw, true) {
+            if !looks_mojibake(&fallback_html) {
+                body_text = prefer_body(body_text, html_to_text(&fallback_html));
+            }
         }
     }
 

@@ -178,6 +178,41 @@ fn decodes_gbk_encoded_word_headers() {
 }
 
 #[test]
+fn preview_from_html_only_gb2312_body() {
+    // 仅 HTML + gb2312 的邮件：列表 preview 不能是乱码
+    let raw = concat!(
+        "From: Weijia Zhang <weijia@example.com>\r\n",
+        "To: molin@example.com\r\n",
+        "Subject: MPC review from Zhongzhong\r\n",
+        "Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n",
+        "--outer\r\n",
+        "Content-Type: text/html; charset=\"gb2312\"\r\n",
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n",
+        "<html><body><div>=B1=B3=BE=B0=A3=BAThorchain=A1=A2Zcash</div></body></html>\r\n",
+        "--outer\r\n",
+        "Content-Type: application/octet-stream; name=\"a.bin\"\r\n",
+        "Content-Disposition: attachment; filename=\"a.bin\"\r\n",
+        "Content-Transfer-Encoding: base64\r\n\r\n",
+        "YQ==\r\n",
+        "--outer--\r\n",
+    )
+    .as_bytes();
+
+    let mail = parse_email(raw, 1, "acc1", "INBOX", true, false, &[]).unwrap();
+    assert!(
+        !mail.meta.preview.contains('\u{FFFD}'),
+        "list preview must not be mojibake: {:?}",
+        mail.meta.preview
+    );
+    assert!(
+        mail.meta.preview.contains("背景") && mail.meta.preview.contains("Thorchain"),
+        "preview should include decoded Chinese: {:?}",
+        mail.meta.preview
+    );
+    assert_eq!(mail.meta.lang, "ZH");
+}
+
+#[test]
 fn decodes_gb2312_rfc2047_attachment_filename() {
     // 真实 Outlook/Exchange 常见写法：filename="=?gb2312?B?...?="
     // 回归：AI代码审计结果评估.docx（base64+gb2312）

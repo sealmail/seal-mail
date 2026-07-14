@@ -415,6 +415,42 @@ pub fn create_folder(s: &mut StoreData, account_id: &str, name: String) -> Resul
     }
 }
 
+/// 旧版本解码错误写入的 meta（预览/主题含 U+FFFD）视为失效，强制重解析。
+fn meta_cache_stale(meta: &EmailMeta) -> bool {
+    mail::looks_like_mojibake(&meta.preview)
+        || mail::looks_like_mojibake(&meta.subject)
+        || mail::looks_like_mojibake(&meta.from_name)
+}
+
+fn parse_and_cache_meta(
+    s: &mut StoreData,
+    account_id: &str,
+    folder: &str,
+    uid: u32,
+    unread: bool,
+    flagged: bool,
+    trusted: &[TrustedContact],
+) -> Result<EmailMeta, String> {
+    let raw = db::get_raw(&s.db, account_id, folder, uid)?
+        .ok_or_else(|| "邮件不在本地缓存中，请刷新列表".to_string())?;
+    let full = mail::parse_email(
+        &raw.raw,
+        uid,
+        account_id,
+        folder,
+        unread,
+        flagged,
+        trusted,
+    )?;
+    if let Ok(json) = serde_json::to_string(&full.meta) {
+        let _ = db::set_meta_json(&s.db, account_id, folder, uid, &json);
+    }
+    let meta = full.meta.clone();
+    s.mail_cache
+        .insert(StoreData::cache_key(account_id, folder, uid), full);
+    Ok(meta)
+}
+
 pub fn list_cached(
     s: &mut StoreData,
     account_id: &str,
@@ -424,7 +460,7 @@ pub fn list_cached(
 ) -> Result<CachedList, String> {
     let account = s.account(account_id)?;
     let trusted = s.trusted_for_verify(&account);
-    // 只读元信息缓存（不含 raw），命中即秒出；未命中才读 raw 解析一次并写回缓存。
+    // 只读元信息缓存（不含 raw），命中即秒出；未命中/乱码缓存才读 raw 解析一次并写回。
     let rows = db::list_meta(&s.db, account_id, folder, offset, limit.min(200))?;
     let total = db::count(&s.db, account_id, folder)?;
     let unread_count = db::count_unread(&s.db, account_id, folder)?;
@@ -433,32 +469,19 @@ pub fn list_cached(
         let cached = r
             .meta_json
             .as_deref()
-            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok());
+            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok())
+            .filter(|m| !meta_cache_stale(m));
         let mut meta = match cached {
             Some(m) => m,
-            None => {
-                // 旧数据/未缓存：读一次完整 raw 解析，并把元信息写回，下次即可秒开。
-                let raw = match db::get_raw(&s.db, account_id, folder, r.uid)? {
-                    Some(raw) => raw,
-                    None => continue,
-                };
-                let full = match mail::parse_email(
-                    &raw.raw, r.uid, account_id, folder, raw.unread, raw.flagged, &trusted,
-                ) {
-                    Ok(full) => full,
-                    Err(e) => {
-                        eprintln!("[cache] 解析缓存邮件失败 uid={}: {}", r.uid, e);
-                        continue;
-                    }
-                };
-                if let Ok(json) = serde_json::to_string(&full.meta) {
-                    let _ = db::set_meta_json(&s.db, account_id, folder, r.uid, &json);
+            None => match parse_and_cache_meta(
+                s, account_id, folder, r.uid, r.unread, r.flagged, &trusted,
+            ) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    eprintln!("[cache] 解析缓存邮件失败 uid={}: {}", r.uid, e);
+                    continue;
                 }
-                let meta = full.meta.clone();
-                s.mail_cache
-                    .insert(StoreData::cache_key(account_id, folder, r.uid), full);
-                meta
-            }
+            },
         };
         // 已读/星标以 DB 当前列为准（标记操作只更新列、不动元信息缓存）。
         meta.unread = r.unread;
@@ -718,6 +741,10 @@ pub fn get_message(
         row.flagged,
         &trusted,
     )?;
+    // 打开详情时回写 meta，刷新列表预览（修复旧版乱码缓存长期滞留）。
+    if let Ok(json) = serde_json::to_string(&full.meta) {
+        let _ = db::set_meta_json(&s.db, account_id, folder, uid, &json);
+    }
     s.mail_cache.insert(key, full.clone());
     Ok(full)
 }
@@ -758,36 +785,24 @@ pub fn list_thread(
     let account = s.account(account_id)?;
     let trusted = s.trusted_for_verify(&account);
     let mut metas = Vec::new();
-    // 走元信息缓存（不含 raw）：命中即用，未命中才读 raw 解析一次并写回。
+    // 走元信息缓存（不含 raw）：命中即用，未命中/乱码缓存才读 raw 解析一次并写回。
     for r in db::list_folder_meta(&s.db, account_id, folder)? {
         let cached = r
             .meta_json
             .as_deref()
-            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok());
+            .and_then(|j| serde_json::from_str::<EmailMeta>(j).ok())
+            .filter(|m| !meta_cache_stale(m));
         let mut meta = match cached {
             Some(m) => m,
-            None => {
-                let raw = match db::get_raw(&s.db, account_id, folder, r.uid)? {
-                    Some(raw) => raw,
-                    None => continue,
-                };
-                let full = match mail::parse_email(
-                    &raw.raw, r.uid, account_id, folder, raw.unread, raw.flagged, &trusted,
-                ) {
-                    Ok(full) => full,
-                    Err(e) => {
-                        eprintln!("[thread] 解析缓存邮件失败 uid={}: {}", r.uid, e);
-                        continue;
-                    }
-                };
-                if let Ok(json) = serde_json::to_string(&full.meta) {
-                    let _ = db::set_meta_json(&s.db, account_id, folder, r.uid, &json);
+            None => match parse_and_cache_meta(
+                s, account_id, folder, r.uid, r.unread, r.flagged, &trusted,
+            ) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    eprintln!("[thread] 解析缓存邮件失败 uid={}: {}", r.uid, e);
+                    continue;
                 }
-                let meta = full.meta.clone();
-                s.mail_cache
-                    .insert(StoreData::cache_key(account_id, folder, r.uid), full);
-                meta
-            }
+            },
         };
         meta.unread = r.unread;
         meta.flagged = r.flagged;
