@@ -1,6 +1,7 @@
 import { useI18n } from "../i18n";
 import { useState } from "react";
 import { applyFilters, deleteFilter, saveFilter } from "../api";
+import { folderTitle } from "../mutf7";
 import type { Account, FilterRule, FolderInfo } from "../types";
 
 interface Props {
@@ -43,8 +44,9 @@ export function FiltersModal(p: Props) {
 
   const realFolders = p.folders.filter((f) => f.name !== "__risk__" && f.name !== "INBOX");
 
-  // 规则里存的是 IMAP 原始目录名（Modified UTF-7，如 &ZzpWaE66-），展示时换成可读名
-  const folderLabel = (name: string) => t(p.folders.find((f) => f.name === name)?.display ?? name);
+  // 规则里存的是 IMAP 原始目录名（Modified UTF-7，如 &V4NXPpCuTvY- = 垃圾邮件），展示时解码
+  const folderLabel = (name: string) =>
+    t(folderTitle(name, p.folders.find((f) => f.name === name)?.display));
 
   async function doSave() {
     if (!editing) return;

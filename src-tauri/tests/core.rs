@@ -673,6 +673,23 @@ fn mk_rule(id: &str, value: &str, target: &str, mark_read: bool) -> FilterRule {
 }
 
 #[test]
+fn would_move_out_detects_blocked_sender_for_notification_suppress() {
+    use sealmail_lib::filters::would_move_out;
+    let mail = mk_mail("spam@evil.test", "Buy now", "click me");
+    let rules = vec![mk_rule("block", "spam@evil.test", "&V4NXPpCuTvY-", true)];
+    assert!(
+        would_move_out(&rules, "acc1", "INBOX", &mail),
+        "屏蔽规则命中时应抑制系统通知"
+    );
+    assert!(
+        !would_move_out(&rules, "acc1", "&V4NXPpCuTvY-", &mail),
+        "已经在目标目录则不算会再移出"
+    );
+    let clean = mk_mail("friend@example.com", "Hi", "hello");
+    assert!(!would_move_out(&rules, "acc1", "INBOX", &clean));
+}
+
+#[test]
 fn plan_moves_groups_by_target_and_respects_rule_order() {
     use sealmail_lib::filters::plan_moves;
     let mut m1 = mk_mail("jenkins@wanchain.org", "Alert 1", "x");

@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-07-15（v0.1.57：列表「…」占位不刷新 / meta 缓存回填修复）
+> 最后更新：2026-07-15（v0.1.58：屏蔽发件人仍弹通知 + 目录 mutf7 乱码）
 
 ## 项目定位
 
@@ -388,6 +388,26 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] `list_cached` 发现 stub 时唤醒 backfill；trust_sender / remove_trusted 清缓存后也唤醒
 - [x] 前端 listen `meta-cache-updated`，debounce 软刷 `loadCached`（不 begin 打断同步）
 - [x] TDD：`list_cached_stub_then_backfill_fills_subject`（core_store）
+
+### v0.1.58（屏蔽发件人仍弹通知 + 目录名 mutf7 乱码）
+
+用户反馈：
+1. 已屏蔽发件人仍弹系统通知；点通知后在收件箱看不到邮件（已被规则移走）。
+2. 列表标题显示 `&V4NXPpCuTvY-`（IMAP modified UTF-7，实为「垃圾邮件」）。
+
+根因：
+1. watcher 在 IDLE 检测到新信后立刻弹通知，**不检查过滤规则**；同步侧才会 `organize_by_filters`
+   把信移到垃圾箱。通知目标固定 `folder=INBOX`，点开时本地 INBOX 已无此信。
+2. 列表 `title` 在 `folders` 里找不到当前目录时直接显示原始 IMAP 名，未解码 mutf7。
+3. 切账户时 `useEffect` 强制 `setFolder("INBOX")`，会盖掉通知定位的目标目录。
+
+修复：
+- [x] `filters::would_move_out`：规则会移出当前目录则视为应静默
+- [x] watcher：解析通知邮件时带真实 account_id 匹配规则；命中则 `suppressed`，
+      仍 emit `new-mail` 驱动同步，**不弹系统横幅**
+- [x] 前端 `mutf7.ts`：`decodeMutf7` / `folderTitle`，列表标题与过滤规则 UI 解码显示
+- [x] 点通知跨账户时用 `pendingOpenFolderRef` 保住目标目录，不被切账户 effect 打回 INBOX
+- [x] TDD：`would_move_out_detects_blocked_sender…` + `mutf7.test.ts`
 
 ## 待办 / 路线图（2026-06-11 产品 review 后重排，定位「小而美」）
 

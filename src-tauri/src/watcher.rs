@@ -6,7 +6,7 @@
 
 use crate::models::*;
 use crate::store::AppState;
-use crate::{imap_client, mail, oauth, pop3_client};
+use crate::{filters, imap_client, mail, oauth, pop3_client};
 use std::collections::HashSet;
 #[cfg(not(target_os = "macos"))]
 use std::path::PathBuf;
@@ -62,6 +62,8 @@ struct MailNotice {
     from_addr: String,
     subject: String,
     preview: String,
+    /// 命中过滤规则（如屏蔽发件人）时为 true：仍驱动前端同步，但不弹系统通知
+    suppressed: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -90,8 +92,17 @@ pub fn set_pending_notification_target_now(target: NotificationMailTarget) {
 }
 
 fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec<MailNotice>) {
+    // 始终通知前端刷新/同步（过滤规则会在 sync 时移走屏蔽邮件）
     let _ = app.emit("new-mail", serde_json::json!({ "accountId": account_id }));
-    notify_new_mail(app, account_id, new_count, &notices);
+    // 系统横幅只对「不会被规则移出收件箱」的邮件弹出，避免屏蔽发件人仍打扰
+    let notifiable: Vec<MailNotice> = notices.into_iter().filter(|n| !n.suppressed).collect();
+    if notifiable.is_empty() {
+        crate::logging::log(format!(
+            "[notify] account={account_id} 新邮件均被过滤规则命中，跳过系统通知 (raw_new={new_count})"
+        ));
+        return;
+    }
+    notify_new_mail(app, account_id, notifiable.len() as u32, &notifiable);
 }
 
 /// 窗口未聚焦且偏好开启时弹系统通知横幅
@@ -259,10 +270,16 @@ fn format_sender(n: &MailNotice) -> String {
     }
 }
 
-fn notice_from_raw(raw: &[u8], uid: Option<u32>) -> Option<MailNotice> {
-    let meta = mail::parse_email(raw, uid.unwrap_or(0), "", "INBOX", true, false, &[])
-        .ok()?
-        .meta;
+fn notice_from_raw(
+    raw: &[u8],
+    uid: Option<u32>,
+    account_id: &str,
+    rules: &[FilterRule],
+) -> Option<MailNotice> {
+    // 必须带上真实 account_id，否则账户级「屏蔽发件人」规则匹配不上
+    let full = mail::parse_email(raw, uid.unwrap_or(0), account_id, "INBOX", true, false, &[]).ok()?;
+    let suppressed = filters::would_move_out(rules, account_id, "INBOX", &full);
+    let meta = full.meta;
     Some(MailNotice {
         uid,
         message_id: meta.message_id,
@@ -270,7 +287,25 @@ fn notice_from_raw(raw: &[u8], uid: Option<u32>) -> Option<MailNotice> {
         from_addr: meta.from_addr,
         subject: meta.subject,
         preview: meta.preview,
+        suppressed,
     })
+}
+
+/// 当前账户适用的过滤规则快照（用于通知前判断是否应静默）
+fn filter_rules_for(app: &AppHandle, account_id: &str) -> Vec<FilterRule> {
+    let state = app.state::<AppState>();
+    let s = state.inner.lock().unwrap();
+    s.filters
+        .iter()
+        .filter(|r| {
+            r.enabled
+                && r.account_id
+                    .as_ref()
+                    .map(|id| id == account_id)
+                    .unwrap_or(true)
+        })
+        .cloned()
+        .collect()
 }
 
 /// 取账户凭据（OAuth 令牌临近过期则阻塞刷新并回写）。
@@ -338,7 +373,7 @@ fn idle_session(
     let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
     let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
     check_exists(app, account_id, mb.exists, last_exists, || {
-        fetch_imap_notices(account, secret, new_count)
+        fetch_imap_notices(app, account, secret, new_count)
     });
     for _ in 0..IDLE_ROUNDS_PER_CONN {
         if !account_exists(app, account_id) {
@@ -353,7 +388,7 @@ fn idle_session(
         let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
         let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
         check_exists(app, account_id, mb.exists, last_exists, || {
-            fetch_imap_notices(account, secret, new_count)
+            fetch_imap_notices(app, account, secret, new_count)
         });
     }
     let _ = sess.logout();
@@ -378,15 +413,17 @@ fn check_exists<F>(
 }
 
 fn fetch_imap_notices(
+    app: &AppHandle,
     account: &Account,
     secret: &AccountSecret,
     new_count: u32,
 ) -> Vec<MailNotice> {
+    let rules = filter_rules_for(app, &account.id);
     match imap_client::fetch_latest(account, secret, "INBOX", new_count.min(3)) {
         Ok(mails) => {
             let mut notices = mails
                 .iter()
-                .filter_map(|m| notice_from_raw(&m.raw, Some(m.uid)))
+                .filter_map(|m| notice_from_raw(&m.raw, Some(m.uid), &account.id, &rules))
                 .collect::<Vec<_>>();
             notices.reverse();
             notices
@@ -409,6 +446,7 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                     Ok(mut c) => {
                         match c.message_count() {
                             Ok(n) => {
+                                let rules = filter_rules_for(app, account_id);
                                 let notices = if let Some(prev) = last {
                                     if n > prev {
                                         let start = prev + 1;
@@ -416,7 +454,9 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                                             .rev()
                                             .take(3)
                                             .filter_map(|seq| match c.retrieve(seq) {
-                                                Ok(raw) => notice_from_raw(&raw, None),
+                                                Ok(raw) => {
+                                                    notice_from_raw(&raw, None, account_id, &rules)
+                                                }
                                                 Err(e) => {
                                                     eprintln!(
                                                         "[watcher] {} 拉取 POP3 通知邮件详情失败 seq={}: {}",
@@ -478,6 +518,7 @@ pub fn debug_fire_test_notification(app: &AppHandle) {
                 from_addr: "debug@sealmail.test".to_string(),
                 subject: format!("测试通知 uid={uid}"),
                 preview: "请点击这条通知横幅".to_string(),
+                suppressed: false,
             };
             crate::logging::log(format!(
                 "[notify] 发送调试通知 account={account_id} uid={uid}"

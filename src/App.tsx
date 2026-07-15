@@ -20,6 +20,7 @@ import { DRAFTS_FOLDER, RISK_FOLDER, UNIFIED_FOLDER, Sidebar } from "./component
 import { Seal } from "./components/Seal";
 import { classifyMail, type MailCategory } from "./mailCategory";
 import { LatestRequest, type RequestToken } from "./latestRequest";
+import { folderTitle } from "./mutf7";
 import type { Account, AppStateView, Draft, EmailFull, EmailMeta, FilterRule, FolderInfo, IdentityInfo, NotificationMailTarget } from "./types";
 import "./styles.css";
 
@@ -368,11 +369,16 @@ function MailApp() {
     setInboxUnreadByAccount((counts) => ({ ...counts, [accId]: result.unreadCount }));
   }, []);
 
+  // 点通知打开邮件时，若切换了账户，需要落到指定目录而不是被强制回 INBOX
+  const pendingOpenFolderRef = useRef<string | null>(null);
+
   // ── 切账户：拉目录 ──
   useEffect(() => {
     if (!accountId) return;
-    setFolder("INBOX");
-    clearSelection();
+    const pendingFolder = pendingOpenFolderRef.current;
+    pendingOpenFolderRef.current = null;
+    setFolder(pendingFolder ?? "INBOX");
+    if (!pendingFolder) clearSelection();
     setListError(null);
     refreshFolders(accountId).catch((e) => {
       setFolders(BUILTIN_FOLDERS);
@@ -709,6 +715,10 @@ function MailApp() {
 
   async function openNotificationMail(target: NotificationMailTarget) {
     const targetFolder = target.folder || "INBOX";
+    // 账户切换的 effect 会重置目录；用 ref 保住通知目标目录，避免落到 INBOX 后找不到信
+    if (target.accountId !== accountId) {
+      pendingOpenFolderRef.current = targetFolder;
+    }
     setAccountId(target.accountId);
     setFolder(targetFolder);
     setSearch("");
@@ -1361,7 +1371,12 @@ function MailApp() {
             <>
               <MailList
                 width={listWidth}
-                title={t(folders.find((f) => f.name === folder)?.display ?? folder)}
+                title={t(
+                  folderTitle(
+                    folder,
+                    folders.find((f) => f.name === folder)?.display
+                  )
+                )}
                 messages={shownMessages}
                 selectedKey={selectedKey}
                 accountLabels={folder === UNIFIED_FOLDER ? accountLabels : undefined}

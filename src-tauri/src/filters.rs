@@ -81,3 +81,23 @@ pub fn rule_matches(rule: &FilterRule, mail: &EmailFull) -> bool {
         _ => false,
     }
 }
+
+/// 邮件是否会被过滤规则移出 `source_folder`（如屏蔽发件人 → 垃圾邮件）。
+/// 用于新邮件通知：命中的邮件仍触发前端同步，但**不弹系统通知**。
+pub fn would_move_out(
+    rules: &[FilterRule],
+    account_id: &str,
+    source_folder: &str,
+    mail: &EmailFull,
+) -> bool {
+    rules.iter().any(|rule| {
+        rule.enabled
+            && rule
+                .account_id
+                .as_ref()
+                .map(|id| id == account_id)
+                .unwrap_or(true)
+            && rule.target_folder != source_folder
+            && rule_matches(rule, mail)
+    })
+}
