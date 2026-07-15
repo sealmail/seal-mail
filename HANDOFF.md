@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-07-08（v25：新邮件自动应用过滤规则 + 单连接批量整理）
+> 最后更新：2026-07-15（v0.1.57：列表「…」占位不刷新 / meta 缓存回填修复）
 
 ## 项目定位
 
@@ -370,6 +370,24 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] 顺带修正：标已读改在移动**之前**做——UID 移动后即失效，原来移动后拿旧 UID
       去目标目录标记实为无效操作。
       TDD：`plan_moves_groups_by_target_and_respects_rule_order` 先红后绿。
+
+### v0.1.57（统一收件箱列表大量显示「…」修复）
+
+用户截图：统一收件箱多封邮件发件人/主题显示为 `…`，右侧点开正文正常。
+
+根因（v0.1.56 引入 stub + 后台 backfill 后的两处缺口）：
+1. `sync_messages` / `sync_older_messages` 已经 `parse_email`，但 `upsert_message`
+   （INSERT OR REPLACE）会清空 `meta_json`，且解析结果**没有**写回 meta 缓存 →
+   同步后 `list_cached` 仍是占位行。
+2. `spawn_meta_backfill` 只在启动时跑一次，写完 DB **不通知前端** → UI 永久卡在 `…`；
+   可信联系人变更 `clear_all_meta_json` 后也不会再回填。
+
+修复：
+- [x] sync / sync_older：upsert 之后立刻 `cache_meta_json`（用已解析的 meta）
+- [x] backfill：每批 emit `meta-cache-updated`；可重复唤醒（dirty/running 标志）
+- [x] `list_cached` 发现 stub 时唤醒 backfill；trust_sender / remove_trusted 清缓存后也唤醒
+- [x] 前端 listen `meta-cache-updated`，debounce 软刷 `loadCached`（不 begin 打断同步）
+- [x] TDD：`list_cached_stub_then_backfill_fills_subject`（core_store）
 
 ## 待办 / 路线图（2026-06-11 产品 review 后重排，定位「小而美」）
 

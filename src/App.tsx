@@ -537,6 +537,28 @@ function MailApp() {
     };
   }, [accountId, folder, loadMessages]);
 
+  // ── meta 后台回填完成一批后刷新列表（把「…」占位换成真实主题/发件人）──
+  // 不 begin() 新请求，避免打断正在进行的同步；用当前 token 软刷本地缓存。
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unlisten = listen<{ accountId?: string; folder?: string; filled?: number }>(
+      "meta-cache-updated",
+      () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          const token = fetchRequests.current.token();
+          // token===0 表示还从未加载过，等 loadMessages 自己走
+          if (token === 0) return;
+          loadCached(token).catch(() => {});
+        }, 280);
+      }
+    );
+    return () => {
+      if (timer) clearTimeout(timer);
+      unlisten.then((f) => f());
+    };
+  }, [loadCached]);
+
   useEffect(() => localStorage.setItem("sealmail.sidebarWidth", String(sidebarWidth)), [sidebarWidth]);
   useEffect(() => localStorage.setItem("sealmail.listWidth", String(listWidth)), [listWidth]);
 

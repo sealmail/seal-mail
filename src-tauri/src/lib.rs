@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use serde::Serialize;
 use store::{AppState, StoreData};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 fn gen_id() -> String {
@@ -35,51 +35,105 @@ fn gen_id() -> String {
     hex::encode(b)
 }
 
-/// 启动后在后台补全 meta_json 缓存。列表/会话的「懒回填」在升级后首次访问时
-/// 要把整个目录的原始邮件解析一遍（实测数千封 ≈ 数秒卡顿）；挪到后台小批推进，
-/// 用户操作到哪儿都不会再撞上这堵墙。批间让出锁与 IO，不影响交互。
+/// 后台 meta 回填是否在跑；已在跑时再请求只标记 dirty，本轮结束后再扫一遍。
+static META_BACKFILL_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static META_BACKFILL_DIRTY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 启动/重启后台补全 meta_json。列表缺 meta 时先显示「…」占位；
+/// 本任务小批解析并写回，同时 emit `meta-cache-updated` 让前端刷新列表。
+/// 可重复调用：可信联系人变更清缓存后、同步后发现缺口时都应唤醒。
 fn spawn_meta_backfill(app: AppHandle) {
+    use std::sync::atomic::Ordering;
+    META_BACKFILL_DIRTY.store(true, Ordering::SeqCst);
+    if META_BACKFILL_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        // 已有 worker 在跑，仅标记 dirty，由它收尾后再扫
+        return;
+    }
     std::thread::spawn(move || {
-        // 等应用先把首屏加载完
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        // 等首屏 list_cached 先出来，避免和启动 IO 抢锁
+        std::thread::sleep(std::time::Duration::from_millis(800));
         let state = app.state::<AppState>();
-        let targets = {
-            let s = state.inner.lock().unwrap();
-            db::missing_meta_targets(&s.db).unwrap_or_default()
-        };
-        if targets.is_empty() {
-            return;
-        }
-        logging::log(format!("[cache] 后台补全 meta 缓存开始：{} 个目录", targets.len()));
-        let t0 = std::time::Instant::now();
-        let mut total = 0u32;
-        for (account_id, folder) in targets {
-            let mut cursor = 0u32;
-            loop {
-                let batch = {
-                    let mut s = state.inner.lock().unwrap();
-                    core::backfill_meta_batch(&mut s, &account_id, &folder, cursor, 40)
-                };
-                match batch {
-                    Ok((0, _)) => break,
-                    Ok((n, max_uid)) => {
-                        total += n;
-                        match max_uid {
-                            Some(u) => cursor = u,
-                            None => break,
-                        }
+        loop {
+            META_BACKFILL_DIRTY.store(false, Ordering::SeqCst);
+            let targets = {
+                let s = state.inner.lock().unwrap();
+                db::missing_meta_targets(&s.db).unwrap_or_default()
+            };
+            if targets.is_empty() {
+                if !META_BACKFILL_DIRTY.swap(false, Ordering::SeqCst) {
+                    META_BACKFILL_RUNNING.store(false, Ordering::SeqCst);
+                    // 退出前再看一眼：若刚好有人 dirty，重新接棒
+                    if META_BACKFILL_DIRTY.load(Ordering::SeqCst)
+                        && META_BACKFILL_RUNNING
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                    {
+                        continue;
                     }
-                    Err(_) => break, // 账户已删除等情况：跳过该目录
+                    return;
                 }
-                // 让出状态锁和磁盘 IO，避免与用户操作抢资源
-                std::thread::sleep(std::time::Duration::from_millis(25));
+                continue;
+            }
+            logging::log(format!(
+                "[cache] 后台补全 meta 缓存开始：{} 个目录",
+                targets.len()
+            ));
+            let t0 = std::time::Instant::now();
+            let mut total = 0u32;
+            for (account_id, folder) in targets {
+                let mut cursor = 0u32;
+                loop {
+                    let batch = {
+                        let mut s = state.inner.lock().unwrap();
+                        core::backfill_meta_batch(&mut s, &account_id, &folder, cursor, 40)
+                    };
+                    match batch {
+                        Ok((0, _)) => break,
+                        Ok((n, max_uid)) => {
+                            total += n;
+                            // 每批通知前端刷新占位行（防列表长期卡在「…」）
+                            let _ = app.emit(
+                                "meta-cache-updated",
+                                serde_json::json!({
+                                    "accountId": account_id,
+                                    "folder": folder,
+                                    "filled": n,
+                                }),
+                            );
+                            match max_uid {
+                                Some(u) => cursor = u,
+                                None => break,
+                            }
+                        }
+                        Err(_) => break, // 账户已删除等：跳过该目录
+                    }
+                    // 让出状态锁和磁盘 IO
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+            }
+            logging::log(format!(
+                "[cache] 后台补全 meta 缓存完成：{} 封，耗时 {}ms",
+                total,
+                t0.elapsed().as_millis()
+            ));
+            // 完成一轮后再看 dirty（信任列表变化 / 新同步）是否需要重扫
+            if !META_BACKFILL_DIRTY.swap(false, Ordering::SeqCst) {
+                META_BACKFILL_RUNNING.store(false, Ordering::SeqCst);
+                if META_BACKFILL_DIRTY.load(Ordering::SeqCst)
+                    && META_BACKFILL_RUNNING
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    continue;
+                }
+                return;
             }
         }
-        logging::log(format!(
-            "[cache] 后台补全 meta 缓存完成：{} 封，耗时 {}ms",
-            total,
-            t0.elapsed().as_millis()
-        ));
     });
 }
 
@@ -489,9 +543,10 @@ async fn delete_folder(
 
 // ───────────────────────── messages ─────────────────────────
 
-/// 从本地缓存读列表（秒出、可离线）。读取时重新解析+验证，信任列表变化即时生效。
+/// 从本地缓存读列表（秒出、可离线）。缺 meta 时返回「…」占位，并唤醒后台回填。
 #[tauri::command]
 fn list_cached(
+    app: AppHandle,
     state: State<'_, AppState>,
     account_id: String,
     folder: String,
@@ -499,7 +554,13 @@ fn list_cached(
     limit: u32,
 ) -> Result<core::CachedList, String> {
     let mut s = state.inner.lock().unwrap();
-    core::list_cached(&mut s, &account_id, &folder, offset, limit)
+    let list = core::list_cached(&mut s, &account_id, &folder, offset, limit)?;
+    let has_stub = list.metas.iter().any(core::is_stub_meta);
+    drop(s);
+    if has_stub {
+        spawn_meta_backfill(app);
+    }
+    Ok(list)
 }
 
 #[derive(Serialize)]
@@ -764,6 +825,7 @@ async fn apply_filters(
 
 #[tauri::command]
 fn trust_sender(
+    app: AppHandle,
     state: State<'_, AppState>,
     name: String,
     email: String,
@@ -771,16 +833,24 @@ fn trust_sender(
     org: Option<String>,
 ) -> Result<Vec<TrustedContact>, String> {
     let mut s = state.inner.lock().unwrap();
-    core::trust_sender(&mut s, name, email, fingerprint, org)
+    let list = core::trust_sender(&mut s, name, email, fingerprint, org)?;
+    drop(s);
+    // 信任关系变化会清空 meta_json，立刻唤醒后台回填，避免列表长期「…」
+    spawn_meta_backfill(app);
+    Ok(list)
 }
 
 #[tauri::command]
 fn remove_trusted(
+    app: AppHandle,
     state: State<'_, AppState>,
     email: String,
 ) -> Result<Vec<TrustedContact>, String> {
     let mut s = state.inner.lock().unwrap();
-    core::remove_trusted(&mut s, email)
+    let list = core::remove_trusted(&mut s, email)?;
+    drop(s);
+    spawn_meta_backfill(app);
+    Ok(list)
 }
 
 // ───────────────────────── update ─────────────────────────

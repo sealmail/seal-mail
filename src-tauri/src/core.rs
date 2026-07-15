@@ -452,6 +452,19 @@ fn stub_meta(
     }
 }
 
+/// 是否为列表占位（主题/发件人尚未回填）。前端可用此识别，但后端也用于避免误写。
+pub fn is_stub_meta(meta: &EmailMeta) -> bool {
+    meta.subject == "…" && meta.from_name == "…" && meta.from_addr.is_empty()
+}
+
+/// 把已解析的 meta 写入 meta_json。须在 upsert_message 之后调用
+/// （INSERT OR REPLACE 会清空未列出的 meta_json 列）。
+fn cache_meta_json(s: &StoreData, account_id: &str, folder: &str, uid: u32, meta: &EmailMeta) {
+    if let Ok(json) = serde_json::to_string(meta) {
+        let _ = db::set_meta_json(&s.db, account_id, folder, uid, &json);
+    }
+}
+
 /// 列出本地缓存的邮件 meta。
 /// - `limit == 0`：返回该目录本地**全量** meta（不做分页上限）
 /// - 已有 meta_json：直接用（毫秒级）
@@ -526,24 +539,28 @@ pub fn sync_messages(
             let mut added = 0u32;
             let mut new_fulls: Vec<EmailFull> = Vec::new();
             for m in &sf.new_mails {
-                let ts = match mail::parse_email(
+                let parsed = mail::parse_email(
                     &m.raw, m.uid, account_id, folder, m.unread, m.flagged, &trusted,
-                ) {
+                );
+                let ts = match &parsed {
                     Ok(full) => {
                         s.upsert_contact(
                             &full.meta.from_name,
                             &full.meta.from_addr,
                             full.meta.timestamp,
                         );
-                        let ts = full.meta.timestamp;
-                        new_fulls.push(full);
-                        ts
+                        full.meta.timestamp
                     }
                     Err(_) => 0,
                 };
                 db::upsert_message(
                     &s.db, account_id, folder, m.uid, None, m.unread, m.flagged, ts, &m.raw,
                 )?;
+                // upsert 会清空 meta_json，解析成功后立即回写，避免列表长期显示「…」
+                if let Ok(full) = parsed {
+                    cache_meta_json(s, account_id, folder, m.uid, &full.meta);
+                    new_fulls.push(full);
+                }
                 added += 1;
             }
             if !sf.reset {
@@ -587,20 +604,19 @@ pub fn sync_messages(
             let mut new_fulls: Vec<EmailFull> = Vec::new();
             for (uidl, raw) in &ps.new_mails {
                 let uid = db::pop_next_uid(&s.db, account_id)?;
-                let ts =
-                    match mail::parse_email(raw, uid, account_id, "INBOX", true, false, &trusted) {
-                        Ok(full) => {
-                            s.upsert_contact(
-                                &full.meta.from_name,
-                                &full.meta.from_addr,
-                                full.meta.timestamp,
-                            );
-                            let ts = full.meta.timestamp;
-                            new_fulls.push(full);
-                            ts
-                        }
-                        Err(_) => 0,
-                    };
+                let parsed =
+                    mail::parse_email(raw, uid, account_id, "INBOX", true, false, &trusted);
+                let ts = match &parsed {
+                    Ok(full) => {
+                        s.upsert_contact(
+                            &full.meta.from_name,
+                            &full.meta.from_addr,
+                            full.meta.timestamp,
+                        );
+                        full.meta.timestamp
+                    }
+                    Err(_) => 0,
+                };
                 db::upsert_message(
                     &s.db,
                     account_id,
@@ -612,6 +628,10 @@ pub fn sync_messages(
                     ts,
                     raw,
                 )?;
+                if let Ok(full) = parsed {
+                    cache_meta_json(s, account_id, "INBOX", uid, &full.meta);
+                    new_fulls.push(full);
+                }
                 added += 1;
             }
             let server: std::collections::HashSet<&String> = ps.all_uidls.iter().collect();
@@ -652,9 +672,10 @@ pub fn sync_older_messages(
                 imap_client::fetch_older(&account, secret, folder, before_uid, db::OLDER_WINDOW)?;
             let mut added = 0u32;
             for m in &mails {
-                let ts = match mail::parse_email(
+                let parsed = mail::parse_email(
                     &m.raw, m.uid, account_id, folder, m.unread, m.flagged, &trusted,
-                ) {
+                );
+                let ts = match &parsed {
                     Ok(full) => {
                         s.upsert_contact(
                             &full.meta.from_name,
@@ -668,6 +689,9 @@ pub fn sync_older_messages(
                 db::upsert_message(
                     &s.db, account_id, folder, m.uid, None, m.unread, m.flagged, ts, &m.raw,
                 )?;
+                if let Ok(full) = parsed {
+                    cache_meta_json(s, account_id, folder, m.uid, &full.meta);
+                }
                 added += 1;
             }
             if let Err(e) = s.save_contacts() {
@@ -687,18 +711,19 @@ pub fn sync_older_messages(
             let mut added = 0u32;
             for (uidl, raw) in &ps.new_mails {
                 let uid = db::pop_next_uid(&s.db, account_id)?;
-                let ts =
-                    match mail::parse_email(raw, uid, account_id, "INBOX", true, false, &trusted) {
-                        Ok(full) => {
-                            s.upsert_contact(
-                                &full.meta.from_name,
-                                &full.meta.from_addr,
-                                full.meta.timestamp,
-                            );
-                            full.meta.timestamp
-                        }
-                        Err(_) => 0,
-                    };
+                let parsed =
+                    mail::parse_email(raw, uid, account_id, "INBOX", true, false, &trusted);
+                let ts = match &parsed {
+                    Ok(full) => {
+                        s.upsert_contact(
+                            &full.meta.from_name,
+                            &full.meta.from_addr,
+                            full.meta.timestamp,
+                        );
+                        full.meta.timestamp
+                    }
+                    Err(_) => 0,
+                };
                 db::upsert_message(
                     &s.db,
                     account_id,
@@ -710,6 +735,9 @@ pub fn sync_older_messages(
                     ts,
                     raw,
                 )?;
+                if let Ok(full) = parsed {
+                    cache_meta_json(s, account_id, "INBOX", uid, &full.meta);
+                }
                 added += 1;
             }
             Ok(SyncResult {

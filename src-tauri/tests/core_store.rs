@@ -377,6 +377,64 @@ fn saving_identical_new_rule_is_deduplicated() {
     fs::remove_dir_all(dir).ok();
 }
 
+/// 缺 meta_json 时 list_cached 返回「…」占位；backfill 后应写出真实主题/发件人。
+/// 回归：v0.1.56 把解析挪到后台后，若不同步写 meta、也不通知前端，列表会永久显示 …。
+#[test]
+fn list_cached_stub_then_backfill_fills_subject() {
+    use sealmail_lib::db;
+
+    let (dir, mut store) = load_store("meta-stub-backfill");
+    store
+        .accounts
+        .push(sample_account("acc1", "mara@example.test"));
+
+    let raw = b"From: Alice <alice@example.test>\r\n\
+Subject: Hello from Alice\r\n\
+Date: Tue, 14 Jul 2026 10:00:00 +0000\r\n\
+Message-ID: <stub-test@example.test>\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Body preview text here.\r\n";
+    db::upsert_message(
+        &store.db,
+        "acc1",
+        "INBOX",
+        42,
+        None,
+        true,
+        false,
+        1_721_000_000,
+        raw,
+    )
+    .expect("insert raw without meta_json");
+
+    let list = core::list_cached(&mut store, "acc1", "INBOX", 0, 0).expect("list");
+    assert_eq!(list.metas.len(), 1);
+    assert!(
+        core::is_stub_meta(&list.metas[0]),
+        "missing meta_json must surface as stub placeholder"
+    );
+    assert_eq!(list.metas[0].subject, "…");
+    assert_eq!(list.metas[0].from_name, "…");
+
+    let (n, max_uid) =
+        core::backfill_meta_batch(&mut store, "acc1", "INBOX", 0, 40).expect("backfill");
+    assert_eq!(n, 1);
+    assert_eq!(max_uid, Some(42));
+
+    let list = core::list_cached(&mut store, "acc1", "INBOX", 0, 0).expect("list after backfill");
+    assert_eq!(list.metas.len(), 1);
+    assert!(
+        !core::is_stub_meta(&list.metas[0]),
+        "backfill must replace stub with real meta"
+    );
+    assert_eq!(list.metas[0].subject, "Hello from Alice");
+    assert_eq!(list.metas[0].from_name, "Alice");
+    assert_eq!(list.metas[0].from_addr, "alice@example.test");
+
+    fs::remove_dir_all(dir).ok();
+}
+
 /// 点通知时邮件可能已被过滤规则移出 INBOX：要能按 Message-ID 在本地缓存
 /// 全目录范围内定位它现在所在的目录和 UID。
 #[test]

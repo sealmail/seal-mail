@@ -12,4 +12,13 @@ describe("LatestRequest", () => {
 
     expect(visibleFolder).toBe("robot");
   });
+
+  test("token() returns the current sequence without advancing it", () => {
+    const requests = new LatestRequest();
+    expect(requests.token()).toBe(0);
+    const first = requests.begin();
+    expect(requests.token()).toBe(first);
+    expect(requests.token()).toBe(first);
+    expect(requests.isCurrent(first)).toBe(true);
+  });
 });
