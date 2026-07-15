@@ -473,7 +473,8 @@ function MailApp() {
       if (fetchRequests.current.isCurrent(request)) setLoading(false);
     }
     if (!fetchRequests.current.isCurrent(request)) return;
-    // 2) 后台与服务器增量同步，再尽量把本地缓存补全
+    // 2) 与服务器增量同步；「同步中」只覆盖这阶段。更早邮件回填可能很久，
+    //    不再挂着神秘绿点（缓存数字会随回填自行增长）。
     setSyncing(true);
     try {
       if (folder === UNIFIED_FOLDER) {
@@ -486,13 +487,17 @@ function MailApp() {
       }
       if (!fetchRequests.current.isCurrent(request)) return;
       await loadCached(request);
-      if (!fetchRequests.current.isCurrent(request)) return;
-      await backfillOlderUntilExhausted(request);
-      if (fetchRequests.current.isCurrent(request)) await loadCached(request);
     } catch (e) {
       if (fetchRequests.current.isCurrent(request)) setListError(t("同步失败（本地缓存仍可用）：") + e);
     } finally {
       if (fetchRequests.current.isCurrent(request)) setSyncing(false);
+    }
+    if (!fetchRequests.current.isCurrent(request)) return;
+    try {
+      await backfillOlderUntilExhausted(request);
+      if (fetchRequests.current.isCurrent(request)) await loadCached(request);
+    } catch (e) {
+      if (fetchRequests.current.isCurrent(request)) setListError(t("同步失败（本地缓存仍可用）：") + e);
     }
   }, [accountId, accounts, backfillOlderUntilExhausted, folder, loadCached, t]);
 
@@ -1228,7 +1233,6 @@ function MailApp() {
     }
   }
 
-  const ledgerMode = state?.identity.mode === "ledger";
   const accountLabels = useMemo(
     () => Object.fromEntries(accounts.map((a) => [a.id, a.email])),
     [accounts]
@@ -1293,7 +1297,6 @@ function MailApp() {
         <div className="main">
           <Sidebar
             width={sidebarWidth}
-            identity={state?.identity ?? null}
             accounts={accounts}
             currentAccountId={accountId}
             folders={folders}
@@ -1303,7 +1306,6 @@ function MailApp() {
             inboxUnread={inboxUnread}
             draftCount={drafts.filter((d) => d.accountId === accountId).length}
             view={view}
-            ledgerMode={ledgerMode}
             onSelectAccount={(id) => {
               fetchRequests.current.invalidate();
               setLoading(false);

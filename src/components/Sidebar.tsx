@@ -1,5 +1,5 @@
 import { useI18n } from "../i18n";
-import type { Account, FolderInfo, IdentityInfo } from "../types";
+import type { Account, FolderInfo } from "../types";
 
 export const RISK_FOLDER = "__risk__";
 export const DRAFTS_FOLDER = "__drafts__";
@@ -26,7 +26,6 @@ function folderIcon(name: string, display: string) {
 
 interface Props {
   width?: number;
-  identity: IdentityInfo | null;
   accounts: Account[];
   currentAccountId: string;
   folders: FolderInfo[];
@@ -36,7 +35,6 @@ interface Props {
   inboxUnread: number;
   draftCount: number;
   view: "mail" | "keys";
-  ledgerMode: boolean;
   onSelectAccount: (id: string) => void;
   onSelectFolder: (name: string) => void;
   onOpenKeys: () => void;
@@ -141,7 +139,6 @@ export function Sidebar(p: Props) {
         <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
           <span className="icon">⊟</span>
           <span className="label">{t("设置")}</span>
-          {p.identity && <span className="key-status" title={p.ledgerMode ? t("Ledger 已绑定") : t("本地密钥已就绪")} />}
         </button>
       </div>
     </div>

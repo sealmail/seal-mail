@@ -68,6 +68,7 @@ export const EN: Record<string, string> = {
   "加星标": "Star",
   "取消星标": "Unstar",
   "同步中": "Syncing",
+  "正在与服务器同步新邮件": "Syncing new mail with the server",
   "当前筛选显示 / 本地已缓存": "Shown in current filter / cached locally",
   "显示 {a} · 缓存 {b}": "Showing {a} · Cached {b}",
   "全部标为已读": "Mark all as read",

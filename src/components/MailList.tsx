@@ -132,7 +132,11 @@ export function MailList(p: Props) {
       <div className="list-head">
         <div className="title">{p.title ?? t("邮件")}</div>
         <span className="meta">
-          {p.syncing && <span className="sync-dot" title={t("同步中")} />}
+          {p.syncing && (
+            <span className="sync-chip" title={t("正在与服务器同步新邮件")}>
+              {t("同步中")}
+            </span>
+          )}
           <span className="cache-count" title={t("当前筛选显示 / 本地已缓存")}>
             {t("显示 {a} · 缓存 {b}", { a: p.loadedCount.toLocaleString(), b: p.totalCount.toLocaleString() })}
           </span>

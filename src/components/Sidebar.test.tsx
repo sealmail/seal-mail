@@ -6,7 +6,6 @@ test("shows the aggregated unread count for all inboxes", () => {
   // 统一 = 各账户 INBOX 全量 COUNT 之和；收件箱 = 当前账户全量 COUNT（不是列表窗口）
   const html = renderToStaticMarkup(
     <Sidebar
-      identity={null}
       accounts={[]}
       currentAccountId=""
       folders={[
@@ -19,7 +18,6 @@ test("shows the aggregated unread count for all inboxes", () => {
       inboxUnread={318}
       draftCount={0}
       view="mail"
-      ledgerMode={false}
       onSelectAccount={() => {}}
       onSelectFolder={() => {}}
       onOpenKeys={() => {}}
@@ -33,12 +31,12 @@ test("shows the aggregated unread count for all inboxes", () => {
 
   expect(html).toContain('<span class="label">统一收件箱</span><span class="count">551</span>');
   expect(html).toContain('<span class="label">收件箱</span><span class="count">318</span>');
+  expect(html).not.toContain("key-status");
 });
 
 test("keeps organization and account controls outside the folder scroller", () => {
   const html = renderToStaticMarkup(
     <Sidebar
-      identity={null}
       accounts={[]}
       currentAccountId=""
       folders={[]}
@@ -48,7 +46,6 @@ test("keeps organization and account controls outside the folder scroller", () =
       inboxUnread={0}
       draftCount={0}
       view="mail"
-      ledgerMode={false}
       onSelectAccount={() => {}}
       onSelectFolder={() => {}}
       onOpenKeys={() => {}}

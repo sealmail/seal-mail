@@ -1,7 +1,7 @@
 # HANDOFF — SealMail 信印
 
 > 工作交接/进度文档。**每次修改代码后必须同步更新本文件。**
-> 最后更新：2026-07-15（v0.1.58：屏蔽发件人仍弹通知 + 目录 mutf7 乱码）
+> 最后更新：2026-07-15（v0.1.59：去掉含义不明的常亮绿点）
 
 ## 项目定位
 
@@ -388,6 +388,12 @@ Modern Auth / OAuth2"，基本认证已停用，应用密码也不行。
 - [x] `list_cached` 发现 stub 时唤醒 backfill；trust_sender / remove_trusted 清缓存后也唤醒
 - [x] 前端 listen `meta-cache-updated`，debounce 软刷 `loadCached`（不 begin 打断同步）
 - [x] TDD：`list_cached_stub_then_backfill_fills_subject`（core_store）
+
+### v0.1.59（去掉含义不明的常亮绿点）
+
+- [x] 设置旁「密钥就绪」绿点：几乎永远亮着、无可操作含义 → 删除
+- [x] 列表头同步指示：裸绿点改为短暂「同步中」文案；更早邮件回填不再挂 syncing
+      （大邮箱回填时绿点会挂很久，像故障）
 
 ### v0.1.58（屏蔽发件人仍弹通知 + 目录名 mutf7 乱码）
 

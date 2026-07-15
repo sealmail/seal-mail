@@ -248,11 +248,6 @@ input, textarea, select { font-family: inherit; }
 .side-action:hover {
   background: var(--red-bg); border-color: var(--red-bg-strong); color: var(--red);
 }
-.key-status {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--jade);
-  box-shadow: 0 0 0 3px rgba(8, 116, 67, 0.1); flex-shrink: 0;
-}
-
 .account-row-wrap { position: relative; display: flex; align-items: stretch; }
 .account-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 34px 4px 10px; border-radius: 8px; cursor: pointer; }
 .account-row:hover { background: #ecf1e9; }
@@ -302,9 +297,13 @@ input, textarea, select { font-family: inherit; }
   justify-self: end; min-width: 0; font-size: 11px; color: var(--mut-3);
   display: flex; align-items: center; gap: 6px;
 }
-.sync-dot {
-  width: 7px; height: 7px; border-radius: 999px; background: var(--jade);
-  box-shadow: 0 0 0 3px rgba(8, 116, 67, 0.1);
+/* 与服务器增量同步时的明确文案（替代原先含义不明的绿点） */
+.sync-chip {
+  height: 21px; padding: 0 8px; border-radius: 999px;
+  background: var(--jade-bg); border: 1px solid rgba(8, 116, 67, 0.18);
+  color: var(--jade-ok); font-size: 10.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center;
+  animation: sm-pulse 1.4s ease-in-out infinite; white-space: nowrap;
 }
 .cache-count {
   height: 21px; padding: 0 8px; border-radius: 999px; background: var(--bg-chip);
