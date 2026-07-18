@@ -369,6 +369,46 @@ function MailApp() {
     setInboxUnreadByAccount((counts) => ({ ...counts, [accId]: result.unreadCount }));
   }, []);
 
+  // ── 非当前视图账户的后台静默同步：新邮件入库 + 刷新未读角标，不打断当前列表 ──
+  const backgroundSyncing = useRef<Set<string>>(new Set());
+  const backgroundSyncInbox = useCallback(
+    async (accId: string) => {
+      if (backgroundSyncing.current.has(accId)) return;
+      backgroundSyncing.current.add(accId);
+      try {
+        await api.syncMessages(accId, "INBOX");
+        await refreshInboxUnread(accId);
+      } catch (e) {
+        console.error(`后台同步账户 ${accId} 收件箱失败`, e);
+      } finally {
+        backgroundSyncing.current.delete(accId);
+      }
+    },
+    [refreshInboxUnread]
+  );
+
+  // ── 启动兜底：对非当前账户各做一次 INBOX 后台同步 ──
+  // IDLE 只推「连上之后」的增量，应用没开时到达的邮件不会触发 new-mail 事件；
+  // 不兜底的话这些邮件要等用户手动切到该账户才入库。
+  // 延迟几秒再逐个串行同步：后端 sync 期间持有全局状态锁，别抢在首屏缓存加载前占锁。
+  const accountIdRef = useRef(accountId);
+  accountIdRef.current = accountId;
+  const startupSyncedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const pending = accounts.filter((a) => !startupSyncedRef.current.has(a.id));
+    if (pending.length === 0) return;
+    for (const a of pending) startupSyncedRef.current.add(a.id);
+    // 不做 clearTimeout 清理：accounts 每次 render 都是新数组，effect 会频繁重跑，
+    // 清理会把还没到点的定时器掐死；这里靠 startupSyncedRef 保证每个账户只兜底一次。
+    setTimeout(async () => {
+      for (const a of pending) {
+        // 当前选中账户由 loadMessages 自己同步，跳过
+        if (a.id === accountIdRef.current) continue;
+        await backgroundSyncInbox(a.id);
+      }
+    }, 3000);
+  }, [accounts, backgroundSyncInbox]);
+
   // 点通知打开邮件时，若切换了账户，需要落到指定目录而不是被强制回 INBOX
   const pendingOpenFolderRef = useRef<string | null>(null);
 
@@ -539,14 +579,23 @@ function MailApp() {
   }
 
   // ── 新邮件推送（后端 IMAP IDLE / POP3 轮询发出 new-mail 事件）──
+  // 事件只代表「收件箱有新邮件」，watcher 不落库；必须有人调 syncMessages 才会入缓存。
+  // 命中当前视图（统一收件箱 / 该账户的收件箱视图）→ 全量 loadMessages 刷新列表；
+  // 其余情况（别的账户，或同账户但在看别的目录）→ 后台静默同步该账户 INBOX，
+  // 否则新邮件永远不入库、未读角标不动，直到用户手动切过去才姗姗来迟。
   useEffect(() => {
+    const inboxView = folder === "INBOX" || folder === RISK_FOLDER;
     const unlisten = listen<{ accountId: string }>("new-mail", (e) => {
-      if (folder === UNIFIED_FOLDER || e.payload.accountId === accountId) loadMessages();
+      if (folder === UNIFIED_FOLDER || (e.payload.accountId === accountId && inboxView)) {
+        loadMessages();
+      } else {
+        backgroundSyncInbox(e.payload.accountId);
+      }
     });
     return () => {
       unlisten.then((f) => f());
     };
-  }, [accountId, folder, loadMessages]);
+  }, [accountId, folder, loadMessages, backgroundSyncInbox]);
 
   // ── meta 后台回填完成一批后刷新列表（把「…」占位换成真实主题/发件人）──
   // 不 begin() 新请求，避免打断正在进行的同步；用当前 token 软刷本地缓存。
