@@ -285,6 +285,8 @@ pub struct RawMail {
 /// 一次增量同步从服务器带回的所有信息
 pub struct SyncFetch {
     pub uidvalidity: u32,
+    /// SELECT 时服务器报告的该目录邮件总数（EXISTS）
+    pub exists: u32,
     /// true = 本地该目录缓存需清空重建（UIDVALIDITY 变化或首次同步）
     pub reset: bool,
     pub new_mails: Vec<RawMail>,
@@ -374,6 +376,7 @@ pub fn sync_fetch(
         let _ = sess.logout();
         return Ok(SyncFetch {
             uidvalidity,
+            exists: mailbox.exists,
             reset: true,
             new_mails,
             server_flags: vec![],
@@ -438,6 +441,7 @@ pub fn sync_fetch(
     let _ = sess.logout();
     Ok(SyncFetch {
         uidvalidity,
+        exists: mailbox.exists,
         reset: false,
         new_mails,
         server_flags,

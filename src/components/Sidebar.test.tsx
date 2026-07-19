@@ -17,6 +17,9 @@ test("shows the aggregated unread count for all inboxes", () => {
       unifiedUnread={551}
       inboxUnread={318}
       draftCount={0}
+      syncDone={0}
+      syncTotal={0}
+      syncing={false}
       view="mail"
       onSelectAccount={() => {}}
       onSelectFolder={() => {}}
@@ -34,6 +37,67 @@ test("shows the aggregated unread count for all inboxes", () => {
   expect(html).not.toContain("key-status");
 });
 
+test("renders the global sync progress with counts and bar width", () => {
+  const html = renderToStaticMarkup(
+    <Sidebar
+      accounts={[]}
+      currentAccountId=""
+      folders={[]}
+      currentFolder="INBOX"
+      riskCount={0}
+      unifiedUnread={0}
+      inboxUnread={0}
+      draftCount={0}
+      syncDone={28794}
+      syncTotal={57588}
+      syncing={false}
+      view="mail"
+      onSelectAccount={() => {}}
+      onSelectFolder={() => {}}
+      onOpenKeys={() => {}}
+      onAddAccount={() => {}}
+      onRemoveAccount={() => {}}
+      onNewFolder={() => {}}
+      onDeleteFolder={() => {}}
+      onOpenFilters={() => {}}
+    />
+  );
+
+  expect(html).toContain("同步进度");
+  expect(html).toContain("28,794 / 57,588");
+  // 28794/57588 = 50%
+  expect(html).toContain("width:50%");
+});
+
+test("hides the sync progress until a server total is known", () => {
+  const html = renderToStaticMarkup(
+    <Sidebar
+      accounts={[]}
+      currentAccountId=""
+      folders={[]}
+      currentFolder="INBOX"
+      riskCount={0}
+      unifiedUnread={0}
+      inboxUnread={0}
+      draftCount={0}
+      syncDone={0}
+      syncTotal={0}
+      syncing={false}
+      view="mail"
+      onSelectAccount={() => {}}
+      onSelectFolder={() => {}}
+      onOpenKeys={() => {}}
+      onAddAccount={() => {}}
+      onRemoveAccount={() => {}}
+      onNewFolder={() => {}}
+      onDeleteFolder={() => {}}
+      onOpenFilters={() => {}}
+    />
+  );
+
+  expect(html).not.toContain("sync-status");
+});
+
 test("keeps organization and account controls outside the folder scroller", () => {
   const html = renderToStaticMarkup(
     <Sidebar
@@ -45,6 +109,9 @@ test("keeps organization and account controls outside the folder scroller", () =
       unifiedUnread={0}
       inboxUnread={0}
       draftCount={0}
+      syncDone={0}
+      syncTotal={0}
+      syncing={false}
       view="mail"
       onSelectAccount={() => {}}
       onSelectFolder={() => {}}

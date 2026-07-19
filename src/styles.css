@@ -192,6 +192,30 @@ input, textarea, select { font-family: inherit; }
   border-top: 1px solid rgba(118, 128, 112, 0.16);
   background: var(--bg-side);
 }
+/* 全局同步进度（所有账户收件箱） */
+.sync-status { padding: 2px 8px 10px; cursor: default; }
+.sync-status-line {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 5px;
+}
+.sync-status-label { font-size: 10.5px; font-weight: 600; color: var(--mut-3); letter-spacing: 0.6px; }
+.sync-status-nums {
+  font-family: var(--mono); font-size: 10.5px; color: var(--mut-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sync-bar {
+  height: 4px; border-radius: 2px; overflow: hidden;
+  background: rgba(118, 128, 112, 0.18);
+}
+.sync-bar-fill {
+  height: 100%; border-radius: 2px; background: var(--jade);
+  transition: width 0.4s ease;
+}
+.sync-bar-fill.syncing { animation: sync-bar-pulse 1.4s ease-in-out infinite; }
+@keyframes sync-bar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
 .identity-chip {
   text-align: left; border: 1px solid var(--border-3); background: #fff;
   border-radius: 12px; padding: 12px; cursor: pointer;

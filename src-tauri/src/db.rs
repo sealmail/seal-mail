@@ -30,9 +30,10 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_msg_list ON messages(account_id, folder, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_msg_uidl ON messages(account_id, pop_uidl);
 CREATE TABLE IF NOT EXISTS folder_state (
-  account_id  TEXT NOT NULL,
-  folder      TEXT NOT NULL,
-  uidvalidity INTEGER NOT NULL DEFAULT 0,
+  account_id    TEXT NOT NULL,
+  folder        TEXT NOT NULL,
+  uidvalidity   INTEGER NOT NULL DEFAULT 0,
+  server_exists INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (account_id, folder)
 );
 CREATE TABLE IF NOT EXISTS pop_state (
@@ -51,6 +52,11 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
         .map_err(|e| format!("初始化邮件缓存失败: {e}"))?;
     // 旧库补充 meta_json 列（列已存在时 ALTER 会报错，忽略即可——这是安全的幂等迁移）
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN meta_json TEXT", []);
+    // 旧库补充 server_exists 列（服务器侧邮件总数，用于全局同步进度）
+    let _ = conn.execute(
+        "ALTER TABLE folder_state ADD COLUMN server_exists INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     Ok(conn)
 }
 
@@ -469,12 +475,63 @@ pub fn set_uidvalidity(
     folder: &str,
     v: u32,
 ) -> Result<(), String> {
+    // 用 UPSERT 而非 INSERT OR REPLACE，避免覆盖同行的 server_exists
     conn.execute(
-        "INSERT OR REPLACE INTO folder_state(account_id, folder, uidvalidity) VALUES (?1,?2,?3)",
+        "INSERT INTO folder_state(account_id, folder, uidvalidity) VALUES (?1,?2,?3)
+         ON CONFLICT(account_id, folder) DO UPDATE SET uidvalidity=excluded.uidvalidity",
         params![account, folder, v],
     )
     .map(|_| ())
     .map_err(err)
+}
+
+/// 记录该目录在服务器上的邮件总数（IMAP SELECT 的 EXISTS / POP3 UIDL 条数）
+pub fn set_server_exists(
+    conn: &Connection,
+    account: &str,
+    folder: &str,
+    n: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO folder_state(account_id, folder, server_exists) VALUES (?1,?2,?3)
+         ON CONFLICT(account_id, folder) DO UPDATE SET server_exists=excluded.server_exists",
+        params![account, folder, n],
+    )
+    .map(|_| ())
+    .map_err(err)
+}
+
+pub struct SyncOverviewRow {
+    pub account_id: String,
+    pub folder: String,
+    pub server_total: i64,
+    pub cached: i64,
+}
+
+/// 全局同步进度：每个已记录服务器总数的目录，服务器总数 vs 本地已缓存条数
+pub fn sync_overview(conn: &Connection) -> Result<Vec<SyncOverviewRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT fs.account_id, fs.folder, fs.server_exists,
+                    (SELECT COUNT(*) FROM messages m
+                      WHERE m.account_id = fs.account_id AND m.folder = fs.folder)
+               FROM folder_state fs
+              WHERE fs.server_exists > 0",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(SyncOverviewRow {
+                account_id: r.get(0)?,
+                folder: r.get(1)?,
+                server_total: r.get(2)?,
+                cached: r.get(3)?,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(rows)
 }
 
 /// 该账户全部已知的 POP3 UIDL（跨本地目录）
@@ -578,6 +635,44 @@ mod tests {
         // POP3 自增 uid
         assert_eq!(pop_next_uid(&conn, "p").unwrap(), 1);
         assert_eq!(pop_next_uid(&conn, "p").unwrap(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn server_exists_and_sync_overview() {
+        let dir = std::env::temp_dir().join(format!("sealmail-sync-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = open(&dir).unwrap();
+        // 没记录过服务器总数时不产生进度行
+        assert!(sync_overview(&conn).unwrap().is_empty());
+
+        // 账户 a：服务器 10 封，本地缓存 3 封
+        set_server_exists(&conn, "a", "INBOX", 10).unwrap();
+        for i in 1..=3u32 {
+            upsert_message(&conn, "a", "INBOX", i, None, true, false, i as i64, b"raw").unwrap();
+        }
+        // 账户 b：服务器 5 封，本地 0 封
+        set_server_exists(&conn, "b", "INBOX", 5).unwrap();
+
+        let rows = sync_overview(&conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        let a = rows.iter().find(|r| r.account_id == "a").unwrap();
+        assert_eq!((a.server_total, a.cached), (10, 3));
+        let b = rows.iter().find(|r| r.account_id == "b").unwrap();
+        assert_eq!((b.server_total, b.cached), (5, 0));
+
+        // set_uidvalidity 不得覆盖同行的 server_exists（此前是 INSERT OR REPLACE 会清零）
+        set_uidvalidity(&conn, "a", "INBOX", 42).unwrap();
+        let rows = sync_overview(&conn).unwrap();
+        let a = rows.iter().find(|r| r.account_id == "a").unwrap();
+        assert_eq!(a.server_total, 10);
+        assert_eq!(uidvalidity(&conn, "a", "INBOX").unwrap(), Some(42));
+
+        // 再次同步更新服务器总数
+        set_server_exists(&conn, "a", "INBOX", 12).unwrap();
+        let rows = sync_overview(&conn).unwrap();
+        let a = rows.iter().find(|r| r.account_id == "a").unwrap();
+        assert_eq!(a.server_total, 12);
         std::fs::remove_dir_all(&dir).ok();
     }
 

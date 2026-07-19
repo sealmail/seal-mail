@@ -34,6 +34,10 @@ interface Props {
   unifiedUnread: number;
   inboxUnread: number;
   draftCount: number;
+  /** 全局同步进度（所有账户收件箱）：本地已同步 / 服务器总数 */
+  syncDone: number;
+  syncTotal: number;
+  syncing: boolean;
   view: "mail" | "keys";
   onSelectAccount: (id: string) => void;
   onSelectFolder: (name: string) => void;
@@ -136,6 +140,30 @@ export function Sidebar(p: Props) {
       </div>
 
       <div className="sidebar-footer">
+        {p.syncTotal > 0 && (
+          <div
+            className="sync-status"
+            title={t("全部账户收件箱：本地已同步 {a} / 服务器共 {b} 封", {
+              a: p.syncDone.toLocaleString(),
+              b: p.syncTotal.toLocaleString(),
+            })}
+          >
+            <div className="sync-status-line">
+              <span className="sync-status-label">
+                {p.syncing ? t("同步中…") : t("同步进度")}
+              </span>
+              <span className="sync-status-nums">
+                {`${p.syncDone.toLocaleString()} / ${p.syncTotal.toLocaleString()}`}
+              </span>
+            </div>
+            <div className="sync-bar">
+              <div
+                className={`sync-bar-fill${p.syncing ? " syncing" : ""}`}
+                style={{ width: `${Math.min(100, (p.syncDone / p.syncTotal) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
         <button className={`side-item${p.view === "keys" ? " active" : ""}`} onClick={p.onOpenKeys}>
           <span className="icon">⊟</span>
           <span className="label">{t("设置")}</span>

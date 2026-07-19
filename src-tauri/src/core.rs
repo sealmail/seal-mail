@@ -510,6 +510,33 @@ pub fn list_cached(
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatusEntry {
+    pub account_id: String,
+    pub folder: String,
+    /// 服务器上的邮件总数（最近一次同步时记录）
+    pub server_total: i64,
+    /// 本地已缓存条数
+    pub cached: i64,
+}
+
+/// 全局同步进度：所有账户已同步过的目录，服务器总数 vs 本地缓存数
+pub fn sync_status(s: &StoreData) -> Result<Vec<SyncStatusEntry>, String> {
+    let known: std::collections::HashSet<&str> =
+        s.accounts.iter().map(|a| a.id.as_str()).collect();
+    Ok(db::sync_overview(&s.db)?
+        .into_iter()
+        .filter(|r| known.contains(r.account_id.as_str()))
+        .map(|r| SyncStatusEntry {
+            account_id: r.account_id,
+            folder: r.folder,
+            server_total: r.server_total,
+            cached: r.cached,
+        })
+        .collect())
+}
+
 pub fn sync_messages(
     s: &mut StoreData,
     account_id: &str,
@@ -536,6 +563,7 @@ pub fn sync_messages(
                 db::clear_folder(&s.db, account_id, folder)?;
             }
             db::set_uidvalidity(&s.db, account_id, folder, sf.uidvalidity)?;
+            db::set_server_exists(&s.db, account_id, folder, sf.exists as i64)?;
             let mut added = 0u32;
             let mut new_fulls: Vec<EmailFull> = Vec::new();
             for m in &sf.new_mails {
@@ -600,6 +628,7 @@ pub fn sync_messages(
                 .map(|(uidl, _, _)| uidl)
                 .collect();
             let ps = pop3_client::sync_fetch(&account, secret, &known, db::INITIAL_WINDOW)?;
+            db::set_server_exists(&s.db, account_id, "INBOX", ps.all_uidls.len() as i64)?;
             let mut added = 0u32;
             let mut new_fulls: Vec<EmailFull> = Vec::new();
             for (uidl, raw) in &ps.new_mails {
@@ -1277,6 +1306,7 @@ fn sync_imap_folder(
         db::clear_folder(&s.db, &account.id, folder)?;
     }
     db::set_uidvalidity(&s.db, &account.id, folder, fetched.uidvalidity)?;
+    db::set_server_exists(&s.db, &account.id, folder, fetched.exists as i64)?;
     for m in &fetched.new_mails {
         let timestamp = mail::parse_email(
             &m.raw,

@@ -175,6 +175,20 @@ export async function syncMessages(accountId: string, folder: string): Promise<S
   return cliJson(["sync", "--account", accountId, "--folder", folder]);
 }
 
+export interface SyncStatusEntry {
+  accountId: string;
+  folder: string;
+  /** 最近一次同步时服务器报告的该目录邮件总数 */
+  serverTotal: number;
+  /** 本地已缓存条数 */
+  cached: number;
+}
+
+/** 全局同步进度（所有账户已同步过的目录，纯本地查询） */
+export async function syncStatus(): Promise<SyncStatusEntry[]> {
+  return cliJson(["sync-status"]);
+}
+
 /** 按 Message-ID 定位邮件当前所在目录（点通知时邮件可能已被过滤规则移出 INBOX） */
 export async function locateMessage(accountId: string, messageId: string): Promise<{ folder: string; uid: number } | null> {
   return cliJson(["locate", "--account", accountId, "--message-id", messageId]);

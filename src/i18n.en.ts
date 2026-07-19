@@ -55,6 +55,10 @@ export const EN: Record<string, string> = {
   "删除账户 {name}": "Remove account {name}",
   "Ledger 已绑定": "Ledger bound",
   "本地密钥已就绪": "Local key ready",
+  "同步进度": "Sync progress",
+  "同步中…": "Syncing…",
+  "全部账户收件箱：本地已同步 {a} / 服务器共 {b} 封":
+    "All inboxes: {a} synced locally of {b} on server",
 
   // ── 邮件列表 ──
   "全部": "All",

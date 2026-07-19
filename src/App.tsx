@@ -233,6 +233,8 @@ function MailApp() {
   const [categoryMode, setCategoryMode] = useState<MailCategory>("all");
   const [total, setTotal] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  // 全局同步进度（所有账户 INBOX：服务器总数 vs 本地已缓存）
+  const [syncStat, setSyncStat] = useState<{ done: number; total: number } | null>(null);
   // 界面缩放（Cmd+/-/0），走原生 pageZoom
   useZoomShortcuts();
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -364,6 +366,23 @@ function MailApp() {
     };
   }, [accounts]);
 
+  const refreshSyncStatus = useCallback(async () => {
+    try {
+      const entries = await api.syncStatus();
+      const inbox = entries.filter((e) => e.folder === "INBOX");
+      const totalOnServer = inbox.reduce((sum, e) => sum + e.serverTotal, 0);
+      // 本地可能比服务器多（服务器侧删除还没回扫到），进度按不超过总数计
+      const done = inbox.reduce((sum, e) => sum + Math.min(e.cached, e.serverTotal), 0);
+      setSyncStat({ done, total: totalOnServer });
+    } catch (e) {
+      console.error("读取全局同步进度失败", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (accounts.length > 0) refreshSyncStatus();
+  }, [accounts, refreshSyncStatus]);
+
   const refreshInboxUnread = useCallback(async (accId: string) => {
     const result = await api.listCached(accId, "INBOX", 0, 0);
     setInboxUnreadByAccount((counts) => ({ ...counts, [accId]: result.unreadCount }));
@@ -378,13 +397,14 @@ function MailApp() {
       try {
         await api.syncMessages(accId, "INBOX");
         await refreshInboxUnread(accId);
+        refreshSyncStatus();
       } catch (e) {
         console.error(`后台同步账户 ${accId} 收件箱失败`, e);
       } finally {
         backgroundSyncing.current.delete(accId);
       }
     },
-    [refreshInboxUnread]
+    [refreshInboxUnread, refreshSyncStatus]
   );
 
   // ── 启动兜底：对非当前账户各做一次 INBOX 后台同步 ──
@@ -448,6 +468,7 @@ function MailApp() {
         setInboxMetas(metas);
         setMessages(metas);
         retainSelection(metas);
+        refreshSyncStatus();
         return true;
       }
       const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
@@ -463,9 +484,10 @@ function MailApp() {
       metas = [...metas].sort((a, b) => b.timestamp - a.timestamp);
       setMessages(metas);
       retainSelection(metas);
+      refreshSyncStatus();
       return true;
     },
-    [accountId, accounts, folder, retainSelection]
+    [accountId, accounts, folder, retainSelection, refreshSyncStatus]
   );
 
   /** 从服务器把更早邮件拉进本地库，直到没有更多（或达上限）。 */
@@ -1354,6 +1376,9 @@ function MailApp() {
             unifiedUnread={unifiedUnread}
             inboxUnread={inboxUnread}
             draftCount={drafts.filter((d) => d.accountId === accountId).length}
+            syncDone={syncStat?.done ?? 0}
+            syncTotal={syncStat?.total ?? 0}
+            syncing={syncing}
             view={view}
             onSelectAccount={(id) => {
               fetchRequests.current.invalidate();
