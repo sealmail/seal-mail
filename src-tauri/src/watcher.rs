@@ -309,8 +309,13 @@ fn filter_rules_for(app: &AppHandle, account_id: &str) -> Vec<FilterRule> {
 }
 
 /// 取账户凭据（OAuth 令牌临近过期则阻塞刷新并回写）。
+/// force_refresh=true 时无视本地过期时间强制刷新（上一轮认证被服务器拒绝时用）。
 /// Ok(None) = 账户已删除（线程应退出）；Err = 临时失败（稍后重试）
-fn creds(app: &AppHandle, account_id: &str) -> Result<Option<(Account, AccountSecret)>, String> {
+fn creds(
+    app: &AppHandle,
+    account_id: &str,
+    force_refresh: bool,
+) -> Result<Option<(Account, AccountSecret)>, String> {
     let state = app.state::<AppState>();
     let (account, secret) = {
         let s = state.inner.lock().unwrap();
@@ -322,7 +327,7 @@ fn creds(app: &AppHandle, account_id: &str) -> Result<Option<(Account, AccountSe
     let Some(tokens) = secret.oauth.clone() else {
         return Ok(Some((account, secret)));
     };
-    if !tokens.needs_refresh() {
+    if !force_refresh && !tokens.needs_refresh() {
         return Ok(Some((account, secret)));
     }
     let refreshed = oauth::refresh_tokens_blocking(&tokens)?;
@@ -344,8 +349,9 @@ fn account_exists(app: &AppHandle, account_id: &str) -> bool {
 
 fn watch_imap(app: &AppHandle, account_id: &str) {
     let mut last_exists: Option<u32> = None;
+    let mut force_refresh = false;
     loop {
-        let (account, secret) = match creds(app, account_id) {
+        let (account, secret) = match creds(app, account_id, force_refresh) {
             Ok(Some(c)) => c,
             Ok(None) => return,
             Err(e) => {
@@ -354,8 +360,11 @@ fn watch_imap(app: &AppHandle, account_id: &str) {
                 continue;
             }
         };
+        force_refresh = false;
         if let Err(e) = idle_session(app, account_id, &account, &secret, &mut last_exists) {
             eprintln!("[watcher] {} IDLE 连接中断: {}", account_id, e);
+            // token 被服务器提前作废时，本地 expires_at 判断不出来，下一轮强制刷新
+            force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
             std::thread::sleep(RETRY_DELAY);
         }
     }
@@ -437,11 +446,13 @@ fn fetch_imap_notices(
 
 fn watch_pop3(app: &AppHandle, account_id: &str) {
     let mut last: Option<u32> = None;
+    let mut force_refresh = false;
     loop {
-        match creds(app, account_id) {
+        match creds(app, account_id, force_refresh) {
             Ok(None) => return,
             Err(e) => eprintln!("[watcher] {} 取凭据失败: {}", account_id, e),
             Ok(Some((account, secret))) => {
+                force_refresh = false;
                 match pop3_client::Pop3Client::connect(&account, &secret) {
                     Ok(mut c) => {
                         match c.message_count() {
@@ -478,7 +489,10 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                         }
                         c.quit();
                     }
-                    Err(e) => eprintln!("[watcher] {} POP3 连接失败: {}", account_id, e),
+                    Err(e) => {
+                        eprintln!("[watcher] {} POP3 连接失败: {}", account_id, e);
+                        force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
+                    }
                 }
             }
         }

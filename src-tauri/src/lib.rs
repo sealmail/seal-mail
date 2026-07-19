@@ -460,6 +460,22 @@ async fn fresh_secret(
     if !tokens.needs_refresh() {
         return Ok(secret);
     }
+    force_refresh_secret(state, account_id).await
+}
+
+/// 无视本地过期时间，强制刷新 OAuth 令牌并回写 secrets.json。
+/// 用于服务器拒绝认证（token 被提前作废）时的兜底；非 OAuth 账户原样返回。
+async fn force_refresh_secret(
+    state: &State<'_, AppState>,
+    account_id: &str,
+) -> Result<AccountSecret, String> {
+    let secret = {
+        let s = state.inner.lock().unwrap();
+        s.secret(account_id)?
+    };
+    let Some(tokens) = &secret.oauth else {
+        return Ok(secret);
+    };
     let refreshed = oauth::refresh_tokens(tokens).await?;
     let mut s = state.inner.lock().unwrap();
     let mut updated = s
@@ -470,6 +486,29 @@ async fn fresh_secret(
     updated.oauth = Some(refreshed);
     s.update_secret(account_id, updated.clone())?;
     Ok(updated)
+}
+
+/// 用最新凭据执行网络操作；OAuth2 认证被服务器拒绝时强制刷新令牌并重试一次。
+/// 覆盖 access_token 被提前作废（改密码/撤销授权/安全事件）而本地 expires_at 未到期的场景，
+/// 此时 fresh_secret 的按时刷新永远不会触发，只能靠认证失败信号驱动。
+async fn with_oauth_retry<T>(
+    state: &State<'_, AppState>,
+    account_id: &str,
+    op: impl Fn(&AccountSecret) -> Result<T, String>,
+) -> Result<T, String> {
+    let secret = fresh_secret(state, account_id).await?;
+    let has_oauth = secret.oauth.is_some();
+    match op(&secret) {
+        Err(e) if has_oauth && oauth::is_auth_rejected(&e) => {
+            logging::log(format!(
+                "[oauth] {} 认证被拒，强制刷新令牌后重试: {}",
+                account_id, e
+            ));
+            let secret = force_refresh_secret(state, account_id).await?;
+            op(&secret)
+        }
+        other => other,
+    }
 }
 
 #[tauri::command]
@@ -514,9 +553,11 @@ async fn list_folders(
     state: State<'_, AppState>,
     account_id: String,
 ) -> Result<Vec<FolderInfo>, String> {
-    fresh_secret(&state, &account_id).await?;
-    let s = state.inner.lock().unwrap();
-    core::list_folders(&s, &account_id)
+    with_oauth_retry(&state, &account_id, |_| {
+        let s = state.inner.lock().unwrap();
+        core::list_folders(&s, &account_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -525,9 +566,11 @@ async fn create_folder(
     account_id: String,
     name: String,
 ) -> Result<(), String> {
-    fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::create_folder(&mut s, &account_id, name)
+    with_oauth_retry(&state, &account_id, |_| {
+        let mut s = state.inner.lock().unwrap();
+        core::create_folder(&mut s, &account_id, name.clone())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -536,9 +579,11 @@ async fn delete_folder(
     account_id: String,
     name: String,
 ) -> Result<(), String> {
-    fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::delete_folder(&mut s, &account_id, &name)
+    with_oauth_retry(&state, &account_id, |_| {
+        let mut s = state.inner.lock().unwrap();
+        core::delete_folder(&mut s, &account_id, &name)
+    })
+    .await
 }
 
 // ───────────────────────── messages ─────────────────────────
@@ -577,9 +622,11 @@ async fn sync_messages(
     account_id: String,
     folder: String,
 ) -> Result<SyncResult, String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    let result = core::sync_messages(&mut s, &account_id, &folder, &secret)?;
+    let result = with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::sync_messages(&mut s, &account_id, &folder, secret)
+    })
+    .await?;
     Ok(SyncResult {
         added: result.added,
         total: result.total,
@@ -593,9 +640,11 @@ async fn sync_older_messages(
     account_id: String,
     folder: String,
 ) -> Result<SyncResult, String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    let result = core::sync_older_messages(&mut s, &account_id, &folder, &secret)?;
+    let result = with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::sync_older_messages(&mut s, &account_id, &folder, secret)
+    })
+    .await?;
     Ok(SyncResult {
         added: result.added,
         total: result.total,
@@ -633,9 +682,11 @@ async fn move_message(
     uid: u32,
     target: String,
 ) -> Result<(), String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::move_message(&mut s, &account_id, &folder, uid, &target, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::move_message(&mut s, &account_id, &folder, uid, &target, secret)
+    })
+    .await
 }
 
 /// 一键归档：IMAP 移入服务器归档目录；POP3 移入本地「归档」虚拟目录。
@@ -646,9 +697,11 @@ async fn archive_message(
     folder: String,
     uid: u32,
 ) -> Result<(), String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::archive_message(&mut s, &account_id, &folder, uid, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::archive_message(&mut s, &account_id, &folder, uid, secret)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -659,9 +712,11 @@ async fn set_read(
     uid: u32,
     read: bool,
 ) -> Result<(), String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::set_read(&mut s, &account_id, &folder, &[uid], read, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::set_read(&mut s, &account_id, &folder, &[uid], read, secret)
+    })
+    .await
 }
 
 /// 批量标记已读/未读（「全部已读」一条连接完成）
@@ -673,9 +728,11 @@ async fn mark_read(
     uids: Vec<u32>,
     read: bool,
 ) -> Result<(), String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::set_read(&mut s, &account_id, &folder, &uids, read, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::set_read(&mut s, &account_id, &folder, &uids, read, secret)
+    })
+    .await
 }
 
 /// 星标/取消星标（IMAP \Flagged；POP3 仅本地记录）
@@ -687,9 +744,11 @@ async fn set_flagged(
     uid: u32,
     flagged: bool,
 ) -> Result<(), String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::set_flagged(&mut s, &account_id, &folder, uid, flagged, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::set_flagged(&mut s, &account_id, &folder, uid, flagged, secret)
+    })
+    .await
 }
 
 /// permanent=false（默认）：移入回收站，可恢复；permanent=true：物理删除（前端仅在回收站内确认后使用）
@@ -702,9 +761,11 @@ async fn delete_message(
     permanent: Option<bool>,
 ) -> Result<(), String> {
     let permanent = permanent.unwrap_or(false);
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::delete_message(&mut s, &account_id, &folder, uid, permanent, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::delete_message(&mut s, &account_id, &folder, uid, permanent, secret)
+    })
+    .await
 }
 
 /// 下载附件：优先用本地缓存的原文；缓存缺失时回源服务器
@@ -721,13 +782,17 @@ async fn save_attachment(
         let s = state.inner.lock().unwrap();
         db::get_raw(&s.db, &account_id, &folder, uid)?.is_some()
     };
-    let secret = if cached {
-        None
+    if cached {
+        let s = state.inner.lock().unwrap();
+        core::save_attachment(&s, &account_id, &folder, uid, index, &path, None).map(|_| ())
     } else {
-        Some(fresh_secret(&state, &account_id).await?)
-    };
-    let s = state.inner.lock().unwrap();
-    core::save_attachment(&s, &account_id, &folder, uid, index, &path, secret.as_ref()).map(|_| ())
+        with_oauth_retry(&state, &account_id, |secret| {
+            let s = state.inner.lock().unwrap();
+            core::save_attachment(&s, &account_id, &folder, uid, index, &path, Some(secret))
+                .map(|_| ())
+        })
+        .await
+    }
 }
 
 // ───────────────────────── send ─────────────────────────
@@ -754,19 +819,21 @@ async fn send_mail(
         let data = std::fs::read(&path).map_err(|e| format!("读取附件 {} 失败: {}", name, e))?;
         files.push((name, data));
     }
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::send_mail(
-        &mut s,
-        &account_id,
-        &secret,
-        to,
-        cc,
-        &subject,
-        &body,
-        sign,
-        files,
-    )
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::send_mail(
+            &mut s,
+            &account_id,
+            secret,
+            to.clone(),
+            cc.clone(),
+            &subject,
+            &body,
+            sign,
+            files.clone(),
+        )
+    })
+    .await
 }
 
 /// 联系人查询（写信自动补全）：按往来次数+最近往来排序，最多 8 条
@@ -816,9 +883,11 @@ async fn apply_filters(
     state: State<'_, AppState>,
     account_id: String,
 ) -> Result<core::ApplyResult, String> {
-    let secret = fresh_secret(&state, &account_id).await?;
-    let mut s = state.inner.lock().unwrap();
-    core::apply_filters(&mut s, &account_id, &secret)
+    with_oauth_retry(&state, &account_id, |secret| {
+        let mut s = state.inner.lock().unwrap();
+        core::apply_filters(&mut s, &account_id, secret)
+    })
+    .await
 }
 
 // ───────────────────────── trust ─────────────────────────

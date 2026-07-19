@@ -115,6 +115,14 @@ impl OAuthTokens {
     }
 }
 
+/// 判断错误是否为「服务器拒绝了 OAuth2 认证」。
+/// access_token 可能在本地 expires_at 之前就被服务器作废（改密码/安全事件/用户撤销授权），
+/// 这种错误单看本地过期时间永远不会触发刷新，必须强制刷新令牌后重试。
+/// 匹配依据：IMAP/POP3 客户端的 OAuth2 登录失败标记，以及 SMTP 535 认证被拒状态码。
+pub fn is_auth_rejected(err: &str) -> bool {
+    err.contains("OAuth2 登录失败") || err.contains("(535)")
+}
+
 /// XOAUTH2 SASL 初始响应（base64 前的原文）
 pub fn xoauth2_string(user: &str, access_token: &str) -> String {
     format!("user={}\x01auth=Bearer {}\x01\x01", user, access_token)
@@ -596,6 +604,29 @@ pub fn refresh_tokens_blocking(old: &OAuthTokens) -> Result<OAuthTokens, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_rejected_detection() {
+        // 线上真实错误：access_token 被服务器提前作废（改密码/撤销授权），本地 expires_at 未到期
+        assert!(is_auth_rejected(
+            "IMAP OAuth2 登录失败（授权可能已失效，请重新授权）: No Response: AUTHENTICATE failed."
+        ));
+        assert!(is_auth_rejected(
+            "POP3 OAuth2 登录失败（授权可能已失效，请重新授权）: ERR invalid credentials"
+        ));
+        // SMTP XOAUTH2 被拒（lettre 535 永久错误）
+        assert!(is_auth_rejected(
+            "发送失败: permanent error (535): 5.7.8 Username and Password not accepted"
+        ));
+        // 网络错误、普通密码登录失败不得触发强制刷新
+        assert!(!is_auth_rejected(
+            "无法连接 imap.gmail.com:993 — Connection refused (os error 61)"
+        ));
+        assert!(!is_auth_rejected(
+            "IMAP 登录失败（请检查用户名/密码或应用专用密码）: No Response: LOGIN failed."
+        ));
+        assert!(!is_auth_rejected("SMTP 连接失败: connection error"));
+    }
 
     #[test]
     fn xoauth2_sasl_format() {
