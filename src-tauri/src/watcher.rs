@@ -330,7 +330,12 @@ fn creds(
     if !force_refresh && !tokens.needs_refresh() {
         return Ok(Some((account, secret)));
     }
-    let refreshed = oauth::refresh_tokens_blocking(&tokens)?;
+    let refresh_result = oauth::refresh_tokens_blocking(&tokens);
+    let refreshed = if force_refresh {
+        refresh_result?
+    } else {
+        oauth::resolve_proactive_refresh(&tokens, refresh_result)?
+    };
     let s2 = app.state::<AppState>();
     let mut s = s2.lock();
     let Some(mut updated) = s.secrets.get(account_id).cloned() else {
@@ -350,6 +355,8 @@ fn account_exists(app: &AppHandle, account_id: &str) -> bool {
 fn watch_imap(app: &AppHandle, account_id: &str) {
     // 用 UIDNEXT 判断新邮件（EXISTS 在删信+收信对冲时会漏报）
     let mut last_uid_next: Option<u32> = None;
+    // UIDNEXT 是可选响应；缺失时用 EXISTS 做兼容兜底。
+    let mut last_exists: Option<u32> = None;
     let mut force_refresh = false;
     loop {
         let (account, secret) = match creds(app, account_id, force_refresh) {
@@ -362,7 +369,14 @@ fn watch_imap(app: &AppHandle, account_id: &str) {
             }
         };
         force_refresh = false;
-        if let Err(e) = idle_session(app, account_id, &account, &secret, &mut last_uid_next) {
+        if let Err(e) = idle_session(
+            app,
+            account_id,
+            &account,
+            &secret,
+            &mut last_uid_next,
+            &mut last_exists,
+        ) {
             eprintln!("[watcher] {} IDLE 连接中断: {}", account_id, e);
             // token 被服务器提前作废时，本地 expires_at 判断不出来，下一轮强制刷新
             force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
@@ -378,17 +392,26 @@ fn idle_session(
     account: &Account,
     secret: &AccountSecret,
     last_uid_next: &mut Option<u32>,
+    last_exists: &mut Option<u32>,
 ) -> Result<(), String> {
     let mut sess = imap_client::connect(account, secret)?;
     let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
     // UIDNEXT 是可选返回:缺失时新邮件推送整条链路会静默失效,必须留痕
     if mb.uid_next.is_none() {
         crate::logging::log(format!(
-            "[watcher] {account_id} EXAMINE 未返回 UIDNEXT,新邮件推送不可用"
+            "[watcher] {account_id} EXAMINE 未返回 UIDNEXT,改用 EXISTS 检测新邮件"
         ));
     }
-    let uid_next = mb.uid_next.unwrap_or(0);
-    maybe_emit_uid_next(app, account_id, uid_next, last_uid_next, account, secret);
+    maybe_emit_mailbox_change(
+        app,
+        account_id,
+        mb.uid_next,
+        mb.exists,
+        last_uid_next,
+        last_exists,
+        account,
+        secret,
+    );
     for _ in 0..IDLE_ROUNDS_PER_CONN {
         if !account_exists(app, account_id) {
             let _ = sess.logout();
@@ -400,36 +423,64 @@ fn idle_session(
             .wait_with_timeout(IDLE_ROUND)
             .map_err(|e| e.to_string())?;
         let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-        let uid_next = mb.uid_next.unwrap_or(0);
-        maybe_emit_uid_next(app, account_id, uid_next, last_uid_next, account, secret);
+        maybe_emit_mailbox_change(
+            app,
+            account_id,
+            mb.uid_next,
+            mb.exists,
+            last_uid_next,
+            last_exists,
+            account,
+            secret,
+        );
     }
     let _ = sess.logout();
     Ok(())
 }
 
-fn maybe_emit_uid_next(
+fn maybe_emit_mailbox_change(
     app: &AppHandle,
     account_id: &str,
-    uid_next: u32,
-    last: &mut Option<u32>,
+    uid_next: Option<u32>,
+    exists: u32,
+    last_uid_next: &mut Option<u32>,
+    last_exists: &mut Option<u32>,
     account: &Account,
     secret: &AccountSecret,
 ) {
-    if uid_next == 0 {
-        return;
+    if let Some(new_count) = mailbox_new_count(uid_next, exists, last_uid_next, last_exists) {
+        emit_new_mail(
+            app,
+            account_id,
+            new_count,
+            fetch_imap_notices(app, account, secret, new_count.min(3)),
+        );
     }
-    if let Some(prev) = *last {
-        if uid_next > prev {
-            let n = (uid_next - prev).min(3);
-            emit_new_mail(
-                app,
-                account_id,
-                uid_next - prev,
-                fetch_imap_notices(app, account, secret, n),
-            );
-        }
+}
+
+fn mailbox_new_count(
+    uid_next: Option<u32>,
+    exists: u32,
+    last_uid_next: &mut Option<u32>,
+    last_exists: &mut Option<u32>,
+) -> Option<u32> {
+    if let Some(current) = uid_next.filter(|value| *value > 0) {
+        let count = last_uid_next
+            .and_then(|previous| current.checked_sub(previous))
+            .filter(|count| *count > 0);
+        *last_uid_next = Some(current);
+        *last_exists = Some(exists);
+        return count;
     }
-    *last = Some(uid_next);
+
+    // 服务器不支持 UIDNEXT：用 EXISTS 做兼容兜底。切换计数器时清掉 UID 基线，
+    // 以后 UIDNEXT 恢复只重新建基线，不能重复通知 EXISTS 已报告的邮件。
+    *last_uid_next = None;
+    let count = last_exists
+        .and_then(|previous| exists.checked_sub(previous))
+        .filter(|count| *count > 0);
+    *last_exists = Some(exists);
+    count
 }
 
 /// POP3：用邮件数量差判断新邮件（协议无 UIDNEXT）
@@ -624,5 +675,22 @@ mod tests {
         assert!(take_pending_notification_target().is_none(), "过期目标不应被取走");
 
         clear_pending();
+    }
+
+    #[test]
+    fn mailbox_change_uses_exists_when_uidnext_is_missing() {
+        let mut last_uid_next = Some(41);
+        let mut last_exists = Some(10);
+        let count = mailbox_new_count(None, 12, &mut last_uid_next, &mut last_exists);
+        assert_eq!(count, Some(2));
+        assert_eq!(last_uid_next, None, "切到 EXISTS 后应重置 UIDNEXT 基线，避免恢复时重复通知");
+        assert_eq!(last_exists, Some(12));
+
+        // UIDNEXT 恢复时只建立新基线，不重复发送刚才 EXISTS 已报告的两封。
+        assert_eq!(
+            mailbox_new_count(Some(44), 12, &mut last_uid_next, &mut last_exists),
+            None
+        );
+        assert_eq!(last_uid_next, Some(44));
     }
 }

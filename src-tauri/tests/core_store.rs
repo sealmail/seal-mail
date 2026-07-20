@@ -613,3 +613,22 @@ fn truncated_empty_accounts_json_blocks_load_with_backup() {
     assert!(!backups.is_empty(), "应留下 .corrupt 备份");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn corrupt_noncritical_contacts_json_is_backed_up_and_recovers() {
+    let (dir, store) = load_store("corrupt-contacts-recovery");
+    drop(store);
+    std::fs::write(dir.join("contacts.json"), "{not valid json").unwrap();
+
+    let reloaded = StoreData::load(dir.clone())
+        .expect("a corrupt contacts cache must not prevent the app from starting");
+    assert!(reloaded.contacts.is_empty());
+    let backups: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("contacts") && n.contains("corrupt"))
+        .collect();
+    assert!(!backups.is_empty(), "应留下 contacts.json.corrupt 备份");
+    let _ = std::fs::remove_dir_all(&dir);
+}

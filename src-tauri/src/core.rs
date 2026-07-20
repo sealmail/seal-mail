@@ -348,17 +348,16 @@ pub fn save_account(
 ) -> Result<Account, String> {
     s.accounts.retain(|a| a.id != account.id);
     s.accounts.push(account.clone());
-    s.secrets.insert(account.id.clone(), secret);
     s.save_accounts()?;
-    s.save_secrets()?;
+    s.secrets = crate::secrets_store::update_account(&s.dir, &account.id, Some(secret))?;
     Ok(account)
 }
 
 pub fn remove_account(s: &mut StoreData, account_id: String) -> Result<(), String> {
     s.accounts.retain(|a| a.id != account_id);
-    s.secrets.remove(&account_id);
     s.save_accounts()?;
-    s.save_secrets()
+    s.secrets = crate::secrets_store::update_account(&s.dir, &account_id, None)?;
+    Ok(())
 }
 
 pub fn list_folders(s: &StoreData, account_id: &str) -> Result<Vec<FolderInfo>, String> {

@@ -113,6 +113,23 @@ impl OAuthTokens {
     pub fn needs_refresh(&self) -> bool {
         self.expires_at - 120 <= now_unix()
     }
+
+    pub fn is_expired(&self) -> bool {
+        self.expires_at <= now_unix()
+    }
+}
+
+/// 提前刷新只是优化：刷新端点短时故障时，尚未过期的 access token 仍可继续尝试邮件操作。
+/// 真正过期的 token 不能复用；服务器明确拒绝后的强制刷新也不走此降级。
+pub fn resolve_proactive_refresh(
+    current: &OAuthTokens,
+    result: Result<OAuthTokens, String>,
+) -> Result<OAuthTokens, String> {
+    match result {
+        Ok(tokens) => Ok(tokens),
+        Err(_) if !current.is_expired() => Ok(current.clone()),
+        Err(e) => Err(e),
+    }
 }
 
 /// 判断错误是否为「服务器拒绝了 OAuth2 认证」。
@@ -626,6 +643,36 @@ mod tests {
             "IMAP 登录失败（请检查用户名/密码或应用专用密码）: No Response: LOGIN failed."
         ));
         assert!(!is_auth_rejected("SMTP 连接失败: connection error"));
+    }
+
+    #[test]
+    fn proactive_refresh_failure_keeps_a_still_valid_token() {
+        let current = OAuthTokens {
+            access_token: "still-valid".into(),
+            refresh_token: "refresh".into(),
+            expires_at: now_unix() + 30,
+            client_id: "client".into(),
+            client_secret: None,
+            provider: "microsoft".into(),
+        };
+        assert!(current.needs_refresh());
+        let kept = resolve_proactive_refresh(&current, Err("token endpoint offline".into())).unwrap();
+        assert_eq!(kept.access_token, "still-valid");
+    }
+
+    #[test]
+    fn proactive_refresh_failure_rejects_an_expired_token() {
+        let current = OAuthTokens {
+            access_token: "expired".into(),
+            refresh_token: "refresh".into(),
+            expires_at: now_unix() - 1,
+            client_id: "client".into(),
+            client_secret: None,
+            provider: "microsoft".into(),
+        };
+        let err = resolve_proactive_refresh(&current, Err("token endpoint offline".into()))
+            .expect_err("expired token must not be reused");
+        assert!(err.contains("offline"));
     }
 
     #[test]

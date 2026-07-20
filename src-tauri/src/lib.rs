@@ -526,7 +526,12 @@ async fn fresh_secret(
     if !tokens.needs_refresh() {
         return Ok(secret);
     }
-    force_refresh_secret(state, account_id).await
+    let refreshed = oauth::resolve_proactive_refresh(tokens, oauth::refresh_tokens(tokens).await)?;
+    let mut updated = secret;
+    updated.oauth = Some(refreshed);
+    let mut s = state.lock();
+    s.update_secret(account_id, updated.clone())?;
+    Ok(updated)
 }
 
 /// 无视本地过期时间，强制刷新 OAuth 令牌并回写 secrets.json。

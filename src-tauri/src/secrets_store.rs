@@ -13,7 +13,7 @@
 use crate::models::AccountSecret;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
 const SERVICE: &str = "com.sealmail.app";
@@ -167,6 +167,51 @@ pub fn save(dir: &Path, map: &HashMap<String, AccountSecret>) -> Result<(), Stri
     save_with(&SystemKeychain, dir, map)
 }
 
+/// 在跨进程锁内更新单个账户，避免两个 CLI 各自读旧整表后互相覆盖新 token。
+pub fn update_account(
+    dir: &Path,
+    account_id: &str,
+    secret: Option<AccountSecret>,
+) -> Result<HashMap<String, AccountSecret>, String> {
+    update_account_with(&SystemKeychain, dir, account_id, secret)
+}
+
+fn update_account_with(
+    kc: &dyn KeychainBackend,
+    dir: &Path,
+    account_id: &str,
+    secret: Option<AccountSecret>,
+) -> Result<HashMap<String, AccountSecret>, String> {
+    use fs2::FileExt;
+
+    fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    let lock_path = dir.join("secrets.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+        .map_err(|e| format!("打开凭据锁失败: {e}"))?;
+    lock.lock_exclusive()
+        .map_err(|e| format!("获取凭据锁失败: {e}"))?;
+
+    let result = (|| {
+        let mut latest = load_with(kc, dir)?;
+        match secret {
+            Some(value) => {
+                latest.insert(account_id.to_string(), value);
+            }
+            None => {
+                latest.remove(account_id);
+            }
+        }
+        save_with(kc, dir, &latest)?;
+        Ok(latest)
+    })();
+    let _ = lock.unlock();
+    result
+}
+
 pub(crate) fn save_with(
     kc: &dyn KeychainBackend,
     dir: &Path,
@@ -242,6 +287,23 @@ mod tests {
             }
             *self.data.borrow_mut() = Some(map.clone());
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FileOnlyKeychain;
+
+    impl KeychainBackend for FileOnlyKeychain {
+        fn read(&self, _dir: &Path) -> Result<Option<HashMap<String, AccountSecret>>, String> {
+            Err("keychain unavailable".into())
+        }
+
+        fn write(
+            &self,
+            _dir: &Path,
+            _map: &HashMap<String, AccountSecret>,
+        ) -> Result<(), String> {
+            Err("keychain unavailable".into())
         }
     }
 
@@ -370,6 +432,76 @@ mod tests {
             Ok(FileState::Marker) => panic!("混合文件被误判为 marker,账户数据会被丢弃"),
             _ => {}
         }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn concurrent_account_updates_preserve_both_changes() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = temp();
+        write_file_map(&dir, &map_of("base", "base-pw")).unwrap();
+        let start = Arc::new(Barrier::new(3));
+        let mut joins = Vec::new();
+        for (id, pw) in [("a1", "pw1"), ("a2", "pw2")] {
+            let dir = dir.clone();
+            let start = start.clone();
+            joins.push(std::thread::spawn(move || {
+                start.wait();
+                update_account_with(&FileOnlyKeychain, &dir, id, Some(secret(pw))).unwrap();
+            }));
+        }
+        start.wait();
+        for join in joins {
+            join.join().unwrap();
+        }
+
+        let loaded = load_with(&FileOnlyKeychain, &dir).unwrap();
+        assert_eq!(loaded.get("base").unwrap().password, "base-pw");
+        assert_eq!(loaded.get("a1").unwrap().password, "pw1");
+        assert_eq!(loaded.get("a2").unwrap().password, "pw2");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn account_update_waits_for_an_existing_process_lock() {
+        use fs2::FileExt;
+        use std::fs::OpenOptions;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = temp();
+        write_file_map(&dir, &map_of("base", "base-pw")).unwrap();
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(dir.join("secrets.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let update_dir = dir.clone();
+        let join = std::thread::spawn(move || {
+            let result = update_account_with(
+                &FileOnlyKeychain,
+                &update_dir,
+                "a1",
+                Some(secret("pw1")),
+            );
+            done_tx.send(result).unwrap();
+        });
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "并发更新必须等待已有的跨进程锁"
+        );
+
+        lock.unlock().unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("释放锁后更新应完成")
+            .unwrap();
+        join.join().unwrap();
         let _ = fs::remove_dir_all(dir);
     }
 }

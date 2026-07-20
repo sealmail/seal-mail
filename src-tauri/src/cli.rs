@@ -167,7 +167,10 @@ fn account_secret(core: &mut Core, account_id: &str) -> Result<AccountSecret, St
     if !tokens.needs_refresh() {
         return Ok(secret);
     }
-    let refreshed = crate::oauth::refresh_tokens_blocking(&tokens)?;
+    let refreshed = crate::oauth::resolve_proactive_refresh(
+        &tokens,
+        crate::oauth::refresh_tokens_blocking(&tokens),
+    )?;
     secret.oauth = Some(refreshed);
     core.data.update_secret(account_id, secret.clone())?;
     Ok(secret)

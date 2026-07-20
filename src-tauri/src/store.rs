@@ -94,6 +94,18 @@ fn read_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
     }
 }
 
+/// 非关键本地辅助数据损坏时，read_json 已先备份原文件；记录后用默认值继续启动。
+/// accounts / secrets / trusted / identity 等身份与安全数据仍走硬失败。
+fn read_json_recoverable<T: DeserializeOwned + Default>(path: &Path) -> T {
+    match read_json(path) {
+        Ok(value) => value,
+        Err(e) => {
+            crate::logging::log(format!("[store] {e}; 已用默认值恢复启动"));
+            T::default()
+        }
+    }
+}
+
 fn corrupt_backup_path(path: &Path) -> PathBuf {
     let name = path
         .file_name()
@@ -161,14 +173,14 @@ impl StoreData {
             db,
             accounts: read_json(&dir.join("accounts.json"))?,
             secrets: secrets_store::load(&dir)?,
-            filters: read_json(&dir.join("filters.json"))?,
+            filters: read_json_recoverable(&dir.join("filters.json")),
             trusted: read_json(&dir.join("trusted.json"))?,
-            local_folders: read_json(&dir.join("local_folders.json"))?,
-            hidden_folders: read_json(&dir.join("hidden_folders.json"))?,
-            local_assign: read_json(&dir.join("local_assign.json"))?,
-            local_read: read_json(&dir.join("local_read.json"))?,
-            contacts: read_json(&dir.join("contacts.json"))?,
-            drafts: read_json(&dir.join("drafts.json"))?,
+            local_folders: read_json_recoverable(&dir.join("local_folders.json")),
+            hidden_folders: read_json_recoverable(&dir.join("hidden_folders.json")),
+            local_assign: read_json_recoverable(&dir.join("local_assign.json")),
+            local_read: read_json_recoverable(&dir.join("local_read.json")),
+            contacts: read_json_recoverable(&dir.join("contacts.json")),
+            drafts: read_json_recoverable(&dir.join("drafts.json")),
             identity_config: read_json(&dir.join("identity.json"))?,
             prefs,
             mail_cache: HashMap::new(),
@@ -256,11 +268,7 @@ impl StoreData {
     /// 合并更新单个账户凭据。GUI 常驻进程的内存状态可能落后于 CLI 子进程；
     /// 写入前必须重读磁盘，避免 OAuth 刷新把后来新增的账户凭据整表覆盖掉。
     pub fn update_secret(&mut self, account_id: &str, secret: AccountSecret) -> Result<(), String> {
-        // 重读最新（钥匙串或文件），避免多进程覆盖
-        let mut latest = secrets_store::load(&self.dir)?;
-        latest.insert(account_id.to_string(), secret);
-        secrets_store::save(&self.dir, &latest)?;
-        self.secrets = latest;
+        self.secrets = secrets_store::update_account(&self.dir, account_id, Some(secret))?;
         Ok(())
     }
     pub fn save_filters(&self) -> Result<(), String> {
