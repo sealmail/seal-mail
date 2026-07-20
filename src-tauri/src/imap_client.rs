@@ -449,7 +449,57 @@ pub fn sync_fetch(
     })
 }
 
+/// 在按序列号升序的 UID 列表中，找第一个 `uid >= target` 的下标；若全小于 target 返回 len。
+/// 供二分探测单测；与 IMAP 序列号 1..N 对齐时，下标 i 对应序列号 i+1。
+pub fn first_index_uid_ge(uids_asc_by_seq: &[u32], target: u32) -> usize {
+    let mut lo = 0usize;
+    let mut hi = uids_asc_by_seq.len();
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if uids_asc_by_seq[mid] >= target {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+fn uid_at_sequence(sess: &mut ImapSession, seq: u32) -> Result<u32, String> {
+    let fetches = sess
+        .fetch(seq.to_string(), "UID")
+        .map_err(|e| format!("探测邮件序列失败: {}", e))?;
+    fetches
+        .iter()
+        .find_map(|f| f.uid)
+        .ok_or_else(|| format!("序列 {seq} 无 UID"))
+}
+
+/// 二分：第一个 UID ≥ `before` 的序列号；若全部更小则返回 `exists + 1`。
+fn first_seq_with_uid_ge(sess: &mut ImapSession, exists: u32, before: u32) -> Result<u32, String> {
+    let mut lo = 1u32;
+    let mut hi = exists;
+    let mut ans = exists + 1;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let uid = uid_at_sequence(sess, mid)?;
+        if uid >= before {
+            ans = mid;
+            if mid == 1 {
+                break;
+            }
+            hi = mid - 1;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    Ok(ans)
+}
+
 /// 从当前本地最早 UID 之前继续回填更早邮件。返回值按服务器返回顺序排列。
+///
+/// 用序列号二分定位边界（O(log N) 次轻量 FETCH UID），再只拉一批正文——
+/// 避免旧实现对 `UID 1:N` 全目录探测导致的 O(N) 灾难。
 pub fn fetch_older(
     account: &Account,
     secret: &AccountSecret,
@@ -464,37 +514,36 @@ pub fn fetch_older(
         return Ok(Vec::new());
     }
     let mut sess = connect(account, secret)?;
-    sess.select(folder)
+    let mailbox = sess
+        .select(folder)
         .map_err(|e| format!("无法打开目录 {}: {}", folder, e))?;
-
-    let probe = sess
-        .uid_fetch(format!("1:{}", before - 1), "UID")
-        .map_err(|e| format!("探测更早邮件失败: {}", e))?;
-    let mut uids: Vec<u32> = probe
-        .iter()
-        .filter_map(|f| f.uid)
-        .filter(|u| *u < before)
-        .collect();
-    uids.sort_unstable_by(|a, b| b.cmp(a));
-    uids.truncate(batch as usize);
-    if uids.is_empty() {
+    let exists = mailbox.exists;
+    if exists == 0 {
         let _ = sess.logout();
         return Ok(Vec::new());
     }
-    uids.sort_unstable();
-    let set = uids
-        .iter()
-        .map(|u| u.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
+
+    let boundary = first_seq_with_uid_ge(&mut sess, exists, before)?;
+    if boundary <= 1 {
+        let _ = sess.logout();
+        return Ok(Vec::new());
+    }
+    let end_seq = boundary - 1;
+    let start_seq = end_seq.saturating_sub(batch.saturating_sub(1)).max(1);
     let fetches = sess
-        .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
+        .fetch(
+            format!("{start_seq}:{end_seq}"),
+            "(UID FLAGS BODY.PEEK[])",
+        )
         .map_err(|e| format!("拉取更早邮件失败: {}", e))?;
     let mut mails = Vec::new();
     for f in fetches.iter() {
         let (Some(uid), Some(raw)) = (f.uid, f.body()) else {
             continue;
         };
+        if uid >= before {
+            continue;
+        }
         let (unread, flagged) = flags_of(f);
         mails.push(RawMail {
             uid,
@@ -763,7 +812,19 @@ pub fn delete_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_mutf7, encode_mutf7, folder_is_visible, imap_parse_error_detail};
+    use super::{
+        decode_mutf7, encode_mutf7, first_index_uid_ge, folder_is_visible, imap_parse_error_detail,
+    };
+
+    #[test]
+    fn first_index_uid_ge_finds_boundary_for_fetch_older() {
+        // 序列 1..5 对应 UID；本地已缓存 min_uid=100 → 只要更早的 10,20,30
+        let uids = [10u32, 20, 30, 100, 200];
+        assert_eq!(first_index_uid_ge(&uids, 100), 3);
+        assert_eq!(first_index_uid_ge(&uids, 10), 0);
+        assert_eq!(first_index_uid_ge(&uids, 201), 5);
+        assert_eq!(first_index_uid_ge(&uids, 25), 2);
+    }
 
     #[test]
     fn imap_parse_error_detail_escapes_raw_response() {

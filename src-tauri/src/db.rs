@@ -48,6 +48,9 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
     // GUI 进程（后台补全/监听）与 CLI 子进程会并发读写同一个库，
     // 撞锁时等待重试而不是直接报 database is locked
     let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+    // GUI、CLI 子进程、watcher、meta 回填并发读写同一库；WAL 允许多读一写，避免回滚日志模式写事务独占把 list 卡到 busy_timeout
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| format!("启用 WAL 失败: {e}"))?;
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("初始化邮件缓存失败: {e}"))?;
     // 旧库补充 meta_json 列（列已存在时 ALTER 会报错，忽略即可——这是安全的幂等迁移）
@@ -588,6 +591,18 @@ pub fn pop_next_uid(conn: &Connection, account: &str) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opens_with_wal_journal_mode() {
+        let dir = std::env::temp_dir().join(format!("sealmail-db-wal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = open(&dir).unwrap();
+        let mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn roundtrip_and_paging() {

@@ -13,8 +13,10 @@ pub mod mail;
 pub mod models;
 pub mod oauth;
 pub mod pop3_client;
+pub mod secrets_store;
 pub mod smtp_client;
 pub mod store;
+pub mod sync_lock;
 pub mod updater;
 pub mod watcher;
 
@@ -61,7 +63,7 @@ fn spawn_meta_backfill(app: AppHandle) {
         loop {
             META_BACKFILL_DIRTY.store(false, Ordering::SeqCst);
             let targets = {
-                let s = state.inner.lock().unwrap();
+                let s = state.lock();
                 db::missing_meta_targets(&s.db).unwrap_or_default()
             };
             if targets.is_empty() {
@@ -89,7 +91,7 @@ fn spawn_meta_backfill(app: AppHandle) {
                 let mut cursor = 0u32;
                 loop {
                     let batch = {
-                        let mut s = state.inner.lock().unwrap();
+                        let mut s = state.lock();
                         core::backfill_meta_batch(&mut s, &account_id, &folder, cursor, 40)
                     };
                     match batch {
@@ -216,10 +218,17 @@ async fn cli_json(
         t0.elapsed().as_millis(),
         result.is_ok()
     ));
-    // 偏好由 CLI 子进程写盘：成功后把 GUI 常驻进程的内存态一并刷新，
-    // 否则 close_behavior/notify/language 要重启才生效
-    if result.is_ok() && brief.starts_with("pref") {
-        refresh_prefs_in_memory(&app2);
+    // CLI 子进程写盘后，把 GUI 常驻进程的内存态一并刷新
+    if result.is_ok() {
+        if brief.starts_with("pref") {
+            refresh_prefs_in_memory(&app2);
+        }
+        // 加/删账户：刷新账户+凭据并补齐 watcher（否则新账户收不到推送）。
+        // 只在写操作后刷新:account list/test 也以 "account" 开头,
+        // 不能每次列账户都重读钥匙串+重建 watcher
+        if brief.starts_with("account add") || brief.starts_with("account remove") {
+            refresh_accounts_in_memory(&app2);
+        }
     }
     result
 }
@@ -228,10 +237,65 @@ fn refresh_prefs_in_memory(app: &AppHandle) {
     let Ok(dir) = app.path().app_config_dir() else {
         return;
     };
-    let prefs = store::StoreData::load_prefs(&dir);
+    // prefs 损坏时不覆盖内存态，避免把用户当前会话偏好清掉
+    let Ok(prefs) = store::StoreData::load_prefs(&dir) else {
+        return;
+    };
     crate::i18n::set_lang_from_pref(&prefs.language);
     if let Some(state) = app.try_state::<AppState>() {
-        state.inner.lock().unwrap().prefs = prefs;
+        state.lock().prefs = prefs;
+    }
+}
+
+fn refresh_accounts_in_memory(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let mut s = state.lock();
+        if let Err(e) = s.reload_accounts_and_secrets_from_disk() {
+            logging::log(format!("[accounts] 刷新内存账户失败: {e}"));
+            return;
+        }
+        logging::log(format!(
+            "[accounts] 已从磁盘刷新 {} 个账户",
+            s.accounts.len()
+        ));
+    }
+    watcher::ensure_watchers(app);
+}
+
+/// 前端经 cli_json 注入的环境变量白名单。禁止 DYLD_*/LD_*/PATH 等，避免 XSS→RCE 放大器。
+fn is_allowed_cli_env_key(key: &str) -> bool {
+    if key.trim().is_empty() || key.contains('=') || key.contains('\0') {
+        return false;
+    }
+    // 动态链接劫持 / 注入类
+    let upper = key.to_ascii_uppercase();
+    if upper.starts_with("DYLD_")
+        || upper.starts_with("LD_")
+        || upper == "PATH"
+        || upper == "DYLD_INSERT_LIBRARIES"
+        || upper == "LD_PRELOAD"
+        || upper == "LD_LIBRARY_PATH"
+    {
+        return false;
+    }
+    // 仅允许应用自己的配置键
+    key.starts_with("SEALMAIL_")
+}
+
+#[cfg(test)]
+mod cli_env_tests {
+    use super::is_allowed_cli_env_key;
+
+    #[test]
+    fn allows_sealmail_keys_only() {
+        assert!(is_allowed_cli_env_key("SEALMAIL_CONFIG_DIR"));
+        assert!(is_allowed_cli_env_key("SEALMAIL_PASSWORD"));
+        assert!(!is_allowed_cli_env_key("DYLD_INSERT_LIBRARIES"));
+        assert!(!is_allowed_cli_env_key("LD_PRELOAD"));
+        assert!(!is_allowed_cli_env_key("PATH"));
+        assert!(!is_allowed_cli_env_key(""));
+        assert!(!is_allowed_cli_env_key("FOO=BAR"));
+        assert!(!is_allowed_cli_env_key("HOME"));
     }
 }
 
@@ -258,8 +322,10 @@ fn cli_json_inner(
     }
     if let Some(env) = env {
         for (key, value) in env {
-            if key.trim().is_empty() || key.contains('=') || key.contains('\0') {
-                return Err("CLI env key 无效".into());
+            if !is_allowed_cli_env_key(&key) {
+                return Err(format!(
+                    "CLI env 键不允许: {key}（仅 SEALMAIL_* 与白名单调试键）"
+                ));
             }
             command.env(key, value);
         }
@@ -307,7 +373,7 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 
 #[tauri::command]
 fn get_state(state: State<'_, AppState>) -> Result<AppStateView, String> {
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     Ok(core::state_view(&s))
 }
 
@@ -347,13 +413,13 @@ fn bind_ledger(
     path: String,
     address: String,
 ) -> Result<IdentityInfo, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::bind_ledger(&mut s, path, address)
 }
 
 #[tauri::command]
 fn use_local_key(state: State<'_, AppState>) -> Result<IdentityInfo, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::use_local_key(&mut s)
 }
 
@@ -361,25 +427,25 @@ fn use_local_key(state: State<'_, AppState>) -> Result<IdentityInfo, String> {
 
 #[tauri::command]
 fn get_close_behavior(state: State<'_, AppState>) -> String {
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     core::get_close_behavior(&s)
 }
 
 #[tauri::command]
 fn set_close_behavior(state: State<'_, AppState>, behavior: String) -> Result<String, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::set_close_behavior(&mut s, behavior)
 }
 
 #[tauri::command]
 fn get_notify_new_mail(state: State<'_, AppState>) -> bool {
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     core::get_notify_new_mail(&s)
 }
 
 #[tauri::command]
 fn set_notify_new_mail(state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::set_notify_new_mail(&mut s, enabled)
 }
 
@@ -451,7 +517,7 @@ async fn fresh_secret(
     account_id: &str,
 ) -> Result<AccountSecret, String> {
     let secret = {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         s.secret(account_id)?
     };
     let Some(tokens) = &secret.oauth else {
@@ -460,7 +526,17 @@ async fn fresh_secret(
     if !tokens.needs_refresh() {
         return Ok(secret);
     }
-    force_refresh_secret(state, account_id).await
+    let refreshed = oauth::resolve_proactive_refresh(tokens, oauth::refresh_tokens(tokens).await)?;
+    if refreshed == *tokens {
+        // 提前刷新失败沿用了未过期的旧令牌：不能回写——另一进程可能刚轮换
+        // refresh_token 落盘，旧值写回会把新凭据顶掉（见 cli.rs account_secret）。
+        return Ok(secret);
+    }
+    let mut updated = secret;
+    updated.oauth = Some(refreshed);
+    let mut s = state.lock();
+    s.update_secret(account_id, updated.clone())?;
+    Ok(updated)
 }
 
 /// 无视本地过期时间，强制刷新 OAuth 令牌并回写 secrets.json。
@@ -470,14 +546,14 @@ async fn force_refresh_secret(
     account_id: &str,
 ) -> Result<AccountSecret, String> {
     let secret = {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         s.secret(account_id)?
     };
     let Some(tokens) = &secret.oauth else {
         return Ok(secret);
     };
     let refreshed = oauth::refresh_tokens(tokens).await?;
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     let mut updated = s
         .secrets
         .get(account_id)
@@ -533,7 +609,7 @@ async fn add_account(
         .await
         .map_err(|e| e.to_string())??;
     let saved = {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::save_account(&mut s, account, secret)?
     };
     watcher::ensure_watchers(&app);
@@ -542,7 +618,7 @@ async fn add_account(
 
 #[tauri::command]
 fn remove_account(state: State<'_, AppState>, account_id: String) -> Result<(), String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::remove_account(&mut s, account_id)
 }
 
@@ -554,7 +630,7 @@ async fn list_folders(
     account_id: String,
 ) -> Result<Vec<FolderInfo>, String> {
     with_oauth_retry(&state, &account_id, |_| {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         core::list_folders(&s, &account_id)
     })
     .await
@@ -567,7 +643,7 @@ async fn create_folder(
     name: String,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |_| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::create_folder(&mut s, &account_id, name.clone())
     })
     .await
@@ -580,7 +656,7 @@ async fn delete_folder(
     name: String,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |_| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::delete_folder(&mut s, &account_id, &name)
     })
     .await
@@ -598,7 +674,7 @@ fn list_cached(
     offset: u32,
     limit: u32,
 ) -> Result<core::CachedList, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     let list = core::list_cached(&mut s, &account_id, &folder, offset, limit)?;
     let has_stub = list.metas.iter().any(core::is_stub_meta);
     drop(s);
@@ -613,6 +689,8 @@ fn list_cached(
 struct SyncResult {
     added: u32,
     total: i64,
+    /// UIDVALIDITY 变化导致本地该目录缓存被清空重建（前端据此整表刷新）
+    uidvalidity_reset: bool,
 }
 
 /// 与服务器增量同步：只下载新邮件；回扫最近窗口的已读/星标并检测服务器侧删除
@@ -623,13 +701,14 @@ async fn sync_messages(
     folder: String,
 ) -> Result<SyncResult, String> {
     let result = with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::sync_messages(&mut s, &account_id, &folder, secret)
     })
     .await?;
     Ok(SyncResult {
         added: result.added,
         total: result.total,
+        uidvalidity_reset: result.uidvalidity_reset,
     })
 }
 
@@ -641,13 +720,14 @@ async fn sync_older_messages(
     folder: String,
 ) -> Result<SyncResult, String> {
     let result = with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::sync_older_messages(&mut s, &account_id, &folder, secret)
     })
     .await?;
     Ok(SyncResult {
         added: result.added,
         total: result.total,
+        uidvalidity_reset: result.uidvalidity_reset,
     })
 }
 
@@ -658,7 +738,7 @@ fn get_message(
     folder: String,
     uid: u32,
 ) -> Result<EmailFull, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::get_message(&mut s, &account_id, &folder, uid)
 }
 
@@ -670,7 +750,7 @@ fn list_thread(
     folder: String,
     thread_id: String,
 ) -> Result<Vec<EmailMeta>, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::list_thread(&mut s, &account_id, &folder, &thread_id)
 }
 
@@ -683,7 +763,7 @@ async fn move_message(
     target: String,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::move_message(&mut s, &account_id, &folder, uid, &target, secret)
     })
     .await
@@ -698,7 +778,7 @@ async fn archive_message(
     uid: u32,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::archive_message(&mut s, &account_id, &folder, uid, secret)
     })
     .await
@@ -713,7 +793,7 @@ async fn set_read(
     read: bool,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::set_read(&mut s, &account_id, &folder, &[uid], read, secret)
     })
     .await
@@ -729,7 +809,7 @@ async fn mark_read(
     read: bool,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::set_read(&mut s, &account_id, &folder, &uids, read, secret)
     })
     .await
@@ -745,7 +825,7 @@ async fn set_flagged(
     flagged: bool,
 ) -> Result<(), String> {
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::set_flagged(&mut s, &account_id, &folder, uid, flagged, secret)
     })
     .await
@@ -762,7 +842,7 @@ async fn delete_message(
 ) -> Result<(), String> {
     let permanent = permanent.unwrap_or(false);
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::delete_message(&mut s, &account_id, &folder, uid, permanent, secret)
     })
     .await
@@ -779,15 +859,15 @@ async fn save_attachment(
     path: String,
 ) -> Result<(), String> {
     let cached = {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         db::get_raw(&s.db, &account_id, &folder, uid)?.is_some()
     };
     if cached {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         core::save_attachment(&s, &account_id, &folder, uid, index, &path, None).map(|_| ())
     } else {
         with_oauth_retry(&state, &account_id, |secret| {
-            let s = state.inner.lock().unwrap();
+            let s = state.lock();
             core::save_attachment(&s, &account_id, &folder, uid, index, &path, Some(secret))
                 .map(|_| ())
         })
@@ -820,7 +900,7 @@ async fn send_mail(
         files.push((name, data));
     }
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::send_mail(
             &mut s,
             &account_id,
@@ -839,7 +919,7 @@ async fn send_mail(
 /// 联系人查询（写信自动补全）：按往来次数+最近往来排序，最多 8 条
 #[tauri::command]
 fn list_contacts(state: State<'_, AppState>, query: Option<String>) -> Vec<Contact> {
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     core::list_contacts(&s, query)
 }
 
@@ -847,19 +927,19 @@ fn list_contacts(state: State<'_, AppState>, query: Option<String>) -> Vec<Conta
 
 #[tauri::command]
 fn list_drafts(state: State<'_, AppState>) -> Vec<Draft> {
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     core::list_drafts(&s)
 }
 
 #[tauri::command]
 fn save_draft(state: State<'_, AppState>, draft: Draft) -> Result<Draft, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::save_draft(&mut s, draft)
 }
 
 #[tauri::command]
 fn delete_draft(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::delete_draft(&mut s, id)
 }
 
@@ -867,13 +947,13 @@ fn delete_draft(state: State<'_, AppState>, id: String) -> Result<(), String> {
 
 #[tauri::command]
 fn save_filter(state: State<'_, AppState>, rule: FilterRule) -> Result<Vec<FilterRule>, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::save_filter(&mut s, rule)
 }
 
 #[tauri::command]
 fn delete_filter(state: State<'_, AppState>, id: String) -> Result<Vec<FilterRule>, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     core::delete_filter(&mut s, id)
 }
 
@@ -884,7 +964,7 @@ async fn apply_filters(
     account_id: String,
 ) -> Result<core::ApplyResult, String> {
     with_oauth_retry(&state, &account_id, |secret| {
-        let mut s = state.inner.lock().unwrap();
+        let mut s = state.lock();
         core::apply_filters(&mut s, &account_id, secret)
     })
     .await
@@ -901,7 +981,7 @@ fn trust_sender(
     fingerprint: String,
     org: Option<String>,
 ) -> Result<Vec<TrustedContact>, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     let list = core::trust_sender(&mut s, name, email, fingerprint, org)?;
     drop(s);
     // 信任关系变化会清空 meta_json，立刻唤醒后台回填，避免列表长期「…」
@@ -915,7 +995,7 @@ fn remove_trusted(
     state: State<'_, AppState>,
     email: String,
 ) -> Result<Vec<TrustedContact>, String> {
-    let mut s = state.inner.lock().unwrap();
+    let mut s = state.lock();
     let list = core::remove_trusted(&mut s, email)?;
     drop(s);
     spawn_meta_backfill(app);
@@ -1007,7 +1087,7 @@ pub fn run() {
                 let hide = window
                     .app_handle()
                     .try_state::<AppState>()
-                    .map(|st| st.inner.lock().unwrap().prefs.close_behavior == "hide")
+                    .map(|st| st.lock().prefs.close_behavior == "hide")
                     .unwrap_or(false);
                 if hide {
                     api.prevent_close();

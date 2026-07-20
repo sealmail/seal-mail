@@ -55,7 +55,7 @@ const scenarioChecks = [
       ["src/components/ComposeModal.tsx", "正文…"],
       ["src/components/ComposeModal.tsx", "添加附件"],
       ["src/components/ComposeModal.tsx", "撤销发送"],
-      ["src/components/ComposeModal.tsx", "立即发送"],
+      ["src/components/ComposeModal.tsx", "等待发送"],
       ["src/components/ComposeModal.tsx", "已签名并发送"],
       ["src/components/ComposeModal.tsx", "已发送（未签名）"],
     ],

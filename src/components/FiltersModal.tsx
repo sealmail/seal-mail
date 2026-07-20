@@ -224,7 +224,7 @@ export function FiltersModal(p: Props) {
                   type="checkbox"
                   checked={editing.markRead}
                   onChange={(e) => setEditing({ ...editing, markRead: e.target.checked })}
-                  style={{ accentColor: "#1E6B49" }}
+                  style={{ accentColor: "var(--tone-jade)" }}
                 />
                 {t("移动后标为已读")}
               </label>

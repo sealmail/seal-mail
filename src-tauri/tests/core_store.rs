@@ -1,6 +1,7 @@
-use sealmail_lib::core;
+use sealmail_lib::core::{self, imap_should_delete_missing_uid, pop3_inbox_rows_gone_from_server};
 use sealmail_lib::models::*;
 use sealmail_lib::store::StoreData;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -72,6 +73,162 @@ fn updating_one_secret_preserves_accounts_added_by_another_process() {
         reloaded.secret("qq").unwrap().password,
         "qq-authorization-code",
         "refreshing stale GUI state must not delete a credential added by the CLI"
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+/// 凭据损坏/钥匙串优先：保存后即使 secrets.json 被截断，加载仍应恢复出真凭据（钥匙串或备份）。
+#[test]
+fn corrupt_secrets_json_must_not_load_as_empty() {
+    let (dir, mut store) = load_store("corrupt-secrets-load");
+    store.secrets.insert(
+        "acc1".into(),
+        AccountSecret {
+            password: "must-not-be-wiped".into(),
+            smtp_password: None,
+            oauth: None,
+        },
+    );
+    store.save_secrets().expect("seed secrets");
+
+    // 模拟断电/截断导致的损坏 JSON（钥匙串路径下不应再静默变成空表）
+    fs::write(dir.join("secrets.json"), "{ \"acc1\": this is not valid json")
+        .expect("write corrupt secrets");
+
+    match StoreData::load(dir.clone()) {
+        Ok(reloaded) => {
+            assert_eq!(
+                reloaded.secret("acc1").unwrap().password,
+                "must-not-be-wiped",
+                "keychain/file recovery must keep credentials"
+            );
+        }
+        Err(err) => {
+            // 纯文件后端：必须失败且备份，不能空表落盘
+            assert!(
+                err.contains("secrets") || err.contains("凭据") || err.contains("解析"),
+                "error should mention secrets/parse failure: {err}"
+            );
+            let backups: Vec<_> = fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.contains("secrets") && n.contains("corrupt"))
+                .collect();
+            assert!(!backups.is_empty(), "expected a .corrupt backup");
+        }
+    }
+
+    fs::remove_dir_all(dir).ok();
+}
+#[test]
+fn reload_accounts_from_disk_picks_up_cli_added_account() {
+    let (dir, mut gui_store) = load_store("reload-accounts");
+    // CLI 进程写入新账户
+    let mut cli = StoreData::load(dir.clone()).expect("cli load");
+    cli.accounts.push(sample_account("new-acc", "new@example.test"));
+    cli.secrets.insert(
+        "new-acc".into(),
+        AccountSecret {
+            password: "secret".into(),
+            smtp_password: None,
+            oauth: None,
+        },
+    );
+    cli.save_accounts().unwrap();
+    cli.save_secrets().unwrap();
+
+    assert!(gui_store.account("new-acc").is_err());
+    gui_store
+        .reload_accounts_and_secrets_from_disk()
+        .expect("reload");
+    assert_eq!(gui_store.account("new-acc").unwrap().email, "new@example.test");
+    assert_eq!(gui_store.secret("new-acc").unwrap().password, "secret");
+    fs::remove_dir_all(dir).ok();
+}
+
+/// 两个线程（模拟 GUI 常驻进程 + CLI 子进程）并发新增不同账户：
+/// 锁内读-改-写必须保住双方；旧实现各自拿旧表整表写回会丢掉其中一个。
+#[test]
+fn concurrent_save_account_preserves_both_accounts() {
+    let (dir, _store) = load_store("concurrent-accounts");
+    let mut joins = Vec::new();
+    for (id, email) in [("acc-a", "a@example.test"), ("acc-b", "b@example.test")] {
+        let dir = dir.clone();
+        joins.push(std::thread::spawn(move || {
+            let mut store = StoreData::load(dir).expect("load store");
+            core::save_account(
+                &mut store,
+                sample_account(id, email),
+                AccountSecret {
+                    password: "pw".into(),
+                    smtp_password: None,
+                    oauth: None,
+                },
+            )
+            .expect("save_account");
+        }));
+    }
+    for join in joins {
+        join.join().unwrap();
+    }
+
+    let reloaded = StoreData::load(dir.clone()).expect("reload accounts");
+    assert_eq!(reloaded.account("acc-a").unwrap().email, "a@example.test");
+    assert_eq!(reloaded.account("acc-b").unwrap().email, "b@example.test");
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn pop3_server_uidl_gone_only_deletes_inbox_not_archive() {
+    let uidl_gone = "uidl-archived".to_string();
+    let uidl_inbox = "uidl-inbox".to_string();
+    let known = vec![
+        (uidl_gone.clone(), "归档".into(), 10u32),
+        (uidl_inbox.clone(), "INBOX".into(), 11u32),
+        ("uidl-still-on-server".into(), "INBOX".into(), 12u32),
+    ];
+    let on_server = "uidl-still-on-server".to_string();
+    let server: HashSet<&String> = HashSet::from([&on_server]);
+    let gone = pop3_inbox_rows_gone_from_server(&known, &server);
+    assert_eq!(gone, vec![("INBOX".into(), 11)]);
+}
+
+#[test]
+fn imap_delete_skips_uids_newer_than_sync_start() {
+    // 并发：对方刚插入 uid=200，本进程开始时 max=100，FLAGS 快照没有 200
+    assert!(!imap_should_delete_missing_uid(200, 100, false));
+    // 本进程开始前就知道的 uid，服务器已删 → 应删本地
+    assert!(imap_should_delete_missing_uid(50, 100, false));
+    // 服务器仍有 → 不删
+    assert!(!imap_should_delete_missing_uid(50, 100, true));
+}
+
+/// 配置落盘必须是原子替换：成功后不应残留 .tmp，且重载内容完整。
+#[test]
+fn secrets_write_is_atomic_and_reloadable() {
+    let (dir, mut store) = load_store("atomic-secrets-write");
+    store.secrets.insert(
+        "acc1".into(),
+        AccountSecret {
+            password: "p@ss".into(),
+            smtp_password: Some("smtp".into()),
+            oauth: None,
+        },
+    );
+    store.save_secrets().expect("atomic save");
+
+    assert!(dir.join("secrets.json").exists());
+    assert!(
+        !dir.join("secrets.json.tmp").exists(),
+        "temp file must be renamed away after success"
+    );
+    let reloaded = StoreData::load(dir.clone()).expect("reload after atomic write");
+    assert_eq!(reloaded.secret("acc1").unwrap().password, "p@ss");
+    assert_eq!(
+        reloaded.secret("acc1").unwrap().smtp_password.as_deref(),
+        Some("smtp")
     );
 
     fs::remove_dir_all(dir).ok();
@@ -248,6 +405,7 @@ fn drafts_filters_and_trusted_contacts_are_persisted_with_overwrite_semantics() 
             subject: "Old subject".into(),
             body: "old".into(),
             sign: true,
+            attachment_paths: vec!["/tmp/a.pdf".into()],
             updated_at: 1,
         },
     )
@@ -465,4 +623,44 @@ fn locate_in_db_finds_mail_moved_out_of_inbox() {
     );
 
     fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn truncated_empty_accounts_json_blocks_load_with_backup() {
+    // 空文件 = 写入被截断的典型产物;静默当默认值会把仅存线索覆盖掉
+    let dir = temp_config_dir("empty-accounts");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("accounts.json"), "").unwrap();
+    let err = match StoreData::load(dir.clone()) {
+        Ok(_) => panic!("空 accounts.json 必须报错"),
+        Err(e) => e,
+    };
+    assert!(err.contains("accounts.json"), "{err}");
+    let backups: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("accounts") && n.contains("corrupt"))
+        .collect();
+    assert!(!backups.is_empty(), "应留下 .corrupt 备份");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn corrupt_noncritical_contacts_json_is_backed_up_and_recovers() {
+    let (dir, store) = load_store("corrupt-contacts-recovery");
+    drop(store);
+    std::fs::write(dir.join("contacts.json"), "{not valid json").unwrap();
+
+    let reloaded = StoreData::load(dir.clone())
+        .expect("a corrupt contacts cache must not prevent the app from starting");
+    assert!(reloaded.contacts.is_empty());
+    let backups: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("contacts") && n.contains("corrupt"))
+        .collect();
+    assert!(!backups.is_empty(), "应留下 contacts.json.corrupt 备份");
+    let _ = std::fs::remove_dir_all(&dir);
 }

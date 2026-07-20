@@ -42,7 +42,9 @@ function fmtSize(n: number) {
   return `${n} B`;
 }
 
-function defaultShowHtml(bodyHtml: string | null | undefined) {
+/** 未签名：有 HTML 则优先 HTML；已签名：默认纯文本（签名只覆盖 text/plain，防 HTML 调包）。 */
+function defaultShowHtml(bodyHtml: string | null | undefined, signed: boolean) {
+  if (signed) return false;
   return !!bodyHtml?.trim();
 }
 
@@ -108,6 +110,23 @@ interface ImagePreviewState {
   error: string | null;
 }
 
+/** 附件下载状态：存语义值而非本地化文案，渲染时再翻译（换语言不串状态） */
+type AttachStatus =
+  | { phase: "saving" }
+  | { phase: "saved" }
+  | { phase: "failed"; error: string };
+
+function attachStatusLabel(s: AttachStatus): string {
+  switch (s.phase) {
+    case "saving":
+      return t("保存中…");
+    case "saved":
+      return t("已保存 ✓");
+    case "failed":
+      return t("失败：") + s.error;
+  }
+}
+
 export function MessageView(p: Props) {
   useI18n();
   // 一键信任确认卡：换邮件时收起
@@ -118,8 +137,8 @@ export function MessageView(p: Props) {
   /** 正文视图：null=自动（未签名邮件优先 HTML；签名邮件显示被签名的纯文本） */
   const [htmlMode, setHtmlMode] = useState<boolean | null>(null);
   const [threadHtmlModes, setThreadHtmlModes] = useState<Record<string, boolean | null>>({});
-  /** 附件下载状态：mail/index → 状态文案 */
-  const [attachState, setAttachState] = useState<Record<string, string>>({});
+  /** 附件下载状态：mail/index → 语义状态 */
+  const [attachState, setAttachState] = useState<Record<string, AttachStatus>>({});
   /** 图片附件预览（lightbox） */
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const selectedCardRef = useRef<HTMLDivElement | null>(null);
@@ -131,6 +150,7 @@ export function MessageView(p: Props) {
     setVerifyPinned(false);
     setHtmlMode(null);
     setThreadHtmlModes({});
+    downloadGens.current = {}; // 作废在飞下载的完成回调（状态表马上清空，不能再回写）
     setAttachState({});
     setImagePreview(null);
   }, [uid]);
@@ -150,6 +170,9 @@ export function MessageView(p: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [imagePreview]);
 
+  // 每个附件各自的下载代数：并发下载互不干扰；「取消」只作废该附件的这一代
+  const downloadGens = useRef<Record<string, number>>({});
+
   async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
     // WKWebView 里 window.confirm 是 no-op（静默返回 false），必须走 dialog 插件
@@ -159,13 +182,27 @@ export function MessageView(p: Props) {
     const path = await saveFileDialog({ defaultPath, title: t("保存附件") });
     if (!path) return;
     const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
-    setAttachState((s) => ({ ...s, [stateKey]: t("保存中…") }));
+    const gen = (downloadGens.current[stateKey] = (downloadGens.current[stateKey] ?? 0) + 1);
+    setAttachState((s) => ({ ...s, [stateKey]: { phase: "saving" } }));
     try {
       await saveAttachment(mail.meta.accountId, mail.meta.folder, mail.meta.uid, i, path);
-      setAttachState((s) => ({ ...s, [stateKey]: t("已保存 ✓") }));
+      if (gen !== downloadGens.current[stateKey]) return; // 该附件已被取消/被新下载抢占
+      setAttachState((s) => ({ ...s, [stateKey]: { phase: "saved" } }));
     } catch (e) {
-      setAttachState((s) => ({ ...s, [stateKey]: t("失败：") + e }));
+      if (gen !== downloadGens.current[stateKey]) return;
+      setAttachState((s) => ({ ...s, [stateKey]: { phase: "failed", error: String(e) } }));
     }
+  }
+
+  // 「取消」语义：后端 invoke 无法中止，取消只把这个附件的 UI 复位为可再次保存；
+  // 已发出的写盘可能仍会完成（其完成结果被忽略，不再显示「已保存」）。
+  function cancelAttachmentDownload(stateKey: string) {
+    downloadGens.current[stateKey] = (downloadGens.current[stateKey] ?? 0) + 1;
+    setAttachState((s) => {
+      const next = { ...s };
+      delete next[stateKey];
+      return next;
+    });
   }
 
   async function previewImageAttachment(mail: EmailFull, i: number, a: AttachmentMeta) {
@@ -207,17 +244,21 @@ export function MessageView(p: Props) {
           <div className="info">
             {fmtSize(a.size)} · {a.mime}
             {image && <span className="attach-preview-hint">{t("点击预览")}</span>}
-            {attachState[stateKey] && <span className="attach-state">{attachState[stateKey]}</span>}
+            {attachState[stateKey] && <span className="attach-state">{attachStatusLabel(attachState[stateKey])}</span>}
           </div>
         </div>
         <button
           className="btn-ghost attach-save"
           onClick={(e) => {
             e.stopPropagation();
+            if (attachState[stateKey]?.phase === "saving") {
+              cancelAttachmentDownload(stateKey);
+              return;
+            }
             downloadAttachment(mail, i, a.name);
           }}
         >
-          {t("保存")}
+          {attachState[stateKey]?.phase === "saving" ? t("取消") : t("保存")}
         </button>
       </div>
     );
@@ -245,12 +286,15 @@ export function MessageView(p: Props) {
   function renderBody(mail: EmailFull, mode: boolean | null, setMode: (next: boolean) => void) {
     const hasHtml = !!mail.bodyHtml;
     const signed = mail.verify.status !== "unsigned";
-    const showHtml = hasHtml && (mode ?? defaultShowHtml(mail.bodyHtml));
+    const showHtml = hasHtml && (mode ?? defaultShowHtml(mail.bodyHtml, signed));
     return (
       <>
         {hasHtml && (
           <div className="body-toolbar">
             {signed && showHtml && <span className="body-note">⚠ {t("签名校验针对纯文本正文，HTML 版式仅供参考")}</span>}
+            {signed && !showHtml && hasHtml && (
+              <span className="body-note">{t("已签名邮件默认显示纯文本（签名覆盖范围）")}</span>
+            )}
             <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setMode(!showHtml)}>
               {showHtml ? t("查看纯文本") : t("查看 HTML 版式")}
             </button>

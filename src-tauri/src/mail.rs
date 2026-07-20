@@ -9,6 +9,35 @@ fn domain_of(addr: &str) -> String {
     addr.rsplit('@').next().unwrap_or("").to_lowercase()
 }
 
+/// 邮件是否含真实 text/html 部件（不含 mail-parser 由纯文本合成的 HTML）。
+/// 必须看解析后的 MIME 结构：扫原始字节会被折行头绕过，也会被正文里的字面量误触发。
+fn message_has_real_html(msg: &mail_parser::Message) -> bool {
+    (0..msg.html_body_count())
+        .filter_map(|pos| msg.html_part(pos as u32))
+        .any(|p| matches!(p.body, mail_parser::PartType::Html(_)))
+}
+
+/// 展示用哈希/摘要前缀：按字符截断，避免不可信字符串按字节切片时切进 UTF-8 中间 panic。
+fn hash_prefix_display(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let prefix: String = s.chars().take(max_chars).collect();
+    format!("{prefix}…")
+}
+
+/// 签名时间明显在未来（>24h）时不可给绿标：时钟攻击或头被拼装。
+/// 真正的重放防护需要 canon 绑定收件人/Message-ID（后续 v2）；此处只挡离谱未来戳。
+fn signature_date_implausible(signed_date: &str) -> bool {
+    // fail-closed:解析不了的日期视为不可信(签名者自选字段,不能给豁免)
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(signed_date.trim()) else {
+        return true;
+    };
+    let now = chrono::Utc::now();
+    dt > now + chrono::Duration::hours(24)
+}
+
 fn header_text(msg: &mail_parser::Message, name: &str) -> Option<String> {
     msg.header(name)
         .and_then(|h| h.as_text())
@@ -312,8 +341,15 @@ fn filename_from_part_headers(headers: &[u8]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// 自制 MIME 遍历器的递归深度上限：超过即停止下钻（视为没找到相关部件）。
+/// 防止恶意深层嵌套邮件把 watcher/sync 线程栈打爆（栈溢出会直接中止进程，不可捕获）。
+const MAX_MIME_WALK_DEPTH: usize = 32;
+
 /// 遍历 MIME 树，按与 mail-parser attachments() 相近的顺序收集附件文件名。
-fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<String>) {
+fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<String>, depth: usize) {
+    if depth >= MAX_MIME_WALK_DEPTH {
+        return;
+    }
     let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
     let content_type_lower = content_type.to_ascii_lowercase();
     if let Some(boundary) = header_param(&content_type, "boundary") {
@@ -337,7 +373,7 @@ fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<Strin
             let Some((part_headers, part_body)) = split_message(part) else {
                 continue;
             };
-            collect_attachment_filenames(part_headers, part_body, out);
+            collect_attachment_filenames(part_headers, part_body, out, depth + 1);
         }
         return;
     }
@@ -362,7 +398,7 @@ fn attachment_filenames_from_raw(raw: &[u8]) -> Vec<String> {
         return Vec::new();
     };
     let mut names = Vec::new();
-    collect_attachment_filenames(headers, body, &mut names);
+    collect_attachment_filenames(headers, body, &mut names, 0);
     names
 }
 
@@ -442,7 +478,10 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn find_body_part(headers: &[u8], body: &[u8], want_html: bool) -> Option<String> {
+fn find_body_part(headers: &[u8], body: &[u8], want_html: bool, depth: usize) -> Option<String> {
+    if depth >= MAX_MIME_WALK_DEPTH {
+        return None;
+    }
     let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
     let content_type_lower = content_type.to_ascii_lowercase();
     if let Some(boundary) = header_param(&content_type, "boundary") {
@@ -467,7 +506,7 @@ fn find_body_part(headers: &[u8], body: &[u8], want_html: bool) -> Option<String
             let Some((part_headers, part_body)) = split_message(part) else {
                 continue;
             };
-            if let Some(found) = find_body_part(part_headers, part_body, want_html) {
+            if let Some(found) = find_body_part(part_headers, part_body, want_html, depth + 1) {
                 return Some(found);
             }
         }
@@ -489,7 +528,7 @@ fn fallback_body(raw: &[u8], want_html: bool) -> Option<String> {
         .to_ascii_lowercase()
         .starts_with("multipart/")
     {
-        find_body_part(headers, body, want_html)
+        find_body_part(headers, body, want_html, 0)
     } else {
         Some(body_from_part(headers, body))
     }
@@ -700,8 +739,12 @@ pub fn detect_risk(subject: &str, body: &str) -> Option<RiskInfo> {
 pub fn verify_message(
     msg: &mail_parser::Message,
     body_text: &str,
+    body_html: Option<&str>,
+    subject: &str,
     from_name: &str,
     from_addr: &str,
+    recipients: &[String],
+    attachments: &[(String, Vec<u8>)],
     trusted: &[TrustedContact],
 ) -> VerifyDetail {
     let by_addr = trusted
@@ -741,6 +784,13 @@ pub fn verify_message(
     let signed_from = header_text(msg, crypto::H_FROM).unwrap_or_else(|| from_addr.to_lowercase());
     let signed_date = header_text(msg, crypto::H_DATE).unwrap_or_default();
     let signed_body_hash = header_text(msg, crypto::H_BODY_HASH).unwrap_or_default();
+    let version = header_text(msg, crypto::H_VERSION).unwrap_or_else(|| crypto::CANON_VERSION_V1.into());
+    let signed_subject_hash = header_text(msg, crypto::H_SUBJECT_HASH).unwrap_or_default();
+    let signed_html_hash = header_text(msg, crypto::H_HTML_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
+    let signed_attach_hash = header_text(msg, crypto::H_ATTACH_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
+    let signed_to_hash = header_text(msg, crypto::H_TO_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
+    let signed_mid_hash = header_text(msg, crypto::H_MID_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
+    let message_id = header_text(msg, "Message-ID");
 
     // 签名头声明的发件人必须与实际 From 一致，否则是头部重放/冒充
     if !signed_from.eq_ignore_ascii_case(from_addr) {
@@ -753,7 +803,21 @@ pub fn verify_message(
         };
     }
 
-    // 按签名方案校验，统一产出 (指纹/地址, 正文是否一致, 签名时哈希, 收到时哈希)
+    let actual = crypto::SignContent {
+        subject,
+        body_text,
+        body_html,
+        recipients,
+        attachments,
+        message_id: message_id.as_deref(),
+    };
+    let ver = match version.trim() {
+        "3" => 3,
+        "2" => 2,
+        _ => 1,
+    };
+
+    // 按签名方案校验，统一产出 (指纹/地址, 内容是否一致, 签名时 body 哈希, 收到时 body 哈希)
     let (method, outcome): (String, Result<(String, bool, String, String), String>) =
         if method == "eth-personal" {
             let res = (|| {
@@ -761,14 +825,52 @@ pub fn verify_message(
                 let rsv: [u8; 65] = sig_bytes
                     .try_into()
                     .map_err(|_| "签名长度错误".to_string())?;
-                let canon = crypto::canon_string(&signed_from, &signed_date, &signed_body_hash);
+                let canon = match ver {
+                    3 => crypto::canon_string_v3(
+                        &signed_from,
+                        &signed_date,
+                        &signed_subject_hash,
+                        &signed_body_hash,
+                        &signed_html_hash,
+                        &signed_attach_hash,
+                        &signed_to_hash,
+                        &signed_mid_hash,
+                    ),
+                    2 => crypto::canon_string_v2(
+                        &signed_from,
+                        &signed_date,
+                        &signed_subject_hash,
+                        &signed_body_hash,
+                        &signed_html_hash,
+                        &signed_attach_hash,
+                        &signed_to_hash,
+                    ),
+                    _ => crypto::canon_string(&signed_from, &signed_date, &signed_body_hash),
+                };
                 let recovered = crypto::eth_personal_recover(canon.as_bytes(), &rsv)?;
                 if !recovered.eq_ignore_ascii_case(&id_source) {
                     return Err("签名与声明地址不符".to_string());
                 }
-                let got = crypto::body_hash_hex(body_text);
-                let ok = got == signed_body_hash.trim().to_lowercase();
-                Ok((recovered, ok, signed_body_hash.clone(), got))
+                let got = crypto::content_hashes(&actual);
+                let ok = match ver {
+                    3 => {
+                        got.subject == signed_subject_hash.trim().to_lowercase()
+                            && got.body == signed_body_hash.trim().to_lowercase()
+                            && got.html == signed_html_hash.trim().to_lowercase()
+                            && got.attach == signed_attach_hash.trim().to_lowercase()
+                            && got.to == signed_to_hash.trim().to_lowercase()
+                            && got.mid == signed_mid_hash.trim().to_lowercase()
+                    }
+                    2 => {
+                        got.subject == signed_subject_hash.trim().to_lowercase()
+                            && got.body == signed_body_hash.trim().to_lowercase()
+                            && got.html == signed_html_hash.trim().to_lowercase()
+                            && got.attach == signed_attach_hash.trim().to_lowercase()
+                            && got.to == signed_to_hash.trim().to_lowercase()
+                    }
+                    _ => got.body == signed_body_hash.trim().to_lowercase(),
+                };
+                Ok((recovered, ok, signed_body_hash.clone(), got.body))
             })();
             ("Ledger · secp256k1".to_string(), res)
         } else {
@@ -778,25 +880,43 @@ pub fn verify_message(
                 from: signed_from.clone(),
                 date: signed_date.clone(),
                 body_hash: signed_body_hash.clone(),
+                version: version.clone(),
+                subject_hash: signed_subject_hash.clone(),
+                html_hash: signed_html_hash.clone(),
+                attach_hash: signed_attach_hash.clone(),
+                to_hash: signed_to_hash.clone(),
+                mid_hash: signed_mid_hash.clone(),
             };
             (
                 "SealMail · Ed25519".to_string(),
-                crypto::verify_headers(&h, body_text),
+                crypto::verify_headers(&h, &actual),
             )
         };
 
     match outcome {
-        Ok((fingerprint, body_ok, signed_hash, got_hash)) => {
-            if !body_ok {
+        Ok((fingerprint, content_ok, signed_hash, got_hash)) => {
+            if !content_ok {
                 return VerifyDetail::Tampered {
-                    signed_hash: format!("{}…", &signed_hash[..12.min(signed_hash.len())]),
-                    got_hash: format!("{}…", &got_hash[..12.min(got_hash.len())]),
+                    signed_hash: hash_prefix_display(&signed_hash, 12),
+                    got_hash: hash_prefix_display(&got_hash, 12),
                     fingerprint,
                     method,
                 };
             }
+            // 时间窗：未来戳 / 过旧签名 → 不当作完整 Verified
+            let date_ok = !signature_date_implausible(&signed_date)
+                && !crypto::signature_too_old(&signed_date);
+            // v1 未覆盖 HTML/附件：可信表面不足，最高只能 SignedUnknown
+            let v1_partial =
+                ver == 1 && crypto::v1_unsigned_surface_present(body_html, attachments.len());
             if let Some(t) = by_addr {
                 if t.fingerprint.eq_ignore_ascii_case(&fingerprint) {
+                    if !date_ok || v1_partial {
+                        return VerifyDetail::SignedUnknown {
+                            fingerprint,
+                            method,
+                        };
+                    }
                     return VerifyDetail::Verified {
                         fingerprint,
                         method,
@@ -833,7 +953,7 @@ pub fn verify_message(
         }
         Err(_) => VerifyDetail::Tampered {
             signed_hash: "签名校验失败".into(),
-            got_hash: crypto::body_hash_hex(body_text)[..12].to_string() + "…",
+            got_hash: hash_prefix_display(&crypto::body_hash_hex(body_text), 12),
             fingerprint: "—".into(),
             method,
         },
@@ -975,23 +1095,54 @@ pub fn parse_email(
     }
 
     let fallback_names = attachment_filenames_from_raw(raw);
-    let attachments: Vec<AttachmentMeta> = msg
+    let attach_parts: Vec<(String, Vec<u8>, String)> = msg
         .attachments()
         .enumerate()
-        .map(|(i, p)| AttachmentMeta {
-            name: fix_attachment_name(
+        .map(|(i, p)| {
+            let name = fix_attachment_name(
                 p.attachment_name().unwrap_or("attachment").to_string(),
                 fallback_names.get(i).map(|s| s.as_str()),
-            ),
-            size: p.contents().len(),
-            mime: p
+            );
+            let mime = p
                 .content_type()
                 .map(|c| format!("{}/{}", c.ctype(), c.subtype().unwrap_or("octet-stream")))
-                .unwrap_or_else(|| "application/octet-stream".into()),
+                .unwrap_or_else(|| "application/octet-stream".into());
+            (name, p.contents().to_vec(), mime)
         })
         .collect();
+    let attachments: Vec<AttachmentMeta> = attach_parts
+        .iter()
+        .map(|(name, data, mime)| AttachmentMeta {
+            name: name.clone(),
+            size: data.len(),
+            mime: mime.clone(),
+        })
+        .collect();
+    let attach_for_sign: Vec<(String, Vec<u8>)> = attach_parts
+        .into_iter()
+        .map(|(name, data, _)| (name, data))
+        .collect();
+    let mut recipients = to.clone();
+    recipients.extend(cc.iter().cloned());
 
-    let verify = verify_message(&msg, &body_text, &from_name, &from_addr, trusted);
+    // mail-parser 的 body_html 会把纯文本合成 HTML；签名只覆盖真实的 text/html MIME 部件
+    let html_for_sign = if message_has_real_html(&msg) {
+        body_html.as_deref()
+    } else {
+        None
+    };
+
+    let verify = verify_message(
+        &msg,
+        &body_text,
+        html_for_sign,
+        &subject,
+        &from_name,
+        &from_addr,
+        &recipients,
+        &attach_for_sign,
+        trusted,
+    );
     let risk = detect_risk(&subject, &body_text);
     let preview: String = body_text
         .lines()

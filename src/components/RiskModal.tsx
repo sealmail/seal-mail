@@ -29,7 +29,7 @@ export function RiskModal(p: Props) {
           style={{
             padding: "24px 26px",
             background: "var(--red-bg)",
-            borderBottom: "1px solid #ead0cc",
+            borderBottom: "1px solid var(--red-border-strong)",
             display: "flex",
             gap: 14,
             alignItems: "flex-start",
@@ -90,7 +90,7 @@ export function RiskModal(p: Props) {
                 height: 42,
                 border: "none",
                 borderRadius: 9,
-                background: ack ? "var(--red-bad)" : "#d8d4ce",
+                background: ack ? "var(--red-bad)" : "var(--btn-disabled-bg)",
                 color: "#fff",
                 fontSize: 13,
                 fontWeight: 600,

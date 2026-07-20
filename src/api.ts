@@ -31,6 +31,7 @@ interface AppPrefsJson {
   closeBehavior: "hide" | "quit";
   notifyNewMail: boolean;
   language: "system" | "zh" | "en";
+  theme?: "system" | "light" | "dark";
 }
 
 type CliArg = string | number | boolean;
@@ -94,6 +95,18 @@ export async function setLanguagePref(language: "system" | "zh" | "en"): Promise
 export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
   const result = await cliJson<Pick<AppPrefsJson, "notifyNewMail">>(["pref", "set", "--notify-new-mail", String(enabled)]);
   return result.notifyNewMail;
+}
+
+export type ThemePref = "system" | "light" | "dark";
+
+export async function getThemePref(): Promise<ThemePref> {
+  const prefs = await cliJson<AppPrefsJson>(["prefs"]);
+  return prefs.theme ?? "system";
+}
+
+export async function setThemePref(theme: ThemePref): Promise<ThemePref> {
+  const result = await cliJson<Pick<AppPrefsJson, "theme">>(["pref", "set", "--theme", theme]);
+  return result.theme ?? "system";
 }
 
 export async function openPendingNotificationMail(): Promise<NotificationMailTarget | null> {
@@ -163,6 +176,8 @@ export interface CachedList {
 export interface SyncResult {
   added: number;
   total: number;
+  /** UIDVALIDITY 变化导致本地该目录缓存被清空 */
+  uidvalidityReset?: boolean;
 }
 
 /** 本地缓存分页读取（秒出、可离线） */
@@ -170,9 +185,81 @@ export async function listCached(accountId: string, folder: string, offset: numb
   return cliJson(["list", "--account", accountId, "--folder", folder, "--offset", offset, "--limit", limit]);
 }
 
+export type SyncKind = "sync" | "sync-older";
+
+export interface SyncCoalescer {
+  sync(accountId: string, folder: string): Promise<SyncResult>;
+  syncOlder(accountId: string, folder: string): Promise<SyncResult>;
+}
+
+/**
+ * 同 (account, folder) 并发 sync 合并为一次，避免多 CLI 子进程互踩；
+ * sync 与 sync-older 互斥等待，配合后端目录锁，减少「正在同步中」硬失败。
+ * run 可注入（测试传假实现，生产传 cliJson）。
+ */
+export function createSyncCoalescer(
+  run: (kind: SyncKind, accountId: string, folder: string) => Promise<SyncResult>
+): SyncCoalescer {
+  const inflightSync = new Map<string, Promise<SyncResult>>();
+  const inflightSyncOlder = new Map<string, Promise<SyncResult>>();
+
+  function syncKey(accountId: string, folder: string) {
+    return `${accountId}\0${folder}`;
+  }
+
+  async function sync(accountId: string, folder: string): Promise<SyncResult> {
+    const key = syncKey(accountId, folder);
+    // 与 sync-older 互斥等待
+    const older = inflightSyncOlder.get(key);
+    if (older) {
+      try {
+        await older;
+      } catch {
+        /* ignore */
+      }
+      // 等待期间可能已有并发 sync 抢先发起，重走合并检查
+      return sync(accountId, folder);
+    }
+    const existing = inflightSync.get(key);
+    if (existing) return existing;
+    const p = run("sync", accountId, folder).finally(() => {
+      if (inflightSync.get(key) === p) inflightSync.delete(key);
+    });
+    inflightSync.set(key, p);
+    return p;
+  }
+
+  async function syncOlder(accountId: string, folder: string): Promise<SyncResult> {
+    const key = syncKey(accountId, folder);
+    // 若增量 sync 在飞，等它结束再回填，避免与后端目录锁硬撞
+    const syncing = inflightSync.get(key);
+    if (syncing) {
+      try {
+        await syncing;
+      } catch {
+        /* 增量失败仍尝试回填 */
+      }
+      return syncOlder(accountId, folder);
+    }
+    const existing = inflightSyncOlder.get(key);
+    if (existing) return existing;
+    const p = run("sync-older", accountId, folder).finally(() => {
+      if (inflightSyncOlder.get(key) === p) inflightSyncOlder.delete(key);
+    });
+    inflightSyncOlder.set(key, p);
+    return p;
+  }
+
+  return { sync, syncOlder };
+}
+
+const syncCoalescer = createSyncCoalescer((kind, accountId, folder) =>
+  cliJson<SyncResult>([kind, "--account", accountId, "--folder", folder])
+);
+
 /** 与服务器增量同步（只下载新邮件 + 回扫已读/星标/删除） */
 export async function syncMessages(accountId: string, folder: string): Promise<SyncResult> {
-  return cliJson(["sync", "--account", accountId, "--folder", folder]);
+  return syncCoalescer.sync(accountId, folder);
 }
 
 export interface SyncStatusEntry {
@@ -196,7 +283,7 @@ export async function locateMessage(accountId: string, messageId: string): Promi
 
 /** 按需回填更早邮件（用户继续向下翻页时触发） */
 export async function syncOlderMessages(accountId: string, folder: string): Promise<SyncResult> {
-  return cliJson(["sync-older", "--account", accountId, "--folder", folder]);
+  return syncCoalescer.syncOlder(accountId, folder);
 }
 
 export async function setFlagged(accountId: string, folder: string, uid: number, flagged: boolean): Promise<void> {
@@ -292,6 +379,9 @@ export async function saveDraft(draft: Draft): Promise<Draft> {
   pushFlag(args, "--to", draft.to);
   pushFlag(args, "--cc", draft.cc);
   if (!draft.sign) args.push("--no-sign");
+  for (const path of draft.attachmentPaths ?? []) {
+    args.push("--attach", path);
+  }
   return cliJson(args);
 }
 

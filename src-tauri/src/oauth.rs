@@ -87,7 +87,7 @@ fn default_provider() -> String {
     "microsoft".into()
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthTokens {
     pub access_token: String,
@@ -112,6 +112,25 @@ impl OAuthTokens {
     /// 到期前 2 分钟即视为需要刷新，避免连接过程中过期
     pub fn needs_refresh(&self) -> bool {
         self.expires_at - 120 <= now_unix()
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.expires_at <= now_unix()
+    }
+}
+
+/// 提前刷新只是优化：刷新端点短时故障时，尚未过期的 access token 仍可继续尝试邮件操作。
+/// 真正过期的 token 不能复用；服务器明确拒绝后的强制刷新也不走此降级。
+/// 降级返回的旧令牌与传入值相等（PartialEq），调用方据此跳过回写磁盘——
+/// 否则会把另一进程刚轮换写入的新令牌顶掉。
+pub fn resolve_proactive_refresh(
+    current: &OAuthTokens,
+    result: Result<OAuthTokens, String>,
+) -> Result<OAuthTokens, String> {
+    match result {
+        Ok(tokens) => Ok(tokens),
+        Err(_) if !current.is_expired() => Ok(current.clone()),
+        Err(e) => Err(e),
     }
 }
 
@@ -626,6 +645,68 @@ mod tests {
             "IMAP 登录失败（请检查用户名/密码或应用专用密码）: No Response: LOGIN failed."
         ));
         assert!(!is_auth_rejected("SMTP 连接失败: connection error"));
+    }
+
+    #[test]
+    fn proactive_refresh_failure_keeps_a_still_valid_token() {
+        let current = OAuthTokens {
+            access_token: "still-valid".into(),
+            refresh_token: "refresh".into(),
+            expires_at: now_unix() + 30,
+            client_id: "client".into(),
+            client_secret: None,
+            provider: "microsoft".into(),
+        };
+        assert!(current.needs_refresh());
+        let kept = resolve_proactive_refresh(&current, Err("token endpoint offline".into())).unwrap();
+        assert_eq!(kept.access_token, "still-valid");
+    }
+
+    #[test]
+    fn proactive_refresh_failure_rejects_an_expired_token() {
+        let current = OAuthTokens {
+            access_token: "expired".into(),
+            refresh_token: "refresh".into(),
+            expires_at: now_unix() - 1,
+            client_id: "client".into(),
+            client_secret: None,
+            provider: "microsoft".into(),
+        };
+        let err = resolve_proactive_refresh(&current, Err("token endpoint offline".into()))
+            .expect_err("expired token must not be reused");
+        assert!(err.contains("offline"));
+    }
+
+    /// 调用方用 PartialEq 判断「令牌是否真的变了」来决定要不要回写磁盘；
+    /// 提前刷新失败降级时必须原样返回（相等），否则旧值回写会顶掉另一进程刚轮换的新令牌。
+    #[test]
+    fn proactive_refresh_fallback_returns_tokens_equal_to_input() {
+        let current = OAuthTokens {
+            access_token: "still-valid".into(),
+            refresh_token: "refresh".into(),
+            expires_at: now_unix() + 30,
+            client_id: "client".into(),
+            client_secret: Some("secret".into()),
+            provider: "google".into(),
+        };
+        let kept = resolve_proactive_refresh(&current, Err("offline".into())).unwrap();
+        assert_eq!(kept, current, "降级返回的旧令牌必须与传入值相等，调用方才能跳过回写");
+    }
+
+    #[test]
+    fn proactive_refresh_success_returns_different_tokens() {
+        let current = OAuthTokens {
+            access_token: "old".into(),
+            refresh_token: "refresh".into(),
+            expires_at: now_unix() + 30,
+            client_id: "client".into(),
+            client_secret: None,
+            provider: "microsoft".into(),
+        };
+        let mut new = current.clone();
+        new.access_token = "new".into();
+        let got = resolve_proactive_refresh(&current, Ok(new)).unwrap();
+        assert_ne!(got, current, "刷新成功的新令牌必须触发回写");
     }
 
     #[test]

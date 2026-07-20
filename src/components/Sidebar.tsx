@@ -43,6 +43,7 @@ interface Props {
   onSelectFolder: (name: string) => void;
   onOpenKeys: () => void;
   onAddAccount: () => void;
+  onReauthAccount: (account: Account) => void;
   onRemoveAccount: (account: Account) => void;
   onNewFolder: () => void;
   onDeleteFolder: (folder: FolderInfo) => void;
@@ -122,16 +123,28 @@ export function Sidebar(p: Props) {
                 <div className="sys">{`${a.protocol === "imap" ? "IMAP" : "POP3"} · ${a.label}`}</div>
               </div>
             </div>
-            <button
-              className="account-action"
-              title={t("删除账户 {name}", { name: a.email })}
-              onClick={(e) => {
-                e.stopPropagation();
-                p.onRemoveAccount(a);
-              }}
-            >
-              ×
-            </button>
+            <div className="account-actions">
+              <button
+                className="account-action reauth"
+                title={t("重新授权 {name}", { name: a.email })}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  p.onReauthAccount(a);
+                }}
+              >
+                ⟳
+              </button>
+              <button
+                className="account-action danger"
+                title={t("删除账户 {name}", { name: a.email })}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  p.onRemoveAccount(a);
+                }}
+              >
+                ×
+              </button>
+            </div>
           </div>
         ))}
         <button className="side-add" onClick={p.onAddAccount}>

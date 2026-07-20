@@ -3,7 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import { addPluginListener } from "@tauri-apps/api/core";
 import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import * as api from "./api";
+import { classifyError, classifyErrorWithPrefix, type AppError } from "./errors";
 import { applyLangPref, t, useI18n } from "./i18n";
+import { useTheme } from "./theme";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
 import { FiltersModal } from "./components/FiltersModal";
@@ -43,7 +45,10 @@ function threadKey(m: Pick<EmailMeta, "accountId" | "folder" | "threadId" | "mes
   return `${m.accountId}/${m.folder}/${m.threadId || m.messageId || m.uid}`;
 }
 
+/** 已签名默认纯文本：canon 只哈希 text/plain，HTML 优先会让绿标与可见内容脱节。 */
 function defaultShowHtml(mail: EmailFull) {
+  const signed = mail.verify.status !== "unsigned";
+  if (signed) return false;
   return !!mail.bodyHtml?.trim();
 }
 
@@ -155,6 +160,7 @@ function PaneResizer({
 
 function PopoutApp({ storageKey }: { storageKey: string }) {
   useZoomShortcuts({ persist: false });
+  useTheme();
   const [mail] = useState<EmailFull | null>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -213,6 +219,7 @@ export default function App() {
 
 function MailApp() {
   useI18n();
+  useTheme();
   const [state, setState] = useState<AppStateView | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState("");
@@ -248,7 +255,8 @@ function MailApp() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [olderExhausted, setOlderExhausted] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
+  const [listError, setListError] = useState<AppError | null>(null);
+  const [reauthAccount, setReauthAccount] = useState<Account | null>(null);
   const [loadMoreNotice, setLoadMoreNotice] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -311,6 +319,13 @@ function MailApp() {
     setSelected((prev) => (prev && visible.has(mailKey(prev.meta)) ? prev : null));
     setSelectedKey((prev) => (prev && visible.has(prev) ? prev : null));
   }, []);
+
+  function reportListError(e: unknown, prefix?: string) {
+    setListError(prefix ? classifyErrorWithPrefix(e, prefix) : classifyError(e));
+  }
+  function reportListMessage(message: string) {
+    setListError({ kind: "unknown", message, raw: message });
+  }
 
   const accounts = state?.accounts ?? [];
   const trusted = state?.trusted ?? [];
@@ -442,7 +457,7 @@ function MailApp() {
     setListError(null);
     refreshFolders(accountId).catch((e) => {
       setFolders(BUILTIN_FOLDERS);
-      setListError(String(e));
+      reportListError(e);
     });
   }, [accountId, clearSelection, refreshFolders]);
 
@@ -530,7 +545,7 @@ function MailApp() {
     try {
       await loadCached(request);
     } catch (e) {
-      if (fetchRequests.current.isCurrent(request)) setListError(String(e));
+      if (fetchRequests.current.isCurrent(request)) reportListError(e);
     } finally {
       if (fetchRequests.current.isCurrent(request)) setLoading(false);
     }
@@ -539,18 +554,30 @@ function MailApp() {
     //    不再挂着神秘绿点（缓存数字会随回填自行增长）。
     setSyncing(true);
     try {
+      let resetCache = false;
       if (folder === UNIFIED_FOLDER) {
         const settled = await Promise.allSettled(accounts.map((a) => api.syncMessages(a.id, "INBOX")));
         const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
         if (failed) throw failed.reason;
+        resetCache = settled.some(
+          (r) => r.status === "fulfilled" && r.value.uidvalidityReset
+        );
       } else {
         const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-        await api.syncMessages(accountId, realFolder);
+        const res = await api.syncMessages(accountId, realFolder);
+        resetCache = !!res.uidvalidityReset;
       }
       if (!fetchRequests.current.isCurrent(request)) return;
+      if (resetCache) {
+        // 信息性提示走 notice 通道（list-notice-bar），不能占用错误通道
+        // （错误通道渲染 ⚠ 琥珀色错误条，且会压住真正的 notice）
+        setLoadMoreNotice(
+          t("服务器目录标识已变化（UIDVALIDITY），已重建本地缓存；更早邮件需重新同步。")
+        );
+      }
       await loadCached(request);
     } catch (e) {
-      if (fetchRequests.current.isCurrent(request)) setListError(t("同步失败（本地缓存仍可用）：") + e);
+      if (fetchRequests.current.isCurrent(request)) reportListError(e, t("同步失败（本地缓存仍可用）："));
     } finally {
       if (fetchRequests.current.isCurrent(request)) setSyncing(false);
     }
@@ -559,7 +586,7 @@ function MailApp() {
       await backfillOlderUntilExhausted(request);
       if (fetchRequests.current.isCurrent(request)) await loadCached(request);
     } catch (e) {
-      if (fetchRequests.current.isCurrent(request)) setListError(t("同步失败（本地缓存仍可用）：") + e);
+      if (fetchRequests.current.isCurrent(request)) reportListError(e, t("同步失败（本地缓存仍可用）："));
     }
   }, [accountId, accounts, backfillOlderUntilExhausted, folder, loadCached, t]);
 
@@ -594,7 +621,7 @@ function MailApp() {
       }
       await loadCached(request);
     } catch (e) {
-      if (fetchRequests.current.isCurrent(request)) setListError(String(e));
+      if (fetchRequests.current.isCurrent(request)) reportListError(e);
     } finally {
       if (fetchRequests.current.isCurrent(request)) setLoadingMore(false);
     }
@@ -670,7 +697,7 @@ function MailApp() {
       api
         .setRead(m.accountId, m.folder, m.uid, true)
         .then(() => refreshInboxUnread(m.accountId))
-        .catch((e) => setListError(String(e)));
+        .catch((e) => reportListError(e));
       setMessages((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
       setInboxMetas((ms) => ms.map((x) => (mailKey(x) === key ? { ...x, unread: false } : x)));
     }
@@ -709,7 +736,7 @@ function MailApp() {
           api
             .markRead(m.accountId, m.folder, unreadInThread.map((x) => x.uid))
             .then(() => refreshInboxUnread(m.accountId))
-            .catch((e) => setListError(String(e)));
+            .catch((e) => reportListError(e));
           const unreadKeys = new Set(unreadInThread.map(mailKey));
           const clearUnread = (ms: EmailMeta[]) => ms.map((x) => (unreadKeys.has(mailKey(x)) ? { ...x, unread: false } : x));
           setMessages(clearUnread);
@@ -749,7 +776,7 @@ function MailApp() {
         return next;
       });
     } catch (e) {
-      if (seq === selectSeq.current) setListError(String(e));
+      if (seq === selectSeq.current) reportListError(e);
     }
   }
 
@@ -762,7 +789,7 @@ function MailApp() {
       const full = await api.getMessage(item.accountId, item.folder, item.uid);
       if (seq === selectSeq.current) setThreadFulls((s) => ({ ...s, [key]: full }));
     } catch (e) {
-      if (seq === selectSeq.current) setListError(String(e));
+      if (seq === selectSeq.current) reportListError(e);
     }
   }
 
@@ -783,9 +810,9 @@ function MailApp() {
       win.once("tauri://created", () => {
         if (m.unread) selectMail(m);
       });
-      win.once("tauri://error", (e) => setListError(String(e.payload)));
+      win.once("tauri://error", (e) => reportListError(e.payload));
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -853,10 +880,10 @@ function MailApp() {
         setThread([selectedFull.meta]);
         setThreadFulls({ [mailKey(selectedFull.meta)]: selectedFull });
       } else {
-        setListError(t("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。"));
+        reportListMessage(t("已打开 SealMail，但没有在本地缓存中找到这封通知邮件。"));
       }
     } catch (e) {
-      setListError(t("打开通知邮件失败：") + e);
+      reportListError(e, t("打开通知邮件失败："));
     } finally {
       setLoading(false);
       setSyncing(false);
@@ -881,7 +908,7 @@ function MailApp() {
         const target = await api.openPendingNotificationMail();
         if (!cancelled && target) openNotificationMailRef.current(target);
       } catch (e) {
-        if (!cancelled) setListError(String(e));
+        if (!cancelled) reportListError(e);
       } finally {
         pulling = false;
       }
@@ -996,7 +1023,7 @@ function MailApp() {
       await refreshInboxUnread(selected.meta.accountId);
       markLocal([mailKey(selected.meta)], true);
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1018,7 +1045,7 @@ function MailApp() {
       await Promise.all([...groups.keys()].map((key) => refreshInboxUnread(key.split("\0")[0])));
       markLocal(unread.map(mailKey), false);
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1033,7 +1060,7 @@ function MailApp() {
         prev && mailKey(prev.meta) === mailKey(m) ? { ...prev, meta: { ...prev.meta, flagged: next } } : prev
       );
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1044,7 +1071,7 @@ function MailApp() {
       clearSelection();
       loadMessages();
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1056,7 +1083,7 @@ function MailApp() {
       loadMessages();
       refreshFolders(accountId).catch(() => {});
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1073,7 +1100,7 @@ function MailApp() {
     if (!selected) return;
     const target = preferredBlockFolder();
     if (!target) {
-      setListError(t("没有找到垃圾邮件或已删除邮件目录，请先创建一个目录后再屏蔽发件人。"));
+      reportListMessage(t("没有找到垃圾邮件或已删除邮件目录，请先创建一个目录后再屏蔽发件人。"));
       return;
     }
     const email = selected.meta.fromAddr.trim().toLowerCase();
@@ -1097,7 +1124,7 @@ function MailApp() {
       loadMessages();
       refreshFolders(accountId).catch(() => {});
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1124,7 +1151,7 @@ function MailApp() {
       // 第一次软删除可能刚在服务器上创建了回收站目录，刷新目录列表
       if (!permanent) refreshFolders(accountId).catch(() => {});
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1133,7 +1160,7 @@ function MailApp() {
     setComposePrefill({
       to: selected.meta.fromAddr,
       subject: selected.meta.subject.startsWith("Re:") ? selected.meta.subject : `Re: ${selected.meta.subject}`,
-      body: `\n\n----- 原始邮件 -----\n${selected.bodyText}`,
+      body: `\n\n----- ${t("原始邮件")} -----\n${selected.bodyText}`,
     });
     setComposeOpen(true);
   }
@@ -1150,7 +1177,7 @@ function MailApp() {
       to: to.join(", "),
       cc: selected.cc.filter(notSelf).join(", "),
       subject: selected.meta.subject.startsWith("Re:") ? selected.meta.subject : `Re: ${selected.meta.subject}`,
-      body: `\n\n----- 原始邮件 -----\n${selected.bodyText}`,
+      body: `\n\n----- ${t("原始邮件")} -----\n${selected.bodyText}`,
     });
     setComposeOpen(true);
   }
@@ -1207,10 +1234,11 @@ function MailApp() {
 
   function handleForward() {
     if (!selected) return;
+    const from = `${selected.meta.fromName} <${selected.meta.fromAddr}>`;
     setComposePrefill({
       to: "",
       subject: selected.meta.subject.startsWith("Fwd:") ? selected.meta.subject : `Fwd: ${selected.meta.subject}`,
-      body: `\n\n----- 转发邮件（发件人 ${selected.meta.fromName} <${selected.meta.fromAddr}>）-----\n${selected.bodyText}`,
+      body: `\n\n----- ${t("转发邮件（发件人 {from}）", { from })} -----\n${selected.bodyText}`,
     });
     setComposeOpen(true);
   }
@@ -1229,7 +1257,7 @@ function MailApp() {
         setSelectedKey(mailKey(refreshed.meta));
       }
     } catch (e) {
-      setListError(String(e));
+      reportListError(e);
     }
   }
 
@@ -1328,6 +1356,11 @@ function MailApp() {
               )}
             </div>
           )}
+          {hasAccounts && search.trim() && (
+            <div className="search-scope-hint" title={t("仅搜索当前列表已缓存的主题、发件人与地址，不含正文与服务器全库")}>
+              {t("仅本地缓存")}
+            </div>
+          )}
         </div>
         {hasAccounts && (
           <button
@@ -1399,6 +1432,7 @@ function MailApp() {
             }}
             onOpenKeys={() => setView("keys")}
             onAddAccount={() => setAccountModal(true)}
+            onReauthAccount={(account) => setReauthAccount(account)}
             onRemoveAccount={(account) => {
               setRemoveAccountErr(null);
               setAccountToRemove(account);
@@ -1439,7 +1473,7 @@ function MailApp() {
                   await api.deleteDraft(d.id);
                   loadDrafts();
                 } catch (e) {
-                  setListError(String(e));
+                  reportListError(e);
                 }
               }}
             />
@@ -1459,6 +1493,11 @@ function MailApp() {
                 loading={loading}
                 syncing={syncing}
                 error={listError}
+                onDismissError={() => setListError(null)}
+                onReauth={() => {
+                  const acc = accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
+                  if (acc) setReauthAccount(acc);
+                }}
                 notice={loadMoreNotice}
                 filterMode={filterMode}
                 categoryMode={categoryMode}
@@ -1527,15 +1566,21 @@ function MailApp() {
         />
       )}
 
-      {accountModal && (
+      {(accountModal || reauthAccount) && (
         <AccountModal
-          onClose={() => setAccountModal(false)}
+          reauthAccount={reauthAccount ?? undefined}
+          onClose={() => {
+            setAccountModal(false);
+            setReauthAccount(null);
+          }}
           onAdded={async (acc) => {
             setAccountModal(false);
+            setReauthAccount(null);
             const s = await api.getState();
             setState(s);
             setAccountId(acc.id);
             setView("mail");
+            setListError(null);
           }}
         />
       )}
@@ -1568,7 +1613,7 @@ function MailApp() {
               </button>
             </div>
             <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
-              「{selected.meta.subject}」{t("已在回收站中，继续删除将")}<b style={{ color: "#9A2C1D" }}>{t("从服务器上永久移除，无法恢复")}</b>。
+              「{selected.meta.subject}」{t("已在回收站中，继续删除将")}<b style={{ color: "var(--tone-red)" }}>{t("从服务器上永久移除，无法恢复")}</b>。
             </div>
             <div className="modal-foot">
               <button className="btn-ghost" style={{ height: 40 }} onClick={() => setConfirmDelete(false)}>

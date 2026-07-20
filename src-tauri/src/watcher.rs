@@ -22,34 +22,76 @@ const IDLE_ROUND: Duration = Duration::from_secs(4 * 60);
 const IDLE_ROUNDS_PER_CONN: u32 = 6;
 const POP3_POLL: Duration = Duration::from_secs(120);
 const RETRY_DELAY: Duration = Duration::from_secs(30);
+/// 重连退避上限：失败后 30s 起指数加倍，封顶 5 分钟
+const RETRY_DELAY_MAX: Duration = Duration::from_secs(5 * 60);
 const NOTIFICATION_OPEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// 重连退避：失败后从 30s 起指数加倍（封顶 5 分钟），成功跑完一轮后重置。
+/// 服务器长时间故障时固定 30s 间隔会无谓地高频重连。
+struct ReconnectBackoff {
+    current: Duration,
+}
+
+impl ReconnectBackoff {
+    fn new() -> Self {
+        Self {
+            current: RETRY_DELAY,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.current = RETRY_DELAY;
+    }
+
+    /// 返回本次等待时长，并把下次等待加倍（封顶 RETRY_DELAY_MAX）
+    fn next_delay(&mut self) -> Duration {
+        let wait = self.current;
+        self.current = (self.current * 2).min(RETRY_DELAY_MAX);
+        wait
+    }
+}
 
 fn running() -> &'static Mutex<HashSet<String>> {
     static R: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// 取全局锁；若曾有线程持锁 panic，恢复内部数据而不是永久毒化（同 store::AppState::lock）。
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 监听线程退出（含 panic）时把账户移出运行集合：
+/// 少了这一步，panic 后 ensure_watchers 永远以为线程还在，不再为该账户拉起新监听。
+struct RunningGuard(String);
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        lock(running()).remove(&self.0);
+    }
+}
+
 /// 为所有还没有监听线程的账户启动监听（启动时与新增账户后调用）
 pub fn ensure_watchers(app: &AppHandle) {
     let accounts: Vec<(String, IncomingProtocol)> = {
         let state = app.state::<AppState>();
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         s.accounts
             .iter()
             .map(|a| (a.id.clone(), a.protocol.clone()))
             .collect()
     };
     for (id, protocol) in accounts {
-        if !running().lock().unwrap().insert(id.clone()) {
+        if !lock(running()).insert(id.clone()) {
             continue; // 已有线程在跑
         }
         let app = app.clone();
         std::thread::spawn(move || {
+            let _guard = RunningGuard(id.clone());
             match protocol {
                 IncomingProtocol::Imap => watch_imap(&app, &id),
                 IncomingProtocol::Pop3 => watch_pop3(&app, &id),
             }
-            running().lock().unwrap().remove(&id);
         });
     }
 }
@@ -82,7 +124,7 @@ fn pending_notification_target() -> &'static Mutex<Option<(Instant, Notification
 
 /// 写入待打开通知目标（带时间戳）。这里提取成函数是为了让测试也能注入一个目标。
 fn set_pending_notification_target(created_at: Instant, target: NotificationMailTarget) {
-    *pending_notification_target().lock().unwrap() = Some((created_at, target));
+    *lock(pending_notification_target()) = Some((created_at, target));
 }
 
 /// 供 mac_notify 的点击回调使用：立刻记下待打开目标。
@@ -109,7 +151,7 @@ fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec
 fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &[MailNotice]) {
     let (enabled, email) = {
         let state = app.state::<AppState>();
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         let email = match s.accounts.iter().find(|a| a.id == account_id) {
             Some(a) => a.email.clone(),
             None => return,
@@ -210,9 +252,7 @@ fn notification_icon_path(app: &AppHandle) -> Option<String> {
 
 /// 是否还有未过期的待打开通知目标（只读，不消费）。
 pub fn has_pending_notification_target() -> bool {
-    pending_notification_target()
-        .lock()
-        .unwrap()
+    lock(pending_notification_target())
         .as_ref()
         .map(|(created_at, _)| created_at.elapsed() <= NOTIFICATION_OPEN_TTL)
         .unwrap_or(false)
@@ -222,9 +262,7 @@ pub fn has_pending_notification_target() -> bool {
 /// 只有真正把目标交给前端的那一次拉取才会消费它——避免在窗口隐藏/监听器未就绪时
 /// 被一次性 emit 白白吃掉，从而导致点击通知后既不弹窗也不定位。
 pub fn take_pending_notification_target() -> Option<NotificationMailTarget> {
-    pending_notification_target()
-        .lock()
-        .unwrap()
+    lock(pending_notification_target())
         .take()
         .and_then(|(created_at, target)| (created_at.elapsed() <= NOTIFICATION_OPEN_TTL).then_some(target))
 }
@@ -294,7 +332,7 @@ fn notice_from_raw(
 /// 当前账户适用的过滤规则快照（用于通知前判断是否应静默）
 fn filter_rules_for(app: &AppHandle, account_id: &str) -> Vec<FilterRule> {
     let state = app.state::<AppState>();
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     s.filters
         .iter()
         .filter(|r| {
@@ -316,9 +354,35 @@ fn creds(
     account_id: &str,
     force_refresh: bool,
 ) -> Result<Option<(Account, AccountSecret)>, String> {
+    match creds_once(app, account_id, force_refresh) {
+        Err(first) => {
+            // 内存里的令牌可能落后于磁盘（CLI 子进程刚刷新写回）：
+            // 重读磁盘账户+凭据后再试一次，否则线程拿着过期令牌每轮空转，
+            // 新邮件推送静默停摆直到应用重启。
+            crate::logging::log(format!(
+                "[watcher] {account_id} 取凭据失败，从磁盘重读后重试: {first}"
+            ));
+            let state = app.state::<AppState>();
+            {
+                let mut s = state.lock();
+                s.reload_accounts_and_secrets_from_disk()
+                    .map_err(|e| format!("{first}；重读磁盘凭据也失败: {e}"))?;
+            }
+            creds_once(app, account_id, force_refresh)
+                .map_err(|e| format!("{first}；重读后仍失败: {e}"))
+        }
+        ok => ok,
+    }
+}
+
+fn creds_once(
+    app: &AppHandle,
+    account_id: &str,
+    force_refresh: bool,
+) -> Result<Option<(Account, AccountSecret)>, String> {
     let state = app.state::<AppState>();
     let (account, secret) = {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         match (s.account(account_id), s.secret(account_id)) {
             (Ok(a), Ok(sec)) => (a, sec),
             _ => return Ok(None),
@@ -330,9 +394,19 @@ fn creds(
     if !force_refresh && !tokens.needs_refresh() {
         return Ok(Some((account, secret)));
     }
-    let refreshed = oauth::refresh_tokens_blocking(&tokens)?;
+    let refresh_result = oauth::refresh_tokens_blocking(&tokens);
+    let refreshed = if force_refresh {
+        refresh_result?
+    } else {
+        oauth::resolve_proactive_refresh(&tokens, refresh_result)?
+    };
+    if !force_refresh && refreshed == tokens {
+        // 提前刷新失败沿用了未过期的旧令牌：不能回写——另一进程可能刚轮换
+        // refresh_token 落盘，旧值写回会把新凭据顶掉（强制刷新必然拿到新令牌，照常回写）。
+        return Ok(Some((account, secret)));
+    }
     let s2 = app.state::<AppState>();
-    let mut s = s2.inner.lock().unwrap();
+    let mut s = s2.lock();
     let Some(mut updated) = s.secrets.get(account_id).cloned() else {
         return Ok(None);
     };
@@ -343,29 +417,43 @@ fn creds(
 
 fn account_exists(app: &AppHandle, account_id: &str) -> bool {
     let state = app.state::<AppState>();
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     s.accounts.iter().any(|a| a.id == account_id)
 }
 
 fn watch_imap(app: &AppHandle, account_id: &str) {
+    // 用 UIDNEXT 判断新邮件（EXISTS 在删信+收信对冲时会漏报）
+    let mut last_uid_next: Option<u32> = None;
+    // UIDNEXT 是可选响应；缺失时用 EXISTS 做兼容兜底。
     let mut last_exists: Option<u32> = None;
     let mut force_refresh = false;
+    let mut backoff = ReconnectBackoff::new();
     loop {
         let (account, secret) = match creds(app, account_id, force_refresh) {
             Ok(Some(c)) => c,
             Ok(None) => return,
             Err(e) => {
-                eprintln!("[watcher] {} 取凭据失败: {}", account_id, e);
-                std::thread::sleep(RETRY_DELAY);
+                crate::logging::log(format!("[watcher] {account_id} 取凭据失败: {e}"));
+                std::thread::sleep(backoff.next_delay());
                 continue;
             }
         };
         force_refresh = false;
-        if let Err(e) = idle_session(app, account_id, &account, &secret, &mut last_exists) {
-            eprintln!("[watcher] {} IDLE 连接中断: {}", account_id, e);
-            // token 被服务器提前作废时，本地 expires_at 判断不出来，下一轮强制刷新
-            force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
-            std::thread::sleep(RETRY_DELAY);
+        match idle_session(
+            app,
+            account_id,
+            &account,
+            &secret,
+            &mut last_uid_next,
+            &mut last_exists,
+        ) {
+            Ok(()) => backoff.reset(),
+            Err(e) => {
+                crate::logging::log(format!("[watcher] {account_id} IDLE 连接中断: {e}"));
+                // token 被服务器提前作废时，本地 expires_at 判断不出来，下一轮强制刷新
+                force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
+                std::thread::sleep(backoff.next_delay());
+            }
         }
     }
 }
@@ -376,14 +464,27 @@ fn idle_session(
     account_id: &str,
     account: &Account,
     secret: &AccountSecret,
+    last_uid_next: &mut Option<u32>,
     last_exists: &mut Option<u32>,
 ) -> Result<(), String> {
     let mut sess = imap_client::connect(account, secret)?;
     let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-    let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
-    check_exists(app, account_id, mb.exists, last_exists, || {
-        fetch_imap_notices(app, account, secret, new_count)
-    });
+    // UIDNEXT 是可选返回:缺失时新邮件推送整条链路会静默失效,必须留痕
+    if mb.uid_next.is_none() {
+        crate::logging::log(format!(
+            "[watcher] {account_id} EXAMINE 未返回 UIDNEXT,改用 EXISTS 检测新邮件"
+        ));
+    }
+    maybe_emit_mailbox_change(
+        app,
+        account_id,
+        mb.uid_next,
+        mb.exists,
+        last_uid_next,
+        last_exists,
+        account,
+        secret,
+    );
     for _ in 0..IDLE_ROUNDS_PER_CONN {
         if !account_exists(app, account_id) {
             let _ = sess.logout();
@@ -395,15 +496,67 @@ fn idle_session(
             .wait_with_timeout(IDLE_ROUND)
             .map_err(|e| e.to_string())?;
         let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-        let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
-        check_exists(app, account_id, mb.exists, last_exists, || {
-            fetch_imap_notices(app, account, secret, new_count)
-        });
+        maybe_emit_mailbox_change(
+            app,
+            account_id,
+            mb.uid_next,
+            mb.exists,
+            last_uid_next,
+            last_exists,
+            account,
+            secret,
+        );
     }
     let _ = sess.logout();
     Ok(())
 }
 
+fn maybe_emit_mailbox_change(
+    app: &AppHandle,
+    account_id: &str,
+    uid_next: Option<u32>,
+    exists: u32,
+    last_uid_next: &mut Option<u32>,
+    last_exists: &mut Option<u32>,
+    account: &Account,
+    secret: &AccountSecret,
+) {
+    if let Some(new_count) = mailbox_new_count(uid_next, exists, last_uid_next, last_exists) {
+        emit_new_mail(
+            app,
+            account_id,
+            new_count,
+            fetch_imap_notices(app, account, secret, new_count.min(3)),
+        );
+    }
+}
+
+fn mailbox_new_count(
+    uid_next: Option<u32>,
+    exists: u32,
+    last_uid_next: &mut Option<u32>,
+    last_exists: &mut Option<u32>,
+) -> Option<u32> {
+    if let Some(current) = uid_next.filter(|value| *value > 0) {
+        let count = last_uid_next
+            .and_then(|previous| current.checked_sub(previous))
+            .filter(|count| *count > 0);
+        *last_uid_next = Some(current);
+        *last_exists = Some(exists);
+        return count;
+    }
+
+    // 服务器不支持 UIDNEXT：用 EXISTS 做兼容兜底。切换计数器时清掉 UID 基线，
+    // 以后 UIDNEXT 恢复只重新建基线，不能重复通知 EXISTS 已报告的邮件。
+    *last_uid_next = None;
+    let count = last_exists
+        .and_then(|previous| exists.checked_sub(previous))
+        .filter(|count| *count > 0);
+    *last_exists = Some(exists);
+    count
+}
+
+/// POP3：用邮件数量差判断新邮件（协议无 UIDNEXT）
 fn check_exists<F>(
     app: &AppHandle,
     account_id: &str,
@@ -438,7 +591,10 @@ fn fetch_imap_notices(
             notices
         }
         Err(e) => {
-            eprintln!("[watcher] {} 拉取通知邮件详情失败: {}", account.id, e);
+            crate::logging::log(format!(
+                "[watcher] {} 拉取通知邮件详情失败: {e}",
+                account.id
+            ));
             Vec::new()
         }
     }
@@ -450,7 +606,7 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
     loop {
         match creds(app, account_id, force_refresh) {
             Ok(None) => return,
-            Err(e) => eprintln!("[watcher] {} 取凭据失败: {}", account_id, e),
+            Err(e) => crate::logging::log(format!("[watcher] {account_id} 取凭据失败: {e}")),
             Ok(Some((account, secret))) => {
                 force_refresh = false;
                 match pop3_client::Pop3Client::connect(&account, &secret) {
@@ -469,10 +625,9 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                                                     notice_from_raw(&raw, None, account_id, &rules)
                                                 }
                                                 Err(e) => {
-                                                    eprintln!(
-                                                        "[watcher] {} 拉取 POP3 通知邮件详情失败 seq={}: {}",
-                                                        account_id, seq, e
-                                                    );
+                                                    crate::logging::log(format!(
+                                                        "[watcher] {account_id} 拉取 POP3 通知邮件详情失败 seq={seq}: {e}"
+                                                    ));
                                                     None
                                                 }
                                             })
@@ -485,12 +640,14 @@ fn watch_pop3(app: &AppHandle, account_id: &str) {
                                 };
                                 check_exists(app, account_id, n, &mut last, || notices);
                             }
-                            Err(e) => eprintln!("[watcher] {} POP3 STAT 失败: {}", account_id, e),
+                            Err(e) => crate::logging::log(format!(
+                                "[watcher] {account_id} POP3 STAT 失败: {e}"
+                            )),
                         }
                         c.quit();
                     }
                     Err(e) => {
-                        eprintln!("[watcher] {} POP3 连接失败: {}", account_id, e);
+                        crate::logging::log(format!("[watcher] {account_id} POP3 连接失败: {e}"));
                         force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
                     }
                 }
@@ -556,7 +713,36 @@ mod tests {
     }
 
     fn clear_pending() {
-        *pending_notification_target().lock().unwrap() = None;
+        *lock(pending_notification_target()) = None;
+    }
+
+    #[test]
+    fn reconnect_backoff_doubles_caps_and_resets() {
+        let mut b = ReconnectBackoff::new();
+        assert_eq!(b.next_delay(), Duration::from_secs(30));
+        assert_eq!(b.next_delay(), Duration::from_secs(60));
+        assert_eq!(b.next_delay(), Duration::from_secs(120));
+        assert_eq!(b.next_delay(), Duration::from_secs(240));
+        assert_eq!(b.next_delay(), Duration::from_secs(300), "封顶 5 分钟");
+        assert_eq!(b.next_delay(), Duration::from_secs(300), "持续失败保持封顶值");
+        b.reset();
+        assert_eq!(b.next_delay(), Duration::from_secs(30), "成功一轮后重置回 30s");
+    }
+
+    /// 监听线程 panic 时守卫也必须把账户移出运行集合，
+    /// 否则 ensure_watchers 永远以为线程还在，该账户不再有新邮件推送。
+    #[test]
+    fn running_guard_removes_account_on_drop() {
+        let id = format!("guard-test-{}", std::process::id());
+        lock(running()).insert(id.clone());
+        {
+            let _guard = RunningGuard(id.clone());
+            assert!(lock(running()).contains(&id));
+        }
+        assert!(
+            !lock(running()).contains(&id),
+            "守卫 drop 必须移除账户 id"
+        );
     }
 
     // 单个测试串行覆盖待打开目标的生命周期：用进程级 static，拆成多个 #[test]
@@ -595,5 +781,22 @@ mod tests {
         assert!(take_pending_notification_target().is_none(), "过期目标不应被取走");
 
         clear_pending();
+    }
+
+    #[test]
+    fn mailbox_change_uses_exists_when_uidnext_is_missing() {
+        let mut last_uid_next = Some(41);
+        let mut last_exists = Some(10);
+        let count = mailbox_new_count(None, 12, &mut last_uid_next, &mut last_exists);
+        assert_eq!(count, Some(2));
+        assert_eq!(last_uid_next, None, "切到 EXISTS 后应重置 UIDNEXT 基线，避免恢复时重复通知");
+        assert_eq!(last_exists, Some(12));
+
+        // UIDNEXT 恢复时只建立新基线，不重复发送刚才 EXISTS 已报告的两封。
+        assert_eq!(
+            mailbox_new_count(Some(44), 12, &mut last_uid_next, &mut last_exists),
+            None
+        );
+        assert_eq!(last_uid_next, Some(44));
     }
 }

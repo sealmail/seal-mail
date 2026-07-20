@@ -6,12 +6,16 @@ import {
   getCloseBehavior,
   getLanguagePref,
   getNotifyNewMail,
+  getThemePref,
   setCloseBehavior,
   setLanguagePref,
   setNotifyNewMail,
+  setThemePref,
   useLocalKey,
+  type ThemePref,
 } from "../api";
 import { applyLangPref, useI18n, type LangPref } from "../i18n";
+import { applyTheme } from "../theme";
 import { LedgerBindModal } from "./LedgerBindModal";
 import { shortFpr } from "../trust";
 import {
@@ -71,6 +75,24 @@ export function KeysView(p: Props) {
       const saved = await setLanguagePref(next);
       setLangPref(saved);
       applyLangPref(saved);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // ── 外观主题 ──
+  const [themePref, setThemePrefState] = useState<ThemePref | null>(null);
+  useEffect(() => {
+    getThemePref()
+      .then(setThemePrefState)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  async function handleTheme(next: ThemePref) {
+    try {
+      const saved = await setThemePref(next);
+      setThemePrefState(saved);
+      applyTheme(saved);
     } catch (e) {
       setError(String(e));
     }
@@ -203,7 +225,7 @@ export function KeysView(p: Props) {
           <AppIcon className="keys-hero-icon" />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)" }}>{t("我的签名身份")}</div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "#1E6B49", marginTop: 3 }}>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--tone-jade)", marginTop: 3 }}>
               {isLedger
                 ? `Ledger · secp256k1 · ${p.identity?.ledgerPath ?? ""}`
                 : `Ed25519 · ${t("本地生成")} · ${p.identity ? p.identity.created.slice(0, 10) : "…"}`}
@@ -216,7 +238,7 @@ export function KeysView(p: Props) {
 
         <div className="section-label">{t("签名密钥（发送签名邮件时使用其中一个）")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "#fff" }}>
+          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "var(--surface)" }}>
             <div
               style={{
                 width: 44, height: 30, borderRadius: 6, background: "var(--ink)",
@@ -240,7 +262,7 @@ export function KeysView(p: Props) {
             )}
           </div>
 
-          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "#fff" }}>
+          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "var(--surface)" }}>
             <div
               style={{
                 width: 44, height: 30, borderRadius: 6, background: "var(--ink)", position: "relative",
@@ -317,7 +339,7 @@ export function KeysView(p: Props) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-2)" }}>{t("SealMail 信印")}</div>
               {updated ? (
-                <div style={{ fontSize: 11.5, color: "#1E6B49", marginTop: 2 }}>✓ {t("已是最新版本")}</div>
+                <div style={{ fontSize: 11.5, color: "var(--tone-jade)", marginTop: 2 }}>✓ {t("已是最新版本")}</div>
               ) : updateInfo?.available ? (
                 <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: 2 }}>
                   ↓ {t("新版本 v{v} 可用", { v: updateInfo.latestVersion })}
@@ -412,6 +434,31 @@ export function KeysView(p: Props) {
               <option value="system">{t("跟随系统")}</option>
               <option value="zh">中文</option>
               <option value="en">English</option>
+            </select>
+          </div>
+
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 14, marginTop: 16,
+              paddingTop: 16, borderTop: "1px solid var(--border-soft)",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>{t("外观主题")}</div>
+              <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, lineHeight: 1.5 }}>
+                {t("浅色、深色或跟随系统外观")}
+              </div>
+            </div>
+            <select
+              className="select"
+              style={{ width: 130 }}
+              value={themePref ?? "system"}
+              disabled={themePref === null}
+              onChange={(e) => void handleTheme(e.target.value as ThemePref)}
+            >
+              <option value="system">{t("跟随系统")}</option>
+              <option value="light">{t("浅色")}</option>
+              <option value="dark">{t("深色")}</option>
             </select>
           </div>
 

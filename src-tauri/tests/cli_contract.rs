@@ -119,6 +119,7 @@ fn seed_config(dir: &Path) {
             subject: "Hello".into(),
             body: "Body".into(),
             sign: true,
+            attachment_paths: Vec::new(),
             updated_at: 42,
         }],
     );
@@ -516,11 +517,13 @@ fn account_remove_deletes_account_and_secret() {
         serde_json::from_str(&stdout(&accounts)).expect("accounts should be json");
     assert_eq!(accounts_json.as_array().unwrap().len(), 0);
 
-    let secrets_text =
-        fs::read_to_string(dir.join("secrets.json")).expect("secrets file should still exist");
-    let secrets: serde_json::Value =
-        serde_json::from_str(&secrets_text).expect("secrets should be json");
-    assert_eq!(secrets.as_object().unwrap().len(), 0);
+    // 凭据可能在钥匙串：磁盘上是空表或 keychain 占位；以 StoreData 为准确认已清空
+    let reloaded = sealmail_lib::store::StoreData::load(dir.clone()).expect("reload after remove");
+    assert!(
+        reloaded.secrets.is_empty(),
+        "account remove must clear all stored secrets"
+    );
+    assert!(reloaded.accounts.is_empty());
 
     fs::remove_dir_all(dir).ok();
 }

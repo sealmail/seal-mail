@@ -305,6 +305,7 @@ export const EN: Record<string, string> = {
   "发送中…": "Sending…",
   "原始邮件": "Original message",
   "转发邮件（发件人 {from}）": "Forwarded message (from {from})",
+  "已签名邮件默认显示纯文本（签名覆盖范围）": "Signed mail shows plain text by default (what the signature covers)",
 
   // ── 草稿 ──
   "{n} 篇": "{n}",
@@ -345,6 +346,25 @@ export const EN: Record<string, string> = {
   "已执行：收件箱中没有匹配的邮件": "Done: no matching mail in the inbox",
   "已整理 {n} 封：": "Organized {n} messages:",
   "屏蔽 {email}": "Block {email}",
+
+  // ── 错误 / 重新授权 ──
+  "登录已失效，请重新授权此账户": "Sign-in expired. Please re-authorize this account.",
+  "网络连接失败，请检查网络后重试": "Network connection failed. Check your network and try again.",
+  "本地缓存正忙，请稍后重试": "Local cache is busy. Try again in a moment.",
+  "重新授权账户": "Re-authorize Account",
+  "更新 {email} 的登录凭据。服务器配置保持不变。": "Update credentials for {email}. Server settings stay the same.",
+  "保存新凭据": "Save new credentials",
+  "收起错误": "Dismiss",
+  "重新授权 {name}": "Re-authorize {name}",
+  "仅本地缓存": "Local cache only",
+  "仅搜索当前列表已缓存的主题、发件人与地址，不含正文与服务器全库":
+    "Searches cached subject/from/address in the current list only — not full body or the server",
+  "服务器目录标识已变化（UIDVALIDITY），已重建本地缓存；更早邮件需重新同步。":
+    "Server folder identity changed (UIDVALIDITY). Local cache was rebuilt; re-sync older mail if needed.",
+  "外观主题": "Appearance",
+  "浅色、深色或跟随系统外观": "Light, dark, or follow system appearance",
+  "浅色": "Light",
+  "深色": "Dark",
 
   // ── 账户 ──
   "添加邮箱账户": "Add Email Account",

@@ -25,6 +25,7 @@ test("shows the aggregated unread count for all inboxes", () => {
       onSelectFolder={() => {}}
       onOpenKeys={() => {}}
       onAddAccount={() => {}}
+      onReauthAccount={() => {}}
       onRemoveAccount={() => {}}
       onNewFolder={() => {}}
       onDeleteFolder={() => {}}
@@ -56,6 +57,7 @@ test("renders the global sync progress with counts and bar width", () => {
       onSelectFolder={() => {}}
       onOpenKeys={() => {}}
       onAddAccount={() => {}}
+      onReauthAccount={() => {}}
       onRemoveAccount={() => {}}
       onNewFolder={() => {}}
       onDeleteFolder={() => {}}
@@ -88,6 +90,7 @@ test("hides the sync progress until a server total is known", () => {
       onSelectFolder={() => {}}
       onOpenKeys={() => {}}
       onAddAccount={() => {}}
+      onReauthAccount={() => {}}
       onRemoveAccount={() => {}}
       onNewFolder={() => {}}
       onDeleteFolder={() => {}}
@@ -117,6 +120,7 @@ test("keeps organization and account controls outside the folder scroller", () =
       onSelectFolder={() => {}}
       onOpenKeys={() => {}}
       onAddAccount={() => {}}
+      onReauthAccount={() => {}}
       onRemoveAccount={() => {}}
       onNewFolder={() => {}}
       onDeleteFolder={() => {}}

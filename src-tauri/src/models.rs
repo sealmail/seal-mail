@@ -55,6 +55,9 @@ pub struct Draft {
     pub subject: String,
     pub body: String,
     pub sign: bool,
+    /// 本地附件绝对路径（仅本机有效）
+    #[serde(default)]
+    pub attachment_paths: Vec<String>,
     /// unix 秒
     pub updated_at: i64,
 }
@@ -217,6 +220,13 @@ pub struct AppPrefs {
     pub notify_new_mail: bool,
     /// 界面语言："system"（跟随系统）| "zh" | "en"
     pub language: String,
+    /// 外观："system" | "light" | "dark"
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "system".into()
 }
 
 fn default_close_behavior() -> String {
@@ -233,6 +243,7 @@ impl Default for AppPrefs {
             close_behavior: default_close_behavior(),
             notify_new_mail: true,
             language: "system".into(),
+            theme: default_theme(),
         }
     }
 }

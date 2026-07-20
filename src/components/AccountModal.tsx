@@ -2,46 +2,67 @@ import { useI18n } from "../i18n";
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { addAccount, oauthBeginBrowser, oauthBeginDevice, oauthFinishBrowser, oauthPollDevice, testConnection } from "../api";
+import { classifyError } from "../errors";
 import { PROVIDER_PRESETS } from "../types";
 import type { Account, AccountSecret, DeviceFlowStart, OAuthProvider, OAuthTokens } from "../types";
 
 interface Props {
   onClose: () => void;
   onAdded: (account: Account) => void;
+  /** 传入时进入「重新授权」模式：保留账户 id/服务器配置，只更新凭据 */
+  reauthAccount?: Account;
+}
+
+function guessPresetKey(account: Account): string {
+  const host = account.incomingHost.toLowerCase();
+  const hit = PROVIDER_PRESETS.find(
+    (p) => p.incomingHost && host === p.incomingHost.toLowerCase()
+  );
+  if (hit) return hit.key;
+  if (host.includes("gmail")) return "gmail";
+  if (host.includes("office365") || host.includes("outlook")) return "exchange-online";
+  if (account.protocol === "pop3") return "custom-pop3";
+  return "custom-imap";
 }
 
 export function AccountModal(p: Props) {
   const t = useI18n();
-  const [presetKey, setPresetKey] = useState(PROVIDER_PRESETS[0].key);
-  const preset = PROVIDER_PRESETS.find((x) => x.key === presetKey)!;
+  const reauth = p.reauthAccount;
+  const initialPreset = reauth ? guessPresetKey(reauth) : PROVIDER_PRESETS[0].key;
+  const [presetKey, setPresetKey] = useState(initialPreset);
+  const preset = PROVIDER_PRESETS.find((x) => x.key === presetKey) ?? PROVIDER_PRESETS[0];
 
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState(reauth?.email ?? "");
+  const [displayName, setDisplayName] = useState(reauth?.displayName ?? "");
+  const [username, setUsername] = useState(reauth?.username ?? "");
   const [password, setPassword] = useState("");
-  const [incomingHost, setIncomingHost] = useState(preset.incomingHost);
-  const [incomingPort, setIncomingPort] = useState(preset.incomingPort);
-  const [smtpHost, setSmtpHost] = useState(preset.smtpHost);
-  const [smtpPort, setSmtpPort] = useState(preset.smtpPort);
-  const [smtpSecurity, setSmtpSecurity] = useState<"ssl" | "starttls">(preset.smtpSecurity);
+  const [incomingHost, setIncomingHost] = useState(reauth?.incomingHost ?? preset.incomingHost);
+  const [incomingPort, setIncomingPort] = useState(reauth?.incomingPort ?? preset.incomingPort);
+  const [smtpHost, setSmtpHost] = useState(reauth?.smtpHost ?? preset.smtpHost);
+  const [smtpPort, setSmtpPort] = useState(reauth?.smtpPort ?? preset.smtpPort);
+  const [smtpSecurity, setSmtpSecurity] = useState<"ssl" | "starttls">(
+    (reauth?.smtpSecurity as "ssl" | "starttls") ?? preset.smtpSecurity
+  );
   const [busy, setBusy] = useState<"" | "test" | "save">("");
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  // OAuth2 设备码授权状态（Exchange Online / Outlook.com 已强制 OAuth2）
-  const [authMode, setAuthMode] = useState<"password" | "oauth2">(preset.oauth ? "oauth2" : "password");
+  const [authMode, setAuthMode] = useState<"password" | "oauth2">(
+    reauth?.auth === "oauth2" || preset.oauth ? "oauth2" : "password"
+  );
   const [clientId, setClientId] = useState("");
   const [device, setDevice] = useState<DeviceFlowStart | null>(null);
   const [tokens, setTokens] = useState<OAuthTokens | null>(null);
-  // 轮询代际：+1 即作废正在跑的轮询循环（取消/重开/关闭弹窗）
   const pollGen = useRef(0);
   useEffect(() => () => void pollGen.current++, []);
 
   const oauthProvider: OAuthProvider = preset.oauthProvider ?? "microsoft";
   const oauthBrand = oauthProvider === "google" ? "Google" : "Microsoft";
   const oauthLoginHost = oauthProvider === "google" ? "accounts.google.com" : "microsoft.com/devicelogin";
+  const isReauth = !!reauth;
 
   function applyPreset(key: string) {
+    if (isReauth) return; // 重新授权时不改服务器预设
     const pr = PROVIDER_PRESETS.find((x) => x.key === key)!;
     setPresetKey(key);
     setIncomingHost(pr.incomingHost);
@@ -97,7 +118,7 @@ export function AccountModal(p: Props) {
       }
     } catch (e) {
       if (pollGen.current === gen) {
-        setError(String(e));
+        setError(classifyError(e).message);
         setDevice(null);
       }
     }
@@ -105,11 +126,11 @@ export function AccountModal(p: Props) {
 
   function buildAccount(): Account {
     return {
-      id: "",
-      label: preset.label.split("（")[0].split(" /")[0],
+      id: reauth?.id ?? "",
+      label: reauth?.label ?? preset.label.split("（")[0].split(" /")[0],
       email: email.trim(),
       displayName: displayName.trim() || email.split("@")[0],
-      protocol: preset.protocol,
+      protocol: reauth?.protocol ?? preset.protocol,
       incomingHost: incomingHost.trim(),
       incomingPort,
       smtpHost: smtpHost.trim(),
@@ -142,7 +163,7 @@ export function AccountModal(p: Props) {
       await testConnection(buildAccount(), buildSecret());
       setOk(t("连接成功：收件与发件服务器均验证通过"));
     } catch (e) {
-      setError(String(e));
+      setError(classifyError(e).message);
     } finally {
       setBusy("");
     }
@@ -157,7 +178,7 @@ export function AccountModal(p: Props) {
       const acc = await addAccount(buildAccount(), buildSecret());
       p.onAdded(acc);
     } catch (e) {
-      setError(String(e));
+      setError(classifyError(e).message);
       setBusy("");
     }
   }
@@ -166,38 +187,57 @@ export function AccountModal(p: Props) {
     <div className="overlay">
       <div className="modal" style={{ width: 560 }}>
         <div className="modal-head">
-          <span className="title">{t("添加邮箱账户")}</span>
+          <span className="title">{isReauth ? t("重新授权账户") : t("添加邮箱账户")}</span>
           <button className="modal-close" onClick={p.onClose}>
             ×
           </button>
         </div>
         <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div className="field">
-            <label>{t("邮箱服务商")}</label>
-            <select className="select" value={presetKey} onChange={(e) => applyPreset(e.target.value)}>
-              {PROVIDER_PRESETS.map((x) => (
-                <option key={x.key} value={x.key}>
-                  {t(x.label)}
-                </option>
-              ))}
-            </select>
-            {preset.note && (
-              <div style={{ fontSize: 11, color: "var(--amber)", lineHeight: 1.5 }}>ⓘ {t(preset.note)}</div>
-            )}
-          </div>
+          {isReauth && (
+            <div style={{ fontSize: 12, color: "var(--mut)", lineHeight: 1.5 }}>
+              {t("更新 {email} 的登录凭据。服务器配置保持不变。", { email: reauth.email })}
+            </div>
+          )}
+
+          {!isReauth && (
+            <div className="field">
+              <label>{t("邮箱服务商")}</label>
+              <select className="select" value={presetKey} onChange={(e) => applyPreset(e.target.value)}>
+                {PROVIDER_PRESETS.map((x) => (
+                  <option key={x.key} value={x.key}>
+                    {t(x.label)}
+                  </option>
+                ))}
+              </select>
+              {preset.note && (
+                <div style={{ fontSize: 11, color: "var(--amber)", lineHeight: 1.5 }}>ⓘ {t(preset.note)}</div>
+              )}
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="field">
               <label>{t("邮箱地址")}</label>
-              <input className="input mono" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input
+                className="input mono"
+                placeholder="you@company.com"
+                value={email}
+                disabled={isReauth}
+                onChange={(e) => setEmail(e.target.value)}
+              />
             </div>
             <div className="field">
               <label>{t("显示名（发件人姓名）")}</label>
-              <input className="input" placeholder={t("你的名字")} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+              <input
+                className="input"
+                placeholder={t("你的名字")}
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+              />
             </div>
           </div>
 
-          {preset.oauth && (
+          {(preset.oauth || reauth?.auth === "oauth2") && (
             <div className="field">
               <label>{t("认证方式")}</label>
               <select
@@ -230,7 +270,7 @@ export function AccountModal(p: Props) {
                 </>
               ) : device ? (
                 <>
-                  <div style={{ fontSize: 12, color: "#6F6A5E" }}>
+                  <div style={{ fontSize: 12, color: "var(--mut)" }}>
                     {t("已在浏览器打开 {brand} 登录页面，请输入以下代码并用", { brand: oauthBrand })} <b>{email || t("你的邮箱")}</b> {t("登录：")}
                   </div>
                   <div
@@ -239,7 +279,7 @@ export function AccountModal(p: Props) {
                   >
                     {device.userCode}
                   </div>
-                  <div style={{ fontSize: 12, color: "#6F6A5E", textAlign: "center" }}>{t("正在等待授权完成…")}</div>
+                  <div style={{ fontSize: 12, color: "var(--mut)", textAlign: "center" }}>{t("正在等待授权完成…")}</div>
                   <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                     <button className="btn-ghost" style={{ height: 34 }} onClick={() => openUrl(device.verificationUri)}>
                       {t("重新打开登录页面")}
@@ -284,44 +324,48 @@ export function AccountModal(p: Props) {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-            <div className="field">
-              <label>{t("收件服务器")}（{preset.protocol === "imap" ? "IMAP · SSL" : "POP3 · SSL"}）</label>
-              <input className="input mono" value={incomingHost} onChange={(e) => setIncomingHost(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>{t("端口")}</label>
-              <input
-                className="input mono"
-                type="number"
-                value={incomingPort}
-                onChange={(e) => setIncomingPort(Number(e.target.value) || 0)}
-              />
-            </div>
-          </div>
+          {!isReauth && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+                <div className="field">
+                  <label>{t("收件服务器")}（{preset.protocol === "imap" ? "IMAP · SSL" : "POP3 · SSL"}）</label>
+                  <input className="input mono" value={incomingHost} onChange={(e) => setIncomingHost(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>{t("端口")}</label>
+                  <input
+                    className="input mono"
+                    type="number"
+                    value={incomingPort}
+                    onChange={(e) => setIncomingPort(Number(e.target.value) || 0)}
+                  />
+                </div>
+              </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
-            <div className="field">
-              <label>{t("发件服务器（SMTP）")}</label>
-              <input className="input mono" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>{t("端口")}</label>
-              <input
-                className="input mono"
-                type="number"
-                value={smtpPort}
-                onChange={(e) => setSmtpPort(Number(e.target.value) || 0)}
-              />
-            </div>
-            <div className="field">
-              <label>{t("加密")}</label>
-              <select className="select" value={smtpSecurity} onChange={(e) => setSmtpSecurity(e.target.value as "ssl" | "starttls")}>
-                <option value="ssl">SSL</option>
-                <option value="starttls">STARTTLS</option>
-              </select>
-            </div>
-          </div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
+                <div className="field">
+                  <label>{t("发件服务器（SMTP）")}</label>
+                  <input className="input mono" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>{t("端口")}</label>
+                  <input
+                    className="input mono"
+                    type="number"
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(Number(e.target.value) || 0)}
+                  />
+                </div>
+                <div className="field">
+                  <label>{t("加密")}</label>
+                  <select className="select" value={smtpSecurity} onChange={(e) => setSmtpSecurity(e.target.value as "ssl" | "starttls")}>
+                    <option value="ssl">SSL</option>
+                    <option value="starttls">STARTTLS</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
 
           {error && <div className="form-error">{error}</div>}
           {ok && <div className="form-ok">{ok}</div>}
@@ -335,7 +379,7 @@ export function AccountModal(p: Props) {
             {busy === "test" ? t("正在测试…") : t("测试连接")}
           </button>
           <button className="btn-primary" style={{ height: 40, padding: "0 22px" }} disabled={!!busy} onClick={doSave}>
-            {busy === "save" ? t("正在验证并保存…") : t("保存账户")}
+            {busy === "save" ? t("正在验证并保存…") : isReauth ? t("保存新凭据") : t("保存账户")}
           </button>
         </div>
       </div>

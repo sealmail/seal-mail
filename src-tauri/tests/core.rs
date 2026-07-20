@@ -17,6 +17,51 @@ fn test_identity() -> Identity {
     }
 }
 
+fn sign_content<'a>(
+    subject: &'a str,
+    body: &'a str,
+    recipients: &'a [String],
+    attachments: &'a [(String, Vec<u8>)],
+    message_id: Option<&'a str>,
+) -> crypto::SignContent<'a> {
+    crypto::SignContent {
+        subject,
+        body_text: body,
+        body_html: None,
+        recipients,
+        attachments,
+        message_id,
+    }
+}
+
+fn default_recipients() -> Vec<String> {
+    vec!["aria@example.com".into()]
+}
+
+fn seal_headers_from(signed: &crypto::SignedHeaders) -> crypto::SealHeaders {
+    let get = |k: &str| {
+        signed
+            .headers
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    crypto::SealHeaders {
+        pubkey: get(crypto::H_PUBKEY),
+        signature: get(crypto::H_SIGNATURE),
+        from: get(crypto::H_FROM),
+        date: get(crypto::H_DATE),
+        body_hash: get(crypto::H_BODY_HASH),
+        version: get(crypto::H_VERSION),
+        subject_hash: get(crypto::H_SUBJECT_HASH),
+        html_hash: get(crypto::H_HTML_HASH),
+        attach_hash: get(crypto::H_ATTACH_HASH),
+        to_hash: get(crypto::H_TO_HASH),
+        mid_hash: get(crypto::H_MID_HASH),
+    }
+}
+
 /// 构造一封（可选签名的）原始邮件
 fn build_raw(
     from_name: &str,
@@ -25,13 +70,16 @@ fn build_raw(
     body: &str,
     identity: Option<&Identity>,
 ) -> Vec<u8> {
+    let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
     let mut b = MessageBuilder::new()
         .from((from_name, from_addr))
         .to(vec![("", "aria@example.com")])
         .subject(subject)
         .text_body(body);
     if let Some(id) = identity {
-        for (name, value) in crypto::sign_email(id, from_addr, body).headers {
+        let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
+        for (name, value) in crypto::sign_email(id, from_addr, &content).unwrap().headers {
             b = b.header(name, Raw::new(value));
         }
     }
@@ -53,44 +101,46 @@ fn trusted_for(identity: &Identity, name: &str, email: &str) -> Vec<TrustedConta
 fn sign_then_verify_roundtrip() {
     let id = test_identity();
     let body = "Hello Aria,\r\n\r\nPlease review the doc.\r\n";
-    let signed = crypto::sign_email(&id, "mara@example.com", body);
-    let get = |k: &str| {
-        signed
-            .headers
-            .iter()
-            .find(|(n, _)| n == k)
-            .map(|(_, v)| v.clone())
-            .unwrap()
-    };
-    let h = crypto::SealHeaders {
-        pubkey: get(crypto::H_PUBKEY),
-        signature: get(crypto::H_SIGNATURE),
-        from: get(crypto::H_FROM),
-        date: get(crypto::H_DATE),
-        body_hash: get(crypto::H_BODY_HASH),
-    };
+    let body_norm = "Hello Aria,\n\nPlease review the doc.";
+    let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
+    let content = sign_content("Review", body, &recipients, &[], Some(mid.as_str()));
+    let signed = crypto::sign_email(&id, "mara@example.com", &content).unwrap();
+    let h = seal_headers_from(&signed);
+    assert_eq!(h.version, "3");
+    let actual = sign_content("Review", body_norm, &recipients, &[], Some(mid.as_str()));
     // CRLF→LF 等规范化后应当一致
-    let (fpr, body_ok, _, _) =
-        crypto::verify_headers(&h, "Hello Aria,\n\nPlease review the doc.").unwrap();
+    let (fpr, body_ok, _, _) = crypto::verify_headers(&h, &actual).unwrap();
     assert!(body_ok, "规范化后的正文哈希必须一致");
     assert_eq!(fpr, id.fingerprint());
 
     // 正文被篡改 → body_ok = false
-    let (_, tampered_ok, signed_hash, got_hash) =
-        crypto::verify_headers(&h, "Hello Aria,\n\nPlease send 5000 USDC now.").unwrap();
+    let tampered = sign_content(
+        "Review",
+        "Hello Aria,\n\nPlease send 5000 USDC now.",
+        &recipients,
+        &[],
+        Some(mid.as_str()),
+    );
+    let (_, tampered_ok, signed_hash, got_hash) = crypto::verify_headers(&h, &tampered).unwrap();
     assert!(!tampered_ok);
     assert_ne!(signed_hash, got_hash);
 
+    // 主题被改 → v2 失败
+    let wrong_subject = sign_content("HACKED", body_norm, &recipients, &[], Some(mid.as_str()));
+    let (_, subject_ok, _, _) = crypto::verify_headers(&h, &wrong_subject).unwrap();
+    assert!(!subject_ok);
+
+    // 收件人被改 → v2 失败（防重放给他人）
+    let other_rcpt = vec!["victim@evil.test".into()];
+    let wrong_to = sign_content("Review", body_norm, &other_rcpt, &[], Some(mid.as_str()));
+    let (_, to_ok, _, _) = crypto::verify_headers(&h, &wrong_to).unwrap();
+    assert!(!to_ok);
+
     // 签名本身被篡改 → Err
-    let mut bad = crypto::SealHeaders {
-        pubkey: h.pubkey.clone(),
-        signature: h.signature.clone(),
-        from: h.from.clone(),
-        date: h.date.clone(),
-        body_hash: h.body_hash.clone(),
-    };
+    let mut bad = h.clone();
     bad.from = "attacker@evil.com".into();
-    assert!(crypto::verify_headers(&bad, "Hello Aria,\n\nPlease review the doc.").is_err());
+    assert!(crypto::verify_headers(&bad, &actual).is_err());
 }
 
 #[test]
@@ -361,6 +411,162 @@ fn e2e_tampered_mail() {
     }
 }
 
+/// 签名时间在 24h 以后 → 即便密钥可信也不给绿标（防离谱未来戳）。
+#[test]
+fn future_signature_date_is_not_verified() {
+    use ed25519_dalek::Signer;
+
+    let id = test_identity();
+    let from = "mara@aragon.eth";
+    let body = "Pay invoice 42";
+    let subject = "Invoice";
+    let recipients = default_recipients();
+    let future = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+    // v2 无 Message-ID：验证旧版兼容与未来戳降级
+    let content = sign_content(subject, body, &recipients, &[], None);
+    let hashes = crypto::content_hashes(&content);
+    let canon = crypto::canon_string_v2(
+        from,
+        &future,
+        &hashes.subject,
+        &hashes.body,
+        &hashes.html,
+        &hashes.attach,
+        &hashes.to,
+    );
+    let sig = id.signing_key.sign(canon.as_bytes());
+    let raw = MessageBuilder::new()
+        .from(("Mara Castellanos", from))
+        .to(vec![("", "aria@example.com")])
+        .subject(subject)
+        .text_body(body)
+        .header(crypto::H_VERSION, Raw::new("2"))
+        .header(crypto::H_METHOD, Raw::new("ed25519"))
+        .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
+        .header(crypto::H_FROM, Raw::new(from))
+        .header(crypto::H_DATE, Raw::new(future))
+        .header(crypto::H_SUBJECT_HASH, Raw::new(hashes.subject))
+        .header(crypto::H_BODY_HASH, Raw::new(hashes.body))
+        .header(crypto::H_HTML_HASH, Raw::new(hashes.html))
+        .header(crypto::H_ATTACH_HASH, Raw::new(hashes.attach))
+        .header(crypto::H_TO_HASH, Raw::new(hashes.to))
+        .header(crypto::H_SIGNATURE, Raw::new(STANDARD.encode(sig.to_bytes())))
+        .write_to_vec()
+        .unwrap();
+    let trusted = trusted_for(&id, "Mara Castellanos", from);
+    let mail = parse_email(&raw, 7, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "signedUnknown");
+    assert!(matches!(mail.verify, VerifyDetail::SignedUnknown { .. }));
+}
+
+/// 攻击者用自签密钥构造含多字节字符的 X-SealMail-Body-Hash。
+/// 旧实现对 `&signed_hash[..12]` 按字节切，会在 UTF-8 字符中间 panic。
+/// 解析路径必须返回 Tampered，绝不能崩溃。
+#[test]
+fn malicious_multibyte_body_hash_does_not_panic() {
+    use ed25519_dalek::Signer;
+
+    let id = test_identity();
+    let from = "attacker@evil.test";
+    let body = "looks fine";
+    // "aa"(2) + 😀×11(共 13 字符)：字节下标 12 落在第 3 个 emoji 中间 → 旧切片会 panic；
+    // 超过 12 字符,展示层必须按字符截断并带省略号
+    let evil_hash = format!("aa{}", "😀".repeat(11));
+    let date = "2026-01-01T00:00:00Z";
+    let canon = crypto::canon_string(from, date, &evil_hash);
+    let sig = id.signing_key.sign(canon.as_bytes());
+    let sig_b64 = STANDARD.encode(sig.to_bytes());
+
+    let raw = MessageBuilder::new()
+        .from(("Attacker", from))
+        .to(vec![("", "victim@example.com")])
+        .subject("hi")
+        .text_body(body)
+        .header(crypto::H_VERSION, Raw::new("1"))
+        .header(crypto::H_METHOD, Raw::new("ed25519"))
+        .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
+        .header(crypto::H_FROM, Raw::new(from))
+        .header(crypto::H_DATE, Raw::new(date))
+        .header(crypto::H_BODY_HASH, Raw::new(evil_hash))
+        .header(crypto::H_SIGNATURE, Raw::new(sig_b64))
+        .write_to_vec()
+        .unwrap();
+
+    let mail = parse_email(&raw, 99, "acc1", "INBOX", true, false, &[]).expect("must not panic");
+    assert_eq!(mail.meta.trust, "tampered");
+    match mail.verify {
+        VerifyDetail::Tampered { signed_hash, got_hash, .. } => {
+            assert!(
+                signed_hash.ends_with('…'),
+                "展示用哈希应安全截断并带省略号: {signed_hash}"
+            );
+            assert!(got_hash.ends_with('…'), "got_hash 也应安全截断: {got_hash}");
+            // 截断后的字符串必须仍是合法 UTF-8（能构造 String 即通过；再断言不含替换符）
+            assert!(!signed_hash.contains('\u{FFFD}'));
+        }
+        other => panic!("应为 Tampered，实际 {:?}", other),
+    }
+}
+
+/// v1 签名 + 另附 HTML：正文签名有效但 HTML 未覆盖 → 不得给完整绿标 Verified
+#[test]
+fn v1_signed_with_html_is_not_full_verified() {
+    use ed25519_dalek::Signer;
+
+    let id = test_identity();
+    let from = "mara@aragon.eth";
+    let body = "Pay 100 only.";
+    let date = chrono::Utc::now().to_rfc3339();
+    let bh = crypto::body_hash_hex(body);
+    let canon = crypto::canon_string(from, &date, &bh);
+    let sig = id.signing_key.sign(canon.as_bytes());
+    let raw = MessageBuilder::new()
+        .from(("Mara Castellanos", from))
+        .to(vec![("", "aria@example.com")])
+        .subject("Pay")
+        .text_body(body)
+        .html_body("<b>Pay 99999 instead</b>")
+        .header(crypto::H_VERSION, Raw::new("1"))
+        .header(crypto::H_METHOD, Raw::new("ed25519"))
+        .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
+        .header(crypto::H_FROM, Raw::new(from))
+        .header(crypto::H_DATE, Raw::new(date))
+        .header(crypto::H_BODY_HASH, Raw::new(bh))
+        .header(crypto::H_SIGNATURE, Raw::new(STANDARD.encode(sig.to_bytes())))
+        .write_to_vec()
+        .unwrap();
+    let trusted = trusted_for(&id, "Mara Castellanos", from);
+    let mail = parse_email(&raw, 88, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "signedUnknown");
+}
+
+/// v2：附件被替换 → Tampered
+#[test]
+fn v2_attachment_swap_is_tampered() {
+    let id = test_identity();
+    let from = "mara@aragon.eth";
+    let body = "see attachment";
+    let subject = "Invoice PDF";
+    let recipients = default_recipients();
+    let attach = vec![("invoice.pdf".into(), b"PDF-REAL".to_vec())];
+    let mid = crypto::generate_message_id();
+    let content = sign_content(subject, body, &recipients, &attach, Some(mid.as_str()));
+    let signed = crypto::sign_email(&id, from, &content).unwrap();
+    let mut b = MessageBuilder::new()
+        .from(("Mara Castellanos", from))
+        .to(vec![("", "aria@example.com")])
+        .subject(subject)
+        .text_body(body)
+        .attachment("application/pdf", "invoice.pdf", b"PDF-FAKE".as_slice());
+    for (name, value) in signed.headers {
+        b = b.header(name, Raw::new(value));
+    }
+    let raw = b.write_to_vec().unwrap();
+    let trusted = trusted_for(&id, "Mara Castellanos", from);
+    let mail = parse_email(&raw, 77, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "tampered");
+}
+
 #[test]
 fn e2e_impersonation_by_display_name() {
     let id = test_identity();
@@ -432,7 +638,10 @@ fn build_raw_eth(
     secret: &[u8; 32],
     address: &str,
 ) -> Vec<u8> {
-    let signed = crypto::sign_email_eth(address, from_addr, body, |msg| {
+    let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
+    let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
+    let signed = crypto::sign_email_eth(address, from_addr, &content, |msg| {
         crypto::eth_personal_sign_with_key(secret, msg)
     })
     .unwrap();
@@ -530,10 +739,13 @@ fn e2e_eth_tampered_mail() {
 fn eth_sign_rejects_wrong_address_binding() {
     // 设备返回的签名恢复出的地址与绑定地址不一致时必须报错（自检）
     let secret = [5u8; 32];
+    let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
+    let content = sign_content("s", "hi", &recipients, &[], Some(mid.as_str()));
     let err = crypto::sign_email_eth(
         "0x0000000000000000000000000000000000000001",
         "a@b.c",
-        "hi",
+        &content,
         |msg| crypto::eth_personal_sign_with_key(&secret, msg),
     );
     assert!(err.is_err());
@@ -777,4 +989,100 @@ fn e2e_self_signed_mail_is_verified() {
         other => panic!("expected Verified, got {:?}", other),
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+
+#[test]
+fn folded_html_part_cannot_ride_on_plaintext_signature() {
+    // 攻击:把签名过的纯文本邮件重打包成 multipart/alternative,HTML 部件用 RFC 折行头
+    // (Content-Type:\r\n\ttext/html)。HTML 检测若只扫原始子串就漏掉 → 攻击 HTML 顶绿标。
+    let id = test_identity();
+    let subject = "Quarterly report";
+    let body = "All numbers are in the attached sheet.";
+    let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
+    let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
+    let signed = crypto::sign_email(&id, "mara@example.com", &content).unwrap();
+    let mut seal_headers = String::new();
+    for (name, value) in &signed.headers {
+        seal_headers.push_str(&format!("{name}: {value}\r\n"));
+    }
+    let raw = format!(
+        "From: Mara <mara@example.com>\r\nTo: aria@example.com\r\nSubject: {subject}\r\n{seal_headers}MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"b1\"\r\n\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n--b1\r\nContent-Type:\r\n\ttext/html; charset=utf-8\r\n\r\n<b>attacker controlled html</b>\r\n--b1--\r\n"
+    );
+    let trusted = trusted_for(&id, "Mara", "mara@example.com");
+    let mail = parse_email(raw.as_bytes(), 301, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(
+        mail.meta.trust, "tampered",
+        "folded-header HTML part must break the plaintext signature"
+    );
+}
+
+#[test]
+fn plaintext_body_mentioning_html_content_type_still_verifies() {
+    // 误报回归:正文引用 "content-type: text/html" 字样的合法纯文本签名邮件不能被判 tampered。
+    let id = test_identity();
+    let body = "Set the header content-type: text/html when serving the page.";
+    let raw = build_raw("Mara", "mara@example.com", "MIME howto", body, Some(&id));
+    let trusted = trusted_for(&id, "Mara", "mara@example.com");
+    let mail = parse_email(&raw, 302, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "verified");
+}
+
+#[test]
+fn deeply_nested_multipart_does_not_crash() {
+    // 恶意深层嵌套:自制 MIME 遍历器(collect_attachment_filenames / find_body_part)
+    // 必须有深度上限,否则递归爆栈直接中止进程。100 层远超上限(32),
+    // 解析应正常返回,正文/主题取不到深部内容也算合理结果。
+    const DEPTH: usize = 100;
+    let mut raw = String::from(
+        "From: Mara <mara@example.com>\r\nTo: aria@example.com\r\nSubject: nested\r\nMIME-Version: 1.0\r\n",
+    );
+    for i in 0..DEPTH {
+        raw.push_str(&format!(
+            "Content-Type: multipart/mixed; boundary=\"nest{i}\"\r\n\r\n--nest{i}\r\n"
+        ));
+    }
+    raw.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\nhello deep\r\n");
+    for i in (0..DEPTH).rev() {
+        raw.push_str(&format!("--nest{i}--\r\n"));
+    }
+    let mail = parse_email(raw.as_bytes(), 400, "acc1", "INBOX", false, false, &[]).unwrap();
+    assert_eq!(mail.meta.subject, "nested");
+    assert_eq!(mail.meta.trust, "unsigned");
+}
+
+/// 签名邮件使用非 ASCII 主题的端到端回归:接收侧对主题的任何
+/// 重解码/规范化都必须与发送侧哈希输入字节级一致,否则误报 tampered。
+fn assert_signed_subject_verifies(subject: &str, uid: u32) {
+    let id = test_identity();
+    let body = "正文内容：请查收季度数据。\n第二行。";
+    let raw = build_raw("Mara", "mara@example.com", subject, body, Some(&id));
+    let trusted = trusted_for(&id, "Mara", "mara@example.com");
+    let mail = parse_email(&raw, uid, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(
+        mail.meta.subject, subject,
+        "接收侧解码后的主题必须与发送侧一致（uid={uid}）"
+    );
+    assert_eq!(
+        mail.meta.trust, "verified",
+        "签名邮件的非 ASCII 主题不能误报（uid={uid}），verify={:?}",
+        mail.verify
+    );
+}
+
+#[test]
+fn e2e_verified_chinese_subject() {
+    assert_signed_subject_verifies("季度报告", 401);
+}
+
+#[test]
+fn e2e_verified_mixed_ascii_chinese_subject() {
+    assert_signed_subject_verifies("Q3 季度报告 final", 402);
+}
+
+#[test]
+fn e2e_verified_emoji_subject() {
+    assert_signed_subject_verifies("季度报告 📊 已更新", 403);
 }

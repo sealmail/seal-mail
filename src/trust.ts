@@ -50,10 +50,10 @@ export function statusText(v: VerifyDetail): { title: string; sub: string; tone:
 }
 
 export const TONE_COLOR: Record<string, string> = {
-  jade: "#1E6B49",
-  gold: "#5F695F",
-  gray: "#626A62",
-  red: "#9A2C1D",
+  jade: "var(--tone-jade)",
+  gold: "var(--tone-gold)",
+  gray: "var(--tone-gray)",
+  red: "var(--tone-red)",
 };
 
 export interface CheckRow {

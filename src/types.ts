@@ -166,6 +166,8 @@ export interface Draft {
   subject: string;
   body: string;
   sign: boolean;
+  /** 本地附件路径（仅本机） */
+  attachmentPaths?: string[];
   updatedAt: number;
 }
 
