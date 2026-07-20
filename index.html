@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // 首帧前恢复上次解析出的主题，避免深色用户在启动 / 打开邮件子窗口时闪白。
+      // 只是绘画提示缓存：真实来源是 CLI prefs，useTheme() 加载后会重写 data-theme 自纠正。
+      // 主窗口与邮件子窗口（WebviewWindow 加载同一 index.html）共用此引导。
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("sealmail.theme") || "light";
+      } catch (e) {
+        document.documentElement.dataset.theme = "light";
+      }
+    </script>
     <title>SealMail 信印</title>
   </head>
 

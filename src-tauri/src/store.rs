@@ -3,7 +3,7 @@ use crate::models::*;
 use crate::secrets_store;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -111,9 +111,10 @@ fn corrupt_backup_path(path: &Path) -> PathBuf {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
+    // 纳秒时间戳：同一文件一秒内两次损坏时备份名不能互相覆盖
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     path.with_file_name(format!("{name}.corrupt.{ts}"))
 }
@@ -159,6 +160,53 @@ pub(crate) fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     atomic_write_bytes(path, s.as_bytes())
+}
+
+/// 跨进程文件锁的有界等待：try_lock + 睡眠重试，约 10 秒拿不到就报错。
+/// 锁内可能做钥匙串 I/O（卡在系统授权弹窗），lock_exclusive 无限等待会把
+/// 其它进程（含持 AppState 锁的 GUI）全部冻住。
+pub(crate) fn lock_exclusive_bounded(file: &File, busy: &str) -> Result<(), String> {
+    use fs2::FileExt;
+    let start = std::time::Instant::now();
+    loop {
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(()),
+            Err(ref e) if e.kind() == fs2::lock_contended_error().kind() => {
+                if start.elapsed() >= std::time::Duration::from_secs(10) {
+                    return Err(busy.to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("获取文件锁失败: {e}")),
+        }
+    }
+}
+
+/// 在 accounts.lock 跨进程锁内读-改-写 accounts.json（同 secrets_store::update_account）。
+/// GUI 常驻进程与 CLI 子进程并发增删账户时，各自拿旧表整表写回会互相覆盖（丢更新）。
+/// 返回落盘后的最新账户表，调用方用它刷新内存态。
+pub fn update_accounts_with(
+    dir: &Path,
+    mutate: impl FnOnce(&mut Vec<Account>),
+) -> Result<Vec<Account>, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    let lock_path = dir.join("accounts.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+        .map_err(|e| format!("打开账户锁失败: {e}"))?;
+    lock_exclusive_bounded(&lock, "账户配置正被另一进程更新，请稍后再试")?;
+
+    let result = (|| {
+        let mut latest: Vec<Account> = read_json(&dir.join("accounts.json"))?;
+        mutate(&mut latest);
+        write_json(&dir.join("accounts.json"), &latest)?;
+        Ok(latest)
+    })();
+    let _ = lock.unlock();
+    result
 }
 
 impl StoreData {

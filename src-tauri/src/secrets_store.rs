@@ -6,9 +6,10 @@
 //!
 //! 权威性规则：磁盘文件说了算。
 //! - 文件是 marker → 数据在钥匙串,钥匙串读不出必须报错,绝不能静默变空表。
-//! - 文件是明文 map → 它只会在钥匙串写失败时产生,必然不旧于钥匙串 → 以文件为准,
-//!   并尝试迁回钥匙串(成功后 marker 覆盖明文;失败下次 load 重试)。
+//! - 文件是明文 map → 它只会在钥匙串写失败时产生,必然不旧于钥匙串 → 以文件为准。
 //!   若反过来让非空钥匙串优先,一次钥匙串故障期间更新的凭据会在故障恢复后被旧数据顶掉。
+//!   迁回钥匙串只在 update_account 的跨进程锁内发生(save 先写钥匙串再盖 marker);
+//!   load 保持纯读取——锁外迁移会与另一进程的锁定更新交错,把刚写入的新凭据顶掉。
 
 use crate::models::AccountSecret;
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,11 @@ impl KeychainBackend for SystemKeychain {
                 .map(Some)
                 .map_err(|err| format!("解析钥匙串凭据失败: {err}")),
             Err(keyring::Error::NoEntry) => Ok(None),
+            // 平台根本没有可用的钥匙串存储（无 secret-service 的 Linux）：
+            // 本来就走纯文件模式，保存也落不到钥匙串，不存在顶掉风险 → 当无钥匙串条目。
+            // 注意「读不出来」的其它错误（钥匙串锁定/D-Bus 抖动等）必须在下面报错，
+            // 静默当空表会让下一次保存把钥匙串里的其它账户整表抹掉。
+            Err(keyring::Error::NoStorageAccess(_)) => Ok(None),
             Err(err) => Err(format!("读取钥匙串失败: {err}")),
         }
     }
@@ -92,11 +98,12 @@ fn write_file_map(dir: &Path, map: &HashMap<String, AccountSecret>) -> Result<()
 }
 
 fn backup_corrupt(p: &Path) -> Option<String> {
+    // 纳秒时间戳：同一文件一秒内两次损坏时备份名不能互相覆盖
     let backup = p.with_extension(format!(
         "json.corrupt.{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
     fs::rename(p, &backup).ok()?;
@@ -144,21 +151,17 @@ pub(crate) fn load_with(
             Ok(None) => Err("凭据标记指向系统钥匙串,但钥匙串中没有对应条目".into()),
             Err(e) => Err(format!("凭据保存在系统钥匙串中，但当前无法读取：{e}")),
         },
-        FileState::Map(m) => {
-            // 文件为准(见模块头);非空时尝试迁回钥匙串,成功才用 marker 替掉明文
-            if !m.is_empty() && kc.write(dir, &m).is_ok() {
-                let _ = write_marker(dir);
-            }
-            Ok(m)
-        }
+        // 文件为准(见模块头)。load 是纯读取：绝不在锁外写钥匙串/改文件，
+        // 迁移只在持锁的 update_account_with 里由 save_with 顺带完成。
+        FileState::Map(m) => Ok(m),
         FileState::Missing => match kc.read(dir) {
-            Ok(Some(m)) => {
-                // marker 丢失但钥匙串有数据:补回 marker,下次不再依赖这个分支
-                let _ = write_marker(dir);
-                Ok(m)
-            }
-            // 无文件、无钥匙串条目(或钥匙串整体不可用) → 全新环境
-            Ok(None) | Err(_) => Ok(HashMap::new()),
+            // 无文件但钥匙串有数据(marker 丢失)：以钥匙串为准。
+            // 保持纯读取,marker 等下一次持锁保存时自然补回。
+            Ok(Some(m)) => Ok(m),
+            // 无文件、无钥匙串条目 → 全新环境
+            Ok(None) => Ok(HashMap::new()),
+            // 钥匙串读失败不能当空表返回：下次保存会把其它账户凭据从钥匙串条目里整表抹掉
+            Err(e) => Err(format!("读取系统钥匙串失败: {e}")),
         },
     }
 }
@@ -182,8 +185,6 @@ fn update_account_with(
     account_id: &str,
     secret: Option<AccountSecret>,
 ) -> Result<HashMap<String, AccountSecret>, String> {
-    use fs2::FileExt;
-
     fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     let lock_path = dir.join("secrets.lock");
     let lock = OpenOptions::new()
@@ -192,8 +193,9 @@ fn update_account_with(
         .create(true)
         .open(&lock_path)
         .map_err(|e| format!("打开凭据锁失败: {e}"))?;
-    lock.lock_exclusive()
-        .map_err(|e| format!("获取凭据锁失败: {e}"))?;
+    // 有界等待：锁内会做钥匙串 I/O（可能卡在系统授权弹窗），
+    // lock_exclusive 无限等待会把其它进程（含持 AppState 锁的 GUI）全部冻住
+    crate::store::lock_exclusive_bounded(&lock, "凭据正被另一进程更新，请稍后再试")?;
 
     let result = (|| {
         let mut latest = load_with(kc, dir)?;
@@ -355,12 +357,72 @@ mod tests {
 
         let loaded = load_with(&kc, &dir).unwrap();
         assert_eq!(loaded.get("a1").unwrap().password, "new-token");
-        // 迁移完成:钥匙串已更新为新数据,磁盘明文被 marker 替换
+        // load 是纯读取：不做钥匙串迁移，钥匙串旧数据与明文文件都原样保留
+        assert_eq!(
+            kc.data.borrow().as_ref().unwrap().get("a1").unwrap().password,
+            "old-revoked-token"
+        );
+        assert!(matches!(read_file_state(&dir), Ok(FileState::Map(_))));
+        // 迁移只在持锁的 update_account_with 里发生：钥匙串写回新数据,明文被 marker 替换
+        update_account_with(&kc, &dir, "a2", Some(secret("pw2"))).unwrap();
         assert_eq!(
             kc.data.borrow().as_ref().unwrap().get("a1").unwrap().password,
             "new-token"
         );
         assert!(matches!(read_file_state(&dir), Ok(FileState::Marker)));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// 写计数假钥匙串：证明 load 路径对钥匙串零写入。
+    #[derive(Default)]
+    struct CountingKeychain {
+        data: RefCell<Option<HashMap<String, AccountSecret>>>,
+        writes: std::cell::Cell<usize>,
+    }
+
+    impl KeychainBackend for CountingKeychain {
+        fn read(&self, _dir: &Path) -> Result<Option<HashMap<String, AccountSecret>>, String> {
+            Ok(self.data.borrow().clone())
+        }
+        fn write(&self, _dir: &Path, map: &HashMap<String, AccountSecret>) -> Result<(), String> {
+            self.writes.set(self.writes.get() + 1);
+            *self.data.borrow_mut() = Some(map.clone());
+            Ok(())
+        }
+    }
+
+    /// 回归：持明文 Map 文件的 load 必须是纯读取——零钥匙串写入、文件不被 marker 覆盖。
+    /// 旧实现在锁外迁移，曾与另一进程的锁定更新交错，把刚写入的新凭据永久顶掉。
+    #[test]
+    fn load_with_map_file_performs_zero_keychain_writes() {
+        let dir = temp();
+        write_file_map(&dir, &map_of("a1", "pw")).unwrap();
+        let kc = CountingKeychain::default();
+        let loaded = load_with(&kc, &dir).unwrap();
+        assert_eq!(loaded.get("a1").unwrap().password, "pw");
+        assert_eq!(
+            kc.writes.get(),
+            0,
+            "load 不得写钥匙串（迁移只在持锁的 update_account_with 里发生）"
+        );
+        assert!(matches!(read_file_state(&dir), Ok(FileState::Map(_))));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// 无文件 + 钥匙串读失败必须报错而不是空表：
+    /// 空表会让下一次保存把钥匙串条目里的其它账户凭据整表抹掉。
+    #[test]
+    fn missing_file_with_keychain_read_error_propagates() {
+        let dir = temp();
+        let kc = FakeKeychain {
+            fail_read: true,
+            ..Default::default()
+        };
+        let err = load_with(&kc, &dir).expect_err("钥匙串读失败不能静默当空表");
+        assert!(err.contains("钥匙串"), "{err}");
+        // 无钥匙串条目（全新环境）仍然是空表
+        let fresh = load_with(&FakeKeychain::default(), &dir).unwrap();
+        assert!(fresh.is_empty());
         let _ = fs::remove_dir_all(dir);
     }
 

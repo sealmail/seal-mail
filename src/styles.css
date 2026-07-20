@@ -73,6 +73,19 @@
   --cat-business-bg: #e8f5fa;
   --cat-ads: #8a6123;
   --cat-ads-bg: #fbf0d9;
+  /* 强调文字 / 状态柔底（供 TSX 内联样式引用，勿再硬编码 hex） */
+  --tone-jade: #1e6b49;
+  --tone-gold: #5f695f;
+  --tone-gray: #626a62;
+  --tone-red: #9a2c1d;
+  --jade-border-soft: #c8dfd1;
+  --red-soft-bg: #fbece9;
+  --btn-disabled-bg: #d8d4ce;
+  /* 邮件列表选中行左侧的信任色条 */
+  --trustbar-ok: #087443;
+  --trustbar-unknown: #657164;
+  --trustbar-unsigned: #929b93;
+  --trustbar-bad: #9f2f24;
   --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --serif: "IBM Plex Serif", serif;
@@ -142,6 +155,17 @@ html[data-theme="dark"] {
   --cat-business-bg: #16262e;
   --cat-ads: #cfa050;
   --cat-ads-bg: #2e2818;
+  --tone-jade: #35c484;
+  --tone-gold: #9aa398;
+  --tone-gray: #9aa398;
+  --tone-red: #e07068;
+  --jade-border-soft: #24503c;
+  --red-soft-bg: #3a1e1c;
+  --btn-disabled-bg: #3a403a;
+  --trustbar-ok: #2db87a;
+  --trustbar-unknown: #7a8278;
+  --trustbar-unsigned: #5a6258;
+  --trustbar-bad: #e07068;
 }
 .search-scope-hint {
   font-size: 10px;

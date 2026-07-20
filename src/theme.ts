@@ -5,6 +5,9 @@ import { getThemePref, type ThemePref } from "./api";
 
 let currentPref: ThemePref = "system";
 
+/** 解析结果（light/dark）的首帧缓存键：index.html 内联引导脚本在绘制前读取防深色闪白 */
+const THEME_CACHE_KEY = "sealmail.theme";
+
 function darkQuery() {
   return window.matchMedia("(prefers-color-scheme: dark)");
 }
@@ -13,7 +16,14 @@ function darkQuery() {
 export function applyTheme(pref: ThemePref) {
   currentPref = pref;
   const dark = pref === "dark" || (pref === "system" && darkQuery().matches);
-  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  const resolved = dark ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", resolved);
+  try {
+    // CLI prefs 仍是真实来源；这里只是首帧绘画提示，prefs 加载后 applyTheme 会自纠正
+    localStorage.setItem(THEME_CACHE_KEY, resolved);
+  } catch {
+    // localStorage 不可用时跳过缓存，不影响主题本身
+  }
 }
 
 /**

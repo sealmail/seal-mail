@@ -32,7 +32,8 @@ pub fn log(msg: impl AsRef<str>) {
     );
     eprint!("{line}");
     let Some(path) = LOG_PATH.get() else { return };
-    let _guard = WRITE_LOCK.lock().unwrap();
+    // 若曾有线程持锁 panic，恢复而不是永久毒化（日志绝不能反过来把业务搞挂）
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Ok(meta) = fs::metadata(path) {
         if meta.len() > MAX_LOG_BYTES {
             let _ = fs::rename(path, path.with_extension("log.old"));

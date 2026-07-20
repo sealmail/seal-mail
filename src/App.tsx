@@ -1613,7 +1613,7 @@ function MailApp() {
               </button>
             </div>
             <div className="modal-body" style={{ fontSize: 13, lineHeight: 1.7, color: "var(--mut)" }}>
-              「{selected.meta.subject}」{t("已在回收站中，继续删除将")}<b style={{ color: "#9A2C1D" }}>{t("从服务器上永久移除，无法恢复")}</b>。
+              「{selected.meta.subject}」{t("已在回收站中，继续删除将")}<b style={{ color: "var(--tone-red)" }}>{t("从服务器上永久移除，无法恢复")}</b>。
             </div>
             <div className="modal-foot">
               <button className="btn-ghost" style={{ height: 40 }} onClick={() => setConfirmDelete(false)}>

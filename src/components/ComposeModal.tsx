@@ -189,7 +189,7 @@ export function ComposeModal(p: Props) {
                   borderRadius: 9,
                   padding: "0 14px",
                   height: 44,
-                  background: "#fff",
+                  background: "var(--surface)",
                 }}
               >
                 <span style={{ fontSize: 11, fontWeight: 600, color: "var(--mut-3)", width: 42, flexShrink: 0 }}>{t("发自")}</span>
@@ -209,7 +209,7 @@ export function ComposeModal(p: Props) {
                   <span style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--ink-2)" }}>{account?.email}</span>
                 )}
                 {sign && (
-                  <span style={{ marginLeft: "auto", fontSize: 11, color: "#1E6B49", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--tone-jade)", fontWeight: 600, whiteSpace: "nowrap" }}>
                     ● {isLedger ? t("Ledger 签名") : t("本地密钥签名")}
                   </span>
                 )}
@@ -237,22 +237,22 @@ export function ComposeModal(p: Props) {
                   fontSize: 12,
                   color: "var(--mut)",
                   background: sign ? "var(--jade-bg)" : "var(--bg-chip)",
-                  border: `1px solid ${sign ? "#c8dfd1" : "var(--border-3)"}`,
+                  border: `1px solid ${sign ? "var(--jade-border-soft)" : "var(--border-3)"}`,
                   borderRadius: 9,
                   padding: "12px 14px",
                   cursor: "pointer",
                 }}
               >
-                <input type="checkbox" checked={sign} onChange={(e) => setSign(e.target.checked)} style={{ accentColor: "#1E6B49" }} />
+                <input type="checkbox" checked={sign} onChange={(e) => setSign(e.target.checked)} style={{ accentColor: "var(--tone-jade)" }} />
                 <span style={{ fontSize: 15 }}>🔒</span>
                 <span>
                   {isLedger ? (
                     <>
-                      {t("用")} <b style={{ color: "#1E6B49" }}>{t("Ledger 硬件密钥")}（{idShort}）</b>{t("签名，发送时需在设备上确认。")}
+                      {t("用")} <b style={{ color: "var(--tone-jade)" }}>{t("Ledger 硬件密钥")}（{idShort}）</b>{t("签名，发送时需在设备上确认。")}
                     </>
                   ) : (
                     <>
-                      {t("用本机")} <b style={{ color: "#1E6B49" }}>{t("SealMail 密钥")}（Ed25519 · {idShort}）</b>{t("签名。")}
+                      {t("用本机")} <b style={{ color: "var(--tone-jade)" }}>{t("SealMail 密钥")}（Ed25519 · {idShort}）</b>{t("签名。")}
                     </>
                   )}
                   {t("装有 SealMail 的收件人会看到完整封印；普通邮箱收件人只会在结尾看到一行低调的签名说明，不影响阅读。")}
@@ -292,7 +292,7 @@ export function ComposeModal(p: Props) {
           {step === 2 && result && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "14px 0" }}>
               <Seal trust="verified" size={104} />
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#1E6B49", marginTop: 18 }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "var(--tone-jade)", marginTop: 18 }}>
                 {result.signed ? t("已签名并发送") : t("已发送（未签名）")}
               </div>
               <div style={{ fontSize: 12.5, color: "var(--mut)", marginTop: 7, maxWidth: 380, lineHeight: 1.6 }}>

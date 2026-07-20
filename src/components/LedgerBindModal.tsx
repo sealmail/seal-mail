@@ -76,14 +76,14 @@ export function LedgerBindModal(p: Props) {
                   <div
                     className="card-row"
                     key={r.index}
-                    style={{ cursor: "pointer", background: selected?.index === r.index ? "var(--bg-active)" : "#fff" }}
+                    style={{ cursor: "pointer", background: selected?.index === r.index ? "var(--bg-active)" : "var(--surface)" }}
                     onClick={() => setSelected(r)}
                   >
                     <div
                       className="ack-box"
                       style={
                         selected?.index === r.index
-                          ? { borderColor: "#1E6B49", background: "#1E6B49" }
+                          ? { borderColor: "var(--tone-jade)", background: "var(--tone-jade)" }
                           : undefined
                       }
                     >

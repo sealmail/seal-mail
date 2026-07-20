@@ -160,6 +160,14 @@ fn load_attachments(args: &[String]) -> Result<Vec<(String, Vec<u8>)>, String> {
 
 /// 取账户凭据；OAuth 临近过期时阻塞刷新并写回 secrets.json（CLI 子进程无 watcher 时也要能续命）。
 fn account_secret(core: &mut Core, account_id: &str) -> Result<AccountSecret, String> {
+    account_secret_with(core, account_id, crate::oauth::refresh_tokens_blocking)
+}
+
+fn account_secret_with(
+    core: &mut Core,
+    account_id: &str,
+    refresh: impl FnOnce(&crate::oauth::OAuthTokens) -> Result<crate::oauth::OAuthTokens, String>,
+) -> Result<AccountSecret, String> {
     let mut secret = core.data.secret(account_id)?;
     let Some(tokens) = secret.oauth.clone() else {
         return Ok(secret);
@@ -167,10 +175,12 @@ fn account_secret(core: &mut Core, account_id: &str) -> Result<AccountSecret, St
     if !tokens.needs_refresh() {
         return Ok(secret);
     }
-    let refreshed = crate::oauth::resolve_proactive_refresh(
-        &tokens,
-        crate::oauth::refresh_tokens_blocking(&tokens),
-    )?;
+    let refreshed = crate::oauth::resolve_proactive_refresh(&tokens, refresh(&tokens))?;
+    if refreshed == tokens {
+        // 提前刷新失败沿用了未过期的旧令牌：不能回写。另一进程可能刚轮换
+        // refresh_token 并落盘，旧值写回会把新凭据顶掉（refresh token 轮换后即失效）。
+        return Ok(secret);
+    }
     secret.oauth = Some(refreshed);
     core.data.update_secret(account_id, secret.clone())?;
     Ok(secret)
@@ -1033,5 +1043,116 @@ pub fn main_entry() {
         // 双语翻译统一在这里做（见 i18n::tr_error）
         eprintln!("error: {}", crate::i18n::tr_error(&err));
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static N: AtomicUsize = AtomicUsize::new(0);
+
+    fn temp_dir() -> PathBuf {
+        let id = N.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "sealmail-cli-{}-{}-{}",
+            std::process::id(),
+            id,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|t| t.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn oauth_secret(expires_in: i64) -> AccountSecret {
+        AccountSecret {
+            password: String::new(),
+            smtp_password: None,
+            oauth: Some(crate::oauth::OAuthTokens {
+                access_token: "old-access".into(),
+                refresh_token: "old-refresh".into(),
+                expires_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)
+                    + expires_in,
+                client_id: "client".into(),
+                client_secret: None,
+                provider: "microsoft".into(),
+            }),
+        }
+    }
+
+    /// 带一个 OAuth 账户的 Core（凭据已落盘）。
+    fn core_with_oauth_account(dir: &std::path::Path) -> Core {
+        let mut core = Core::load(dir.to_path_buf()).expect("load core");
+        core.data.accounts.push(Account {
+            id: "acc1".into(),
+            label: "Test".into(),
+            email: "mara@example.test".into(),
+            display_name: "Mara".into(),
+            protocol: IncomingProtocol::Imap,
+            incoming_host: "imap.example.test".into(),
+            incoming_port: 993,
+            smtp_host: "smtp.example.test".into(),
+            smtp_port: 465,
+            smtp_security: "ssl".into(),
+            username: "mara@example.test".into(),
+            auth: "oauth2".into(),
+        });
+        core.data.save_accounts().unwrap();
+        core.data.secrets.insert("acc1".into(), oauth_secret(30));
+        core.data.save_secrets().unwrap();
+        core
+    }
+
+    fn set_dir_writable(dir: &std::path::Path, writable: bool) {
+        let mut perms = fs::metadata(dir).unwrap().permissions();
+        perms.set_readonly(!writable);
+        fs::set_permissions(dir, perms).unwrap();
+    }
+
+    /// 回归：提前刷新失败、旧令牌未过期时直接沿用，绝不能回写磁盘——
+    /// 另一进程可能刚轮换 refresh_token 落盘，旧值写回会把新凭据顶掉。
+    /// 配置目录设为只读：任何回写尝试（锁文件/marker/明文）都会报错暴露。
+    #[test]
+    fn proactive_refresh_failure_skips_write_back_of_unchanged_tokens() {
+        let dir = temp_dir();
+        let mut core = core_with_oauth_account(&dir);
+        set_dir_writable(&dir, false);
+        let result = account_secret_with(&mut core, "acc1", |_| {
+            Err("token endpoint offline".to_string())
+        });
+        set_dir_writable(&dir, true);
+        let secret = result.expect("未过期令牌在刷新失败时必须直接沿用，不做任何磁盘回写");
+        assert_eq!(secret.oauth.unwrap().access_token, "old-access");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 对照：刷新成功拿到新令牌时必须回写落盘。
+    #[test]
+    fn proactive_refresh_success_writes_back_new_tokens() {
+        let dir = temp_dir();
+        let mut core = core_with_oauth_account(&dir);
+        let secret = account_secret_with(&mut core, "acc1", |old| {
+            let mut t = old.clone();
+            t.access_token = "new-access".into();
+            Ok(t)
+        })
+        .expect("刷新成功");
+        assert_eq!(secret.oauth.as_ref().unwrap().access_token, "new-access");
+        let reloaded = Core::load(dir.clone()).expect("reload");
+        assert_eq!(
+            reloaded.data.secret("acc1").unwrap().oauth.unwrap().access_token,
+            "new-access",
+            "新令牌必须回写到磁盘"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

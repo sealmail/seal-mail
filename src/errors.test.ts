@@ -66,4 +66,34 @@ describe("classifyError", () => {
     expect(e.kind).toBe("server");
     expect(e.message.startsWith("同步失败")).toBe(true);
   });
+
+  test("OAuth2 缺 Client ID/Secret 归为配置错误，原样展示且不推重新授权", () => {
+    applyLangPref("zh");
+    // 后端真实文案（src-tauri/src/oauth.rs）：初次配置时还没有任何授权可「重新」
+    const e = classifyError("Gmail OAuth2 需要填写 Google Cloud OAuth Client ID/Secret");
+    expect(e.kind).toBe("config");
+    expect(e.message).toContain("需要填写");
+    expect(e.message).not.toContain("重新授权");
+  });
+
+  test("不支持的 OAuth2 服务商归为配置错误", () => {
+    applyLangPref("zh");
+    const e = classifyError("不支持的 OAuth2 服务商");
+    expect(e.kind).toBe("config");
+    expect(e.message).toContain("不支持的 OAuth2 服务商");
+  });
+
+  test("缺少 refresh_token（offline_access）归为配置错误而非网络错误", () => {
+    applyLangPref("zh");
+    // 后端真实文案（src-tauri/src/oauth.rs）：scope/配置问题，不是断网
+    const e = classifyError("令牌响应缺少 refresh_token（请确认 offline_access 权限）");
+    expect(e.kind).toBe("config");
+    expect(e.message).toContain("refresh_token");
+  });
+
+  test("offline 断网仍是网络错误（词边界收紧后不误伤）", () => {
+    applyLangPref("zh");
+    const e = classifyError("请求失败: network is offline");
+    expect(e.kind).toBe("network");
+  });
 });

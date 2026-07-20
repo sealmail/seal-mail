@@ -1029,3 +1029,60 @@ fn plaintext_body_mentioning_html_content_type_still_verifies() {
     let mail = parse_email(&raw, 302, "acc1", "INBOX", true, false, &trusted).unwrap();
     assert_eq!(mail.meta.trust, "verified");
 }
+
+#[test]
+fn deeply_nested_multipart_does_not_crash() {
+    // 恶意深层嵌套:自制 MIME 遍历器(collect_attachment_filenames / find_body_part)
+    // 必须有深度上限,否则递归爆栈直接中止进程。100 层远超上限(32),
+    // 解析应正常返回,正文/主题取不到深部内容也算合理结果。
+    const DEPTH: usize = 100;
+    let mut raw = String::from(
+        "From: Mara <mara@example.com>\r\nTo: aria@example.com\r\nSubject: nested\r\nMIME-Version: 1.0\r\n",
+    );
+    for i in 0..DEPTH {
+        raw.push_str(&format!(
+            "Content-Type: multipart/mixed; boundary=\"nest{i}\"\r\n\r\n--nest{i}\r\n"
+        ));
+    }
+    raw.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\nhello deep\r\n");
+    for i in (0..DEPTH).rev() {
+        raw.push_str(&format!("--nest{i}--\r\n"));
+    }
+    let mail = parse_email(raw.as_bytes(), 400, "acc1", "INBOX", false, false, &[]).unwrap();
+    assert_eq!(mail.meta.subject, "nested");
+    assert_eq!(mail.meta.trust, "unsigned");
+}
+
+/// 签名邮件使用非 ASCII 主题的端到端回归:接收侧对主题的任何
+/// 重解码/规范化都必须与发送侧哈希输入字节级一致,否则误报 tampered。
+fn assert_signed_subject_verifies(subject: &str, uid: u32) {
+    let id = test_identity();
+    let body = "正文内容：请查收季度数据。\n第二行。";
+    let raw = build_raw("Mara", "mara@example.com", subject, body, Some(&id));
+    let trusted = trusted_for(&id, "Mara", "mara@example.com");
+    let mail = parse_email(&raw, uid, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(
+        mail.meta.subject, subject,
+        "接收侧解码后的主题必须与发送侧一致（uid={uid}）"
+    );
+    assert_eq!(
+        mail.meta.trust, "verified",
+        "签名邮件的非 ASCII 主题不能误报（uid={uid}），verify={:?}",
+        mail.verify
+    );
+}
+
+#[test]
+fn e2e_verified_chinese_subject() {
+    assert_signed_subject_verifies("季度报告", 401);
+}
+
+#[test]
+fn e2e_verified_mixed_ascii_chinese_subject() {
+    assert_signed_subject_verifies("Q3 季度报告 final", 402);
+}
+
+#[test]
+fn e2e_verified_emoji_subject() {
+    assert_signed_subject_verifies("季度报告 📊 已更新", 403);
+}

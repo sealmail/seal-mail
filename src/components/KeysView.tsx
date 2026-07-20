@@ -225,7 +225,7 @@ export function KeysView(p: Props) {
           <AppIcon className="keys-hero-icon" />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)" }}>{t("我的签名身份")}</div>
-            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "#1E6B49", marginTop: 3 }}>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--tone-jade)", marginTop: 3 }}>
               {isLedger
                 ? `Ledger · secp256k1 · ${p.identity?.ledgerPath ?? ""}`
                 : `Ed25519 · ${t("本地生成")} · ${p.identity ? p.identity.created.slice(0, 10) : "…"}`}
@@ -238,7 +238,7 @@ export function KeysView(p: Props) {
 
         <div className="section-label">{t("签名密钥（发送签名邮件时使用其中一个）")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "#fff" }}>
+          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "var(--surface)" }}>
             <div
               style={{
                 width: 44, height: 30, borderRadius: 6, background: "var(--ink)",
@@ -262,7 +262,7 @@ export function KeysView(p: Props) {
             )}
           </div>
 
-          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "#fff" }}>
+          <div className="card-row" style={{ border: "1px solid var(--border-2)", borderRadius: 12, background: "var(--surface)" }}>
             <div
               style={{
                 width: 44, height: 30, borderRadius: 6, background: "var(--ink)", position: "relative",
@@ -339,7 +339,7 @@ export function KeysView(p: Props) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-2)" }}>{t("SealMail 信印")}</div>
               {updated ? (
-                <div style={{ fontSize: 11.5, color: "#1E6B49", marginTop: 2 }}>✓ {t("已是最新版本")}</div>
+                <div style={{ fontSize: 11.5, color: "var(--tone-jade)", marginTop: 2 }}>✓ {t("已是最新版本")}</div>
               ) : updateInfo?.available ? (
                 <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: 2 }}>
                   ↓ {t("新版本 v{v} 可用", { v: updateInfo.latestVersion })}

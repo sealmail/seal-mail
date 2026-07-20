@@ -341,8 +341,15 @@ fn filename_from_part_headers(headers: &[u8]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// 自制 MIME 遍历器的递归深度上限：超过即停止下钻（视为没找到相关部件）。
+/// 防止恶意深层嵌套邮件把 watcher/sync 线程栈打爆（栈溢出会直接中止进程，不可捕获）。
+const MAX_MIME_WALK_DEPTH: usize = 32;
+
 /// 遍历 MIME 树，按与 mail-parser attachments() 相近的顺序收集附件文件名。
-fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<String>) {
+fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<String>, depth: usize) {
+    if depth >= MAX_MIME_WALK_DEPTH {
+        return;
+    }
     let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
     let content_type_lower = content_type.to_ascii_lowercase();
     if let Some(boundary) = header_param(&content_type, "boundary") {
@@ -366,7 +373,7 @@ fn collect_attachment_filenames(headers: &[u8], body: &[u8], out: &mut Vec<Strin
             let Some((part_headers, part_body)) = split_message(part) else {
                 continue;
             };
-            collect_attachment_filenames(part_headers, part_body, out);
+            collect_attachment_filenames(part_headers, part_body, out, depth + 1);
         }
         return;
     }
@@ -391,7 +398,7 @@ fn attachment_filenames_from_raw(raw: &[u8]) -> Vec<String> {
         return Vec::new();
     };
     let mut names = Vec::new();
-    collect_attachment_filenames(headers, body, &mut names);
+    collect_attachment_filenames(headers, body, &mut names, 0);
     names
 }
 
@@ -471,7 +478,10 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn find_body_part(headers: &[u8], body: &[u8], want_html: bool) -> Option<String> {
+fn find_body_part(headers: &[u8], body: &[u8], want_html: bool, depth: usize) -> Option<String> {
+    if depth >= MAX_MIME_WALK_DEPTH {
+        return None;
+    }
     let content_type = header_value_ascii(headers, "Content-Type").unwrap_or_default();
     let content_type_lower = content_type.to_ascii_lowercase();
     if let Some(boundary) = header_param(&content_type, "boundary") {
@@ -496,7 +506,7 @@ fn find_body_part(headers: &[u8], body: &[u8], want_html: bool) -> Option<String
             let Some((part_headers, part_body)) = split_message(part) else {
                 continue;
             };
-            if let Some(found) = find_body_part(part_headers, part_body, want_html) {
+            if let Some(found) = find_body_part(part_headers, part_body, want_html, depth + 1) {
                 return Some(found);
             }
         }
@@ -518,7 +528,7 @@ fn fallback_body(raw: &[u8], want_html: bool) -> Option<String> {
         .to_ascii_lowercase()
         .starts_with("multipart/")
     {
-        find_body_part(headers, body, want_html)
+        find_body_part(headers, body, want_html, 0)
     } else {
         Some(body_from_part(headers, body))
     }

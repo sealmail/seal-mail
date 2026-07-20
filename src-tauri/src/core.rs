@@ -346,16 +346,20 @@ pub fn save_account(
     account: Account,
     secret: AccountSecret,
 ) -> Result<Account, String> {
-    s.accounts.retain(|a| a.id != account.id);
-    s.accounts.push(account.clone());
-    s.save_accounts()?;
+    // 跨进程锁内读-改-写 accounts.json，再用最新表刷新内存：
+    // GUI 与 CLI 并发增删账户时整表写回会互相覆盖（丢更新）
+    s.accounts = crate::store::update_accounts_with(&s.dir, |accounts| {
+        accounts.retain(|a| a.id != account.id);
+        accounts.push(account.clone());
+    })?;
     s.secrets = crate::secrets_store::update_account(&s.dir, &account.id, Some(secret))?;
     Ok(account)
 }
 
 pub fn remove_account(s: &mut StoreData, account_id: String) -> Result<(), String> {
-    s.accounts.retain(|a| a.id != account_id);
-    s.save_accounts()?;
+    s.accounts = crate::store::update_accounts_with(&s.dir, |accounts| {
+        accounts.retain(|a| a.id != account_id);
+    })?;
     s.secrets = crate::secrets_store::update_account(&s.dir, &account_id, None)?;
     Ok(())
 }
@@ -1190,7 +1194,11 @@ pub fn apply_filters(
     account_id: &str,
     secret: &AccountSecret,
 ) -> Result<ApplyResult, String> {
-    sync_messages(s, account_id, "INBOX", secret)?;
+    // 与 locate_message 一致：另一进程正在同步本目录（同步锁竞争）时只记日志、
+    // 继续用本地缓存整理，不把「正在同步中」抛成用户可见的硬错误
+    if let Err(e) = sync_messages(s, account_id, "INBOX", secret) {
+        crate::logging::log(format!("[filters] 应用规则前同步 INBOX 失败: {e}"));
+    }
     let account = s.account(account_id)?;
     let trusted = s.trusted_for_verify(&account);
     let mails: Vec<EmailFull> = db::list(&s.db, account_id, "INBOX", 0, 200)?

@@ -102,12 +102,12 @@ export function ProfileSlideOver(p: Props) {
   }
 
   const noteColors = {
-    jade: { bg: "var(--jade-bg)", border: "#c8dfd1", fg: "var(--jade)" },
+    jade: { bg: "var(--jade-bg)", border: "var(--jade-border-soft)", fg: "var(--jade)" },
     gray: { bg: "var(--gray-bg)", border: "var(--border-3)", fg: "var(--gray)" },
-    red: { bg: "#FBECE9", border: "#F2D7D0", fg: "#9A2C1D" },
+    red: { bg: "var(--red-soft-bg)", border: "var(--red-border)", fg: "var(--tone-red)" },
   }[noteTone];
 
-  const statusBg = { jade: "var(--jade-bg)", gold: "var(--amber-bg)", gray: "var(--gray-bg)", red: "#FBECE9" }[st.tone];
+  const statusBg = { jade: "var(--jade-bg)", gold: "var(--amber-bg)", gray: "var(--gray-bg)", red: "var(--red-soft-bg)" }[st.tone];
 
   return (
     <>
@@ -150,7 +150,7 @@ export function ProfileSlideOver(p: Props) {
             {sources.map((s, i) => (
               <div className={`check ${s.kind}`} key={i} style={{ alignItems: "center" }}>
                 <div className="dot">{s.kind === "ok" ? "✓" : s.kind === "bad" ? "✕" : "–"}</div>
-                <span style={{ fontSize: 12.5, color: "#34383F", flex: 1 }}>{s.label}</span>
+                <span style={{ fontSize: 12.5, color: "var(--ink-3)", flex: 1 }}>{s.label}</span>
                 <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mut)", maxWidth: 220, textAlign: "right", wordBreak: "break-all" }}>
                   {s.val}
                 </span>
@@ -160,8 +160,8 @@ export function ProfileSlideOver(p: Props) {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 26 }}>
             {stats.map((s, i) => (
-              <div key={i} style={{ border: "1px solid var(--border-2)", borderRadius: 11, padding: 14, background: "#fff" }}>
-                <div style={{ fontSize: 21, fontWeight: 700, color: s.red ? "#9A2C1D" : "var(--ink)", fontFamily: "var(--mono)" }}>
+              <div key={i} style={{ border: "1px solid var(--border-2)", borderRadius: 11, padding: 14, background: "var(--surface)" }}>
+                <div style={{ fontSize: 21, fontWeight: 700, color: s.red ? "var(--tone-red)" : "var(--ink)", fontFamily: "var(--mono)" }}>
                   {s.num}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 3 }}>{s.label}</div>

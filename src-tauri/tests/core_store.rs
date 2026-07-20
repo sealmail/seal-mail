@@ -148,6 +148,38 @@ fn reload_accounts_from_disk_picks_up_cli_added_account() {
     fs::remove_dir_all(dir).ok();
 }
 
+/// 两个线程（模拟 GUI 常驻进程 + CLI 子进程）并发新增不同账户：
+/// 锁内读-改-写必须保住双方；旧实现各自拿旧表整表写回会丢掉其中一个。
+#[test]
+fn concurrent_save_account_preserves_both_accounts() {
+    let (dir, _store) = load_store("concurrent-accounts");
+    let mut joins = Vec::new();
+    for (id, email) in [("acc-a", "a@example.test"), ("acc-b", "b@example.test")] {
+        let dir = dir.clone();
+        joins.push(std::thread::spawn(move || {
+            let mut store = StoreData::load(dir).expect("load store");
+            core::save_account(
+                &mut store,
+                sample_account(id, email),
+                AccountSecret {
+                    password: "pw".into(),
+                    smtp_password: None,
+                    oauth: None,
+                },
+            )
+            .expect("save_account");
+        }));
+    }
+    for join in joins {
+        join.join().unwrap();
+    }
+
+    let reloaded = StoreData::load(dir.clone()).expect("reload accounts");
+    assert_eq!(reloaded.account("acc-a").unwrap().email, "a@example.test");
+    assert_eq!(reloaded.account("acc-b").unwrap().email, "b@example.test");
+    fs::remove_dir_all(dir).ok();
+}
+
 #[test]
 fn pop3_server_uidl_gone_only_deletes_inbox_not_archive() {
     let uidl_gone = "uidl-archived".to_string();

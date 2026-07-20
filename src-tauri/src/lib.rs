@@ -527,6 +527,11 @@ async fn fresh_secret(
         return Ok(secret);
     }
     let refreshed = oauth::resolve_proactive_refresh(tokens, oauth::refresh_tokens(tokens).await)?;
+    if refreshed == *tokens {
+        // 提前刷新失败沿用了未过期的旧令牌：不能回写——另一进程可能刚轮换
+        // refresh_token 落盘，旧值写回会把新凭据顶掉（见 cli.rs account_secret）。
+        return Ok(secret);
+    }
     let mut updated = secret;
     updated.oauth = Some(refreshed);
     let mut s = state.lock();
@@ -684,6 +689,8 @@ fn list_cached(
 struct SyncResult {
     added: u32,
     total: i64,
+    /// UIDVALIDITY 变化导致本地该目录缓存被清空重建（前端据此整表刷新）
+    uidvalidity_reset: bool,
 }
 
 /// 与服务器增量同步：只下载新邮件；回扫最近窗口的已读/星标并检测服务器侧删除
@@ -701,6 +708,7 @@ async fn sync_messages(
     Ok(SyncResult {
         added: result.added,
         total: result.total,
+        uidvalidity_reset: result.uidvalidity_reset,
     })
 }
 
@@ -719,6 +727,7 @@ async fn sync_older_messages(
     Ok(SyncResult {
         added: result.added,
         total: result.total,
+        uidvalidity_reset: result.uidvalidity_reset,
     })
 }
 

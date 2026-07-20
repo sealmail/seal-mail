@@ -45,11 +45,11 @@ function errorIsAuth(error: AppError | string): boolean {
 }
 
 const BAR_COLOR: Record<string, string> = {
-  verified: "#087443",
-  signedUnknown: "#657164",
-  unsigned: "#929b93",
-  tampered: "#9f2f24",
-  impersonation: "#9f2f24",
+  verified: "var(--trustbar-ok)",
+  signedUnknown: "var(--trustbar-unknown)",
+  unsigned: "var(--trustbar-unsigned)",
+  tampered: "var(--trustbar-bad)",
+  impersonation: "var(--trustbar-bad)",
 };
 
 /** 固定行高（与 .mail-row 视觉一致），虚拟列表用 */

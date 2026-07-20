@@ -270,7 +270,7 @@ export function AccountModal(p: Props) {
                 </>
               ) : device ? (
                 <>
-                  <div style={{ fontSize: 12, color: "#6F6A5E" }}>
+                  <div style={{ fontSize: 12, color: "var(--mut)" }}>
                     {t("已在浏览器打开 {brand} 登录页面，请输入以下代码并用", { brand: oauthBrand })} <b>{email || t("你的邮箱")}</b> {t("登录：")}
                   </div>
                   <div
@@ -279,7 +279,7 @@ export function AccountModal(p: Props) {
                   >
                     {device.userCode}
                   </div>
-                  <div style={{ fontSize: 12, color: "#6F6A5E", textAlign: "center" }}>{t("正在等待授权完成…")}</div>
+                  <div style={{ fontSize: 12, color: "var(--mut)", textAlign: "center" }}>{t("正在等待授权完成…")}</div>
                   <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                     <button className="btn-ghost" style={{ height: 34 }} onClick={() => openUrl(device.verificationUri)}>
                       {t("重新打开登录页面")}
