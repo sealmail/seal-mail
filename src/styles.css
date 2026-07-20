@@ -273,7 +273,7 @@ input, textarea, select { font-family: inherit; }
   background: var(--red-bg); border-color: var(--red-bg-strong); color: var(--red);
 }
 .account-row-wrap { position: relative; display: flex; align-items: stretch; }
-.account-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 34px 4px 10px; border-radius: 8px; cursor: pointer; }
+.account-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 52px 4px 10px; border-radius: 8px; cursor: pointer; }
 .account-row:hover { background: #ecf1e9; }
 .account-row.active { background: var(--bg-active-deep); }
 .account-row .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -282,18 +282,24 @@ input, textarea, select { font-family: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .account-row .sys { font-size: 10px; color: var(--mut-3); }
+.account-actions {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 2px;
+  opacity: 0; pointer-events: none;
+}
+.account-row-wrap:hover .account-actions {
+  opacity: 1; pointer-events: auto;
+}
 .account-action {
-  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
   width: 23px; height: 23px; border: 1px solid transparent; border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   background: transparent; color: var(--mut-3); cursor: pointer;
-  font-size: 15px; line-height: 1; opacity: 0; pointer-events: none;
+  font-size: 14px; line-height: 1; padding: 0;
 }
-.account-row-wrap:hover .account-action,
-.account-row.active + .account-action {
-  opacity: 1; pointer-events: auto;
+.account-action.reauth:hover {
+  background: var(--bg-chip); border-color: var(--border-2); color: var(--ink-3);
 }
-.account-action:hover {
+.account-action.danger:hover {
   background: var(--red-bg); border-color: var(--red-bg-strong); color: var(--red);
 }
 
@@ -369,7 +375,15 @@ input, textarea, select { font-family: inherit; }
 .list-error-bar {
   font-size: 11px; color: var(--amber); background: var(--amber-bg); border-bottom: 1px solid var(--amber-border);
   padding: 6px 14px; line-height: 1.5;
+  display: flex; align-items: flex-start; gap: 10px;
 }
+.list-error-text { flex: 1; min-width: 0; }
+.list-error-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.list-error-btn {
+  border: 1px solid var(--amber-border); background: #fff; color: var(--amber);
+  border-radius: 6px; height: 24px; padding: 0 8px; font-size: 11px; cursor: pointer; line-height: 1;
+}
+.list-error-btn:hover { background: var(--amber-bg); }
 .list-notice-bar {
   font-size: 11px; color: var(--mut); background: var(--bg-chip); border-bottom: 1px solid var(--border-soft);
   padding: 6px 14px; line-height: 1.5;

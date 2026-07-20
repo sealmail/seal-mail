@@ -170,9 +170,33 @@ export async function listCached(accountId: string, folder: string, offset: numb
   return cliJson(["list", "--account", accountId, "--folder", folder, "--offset", offset, "--limit", limit]);
 }
 
+/** 同 (account, folder) 并发 sync 合并为一次，避免多 CLI 子进程互踩 */
+const inflightSync = new Map<string, Promise<SyncResult>>();
+const inflightSyncOlder = new Map<string, Promise<SyncResult>>();
+
+function syncKey(accountId: string, folder: string) {
+  return `${accountId}\0${folder}`;
+}
+
 /** 与服务器增量同步（只下载新邮件 + 回扫已读/星标/删除） */
 export async function syncMessages(accountId: string, folder: string): Promise<SyncResult> {
-  return cliJson(["sync", "--account", accountId, "--folder", folder]);
+  const key = syncKey(accountId, folder);
+  // 与 sync-older 互斥等待，配合后端目录锁，减少「正在同步中」硬失败
+  const older = inflightSyncOlder.get(key);
+  if (older) {
+    try {
+      await older;
+    } catch {
+      /* ignore */
+    }
+  }
+  const existing = inflightSync.get(key);
+  if (existing) return existing;
+  const p = cliJson<SyncResult>(["sync", "--account", accountId, "--folder", folder]).finally(() => {
+    if (inflightSync.get(key) === p) inflightSync.delete(key);
+  });
+  inflightSync.set(key, p);
+  return p;
 }
 
 export interface SyncStatusEntry {
@@ -196,7 +220,25 @@ export async function locateMessage(accountId: string, messageId: string): Promi
 
 /** 按需回填更早邮件（用户继续向下翻页时触发） */
 export async function syncOlderMessages(accountId: string, folder: string): Promise<SyncResult> {
-  return cliJson(["sync-older", "--account", accountId, "--folder", folder]);
+  const key = syncKey(accountId, folder);
+  // 若增量 sync 在飞，等它结束再回填，避免与后端目录锁硬撞
+  const syncing = inflightSync.get(key);
+  if (syncing) {
+    try {
+      await syncing;
+    } catch {
+      /* 增量失败仍尝试回填 */
+    }
+  }
+  const existing = inflightSyncOlder.get(key);
+  if (existing) return existing;
+  const p = cliJson<SyncResult>(["sync-older", "--account", accountId, "--folder", folder]).finally(
+    () => {
+      if (inflightSyncOlder.get(key) === p) inflightSyncOlder.delete(key);
+    }
+  );
+  inflightSyncOlder.set(key, p);
+  return p;
 }
 
 export async function setFlagged(accountId: string, folder: string, uid: number, flagged: boolean): Promise<void> {

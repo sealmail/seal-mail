@@ -33,7 +33,7 @@ fn running() -> &'static Mutex<HashSet<String>> {
 pub fn ensure_watchers(app: &AppHandle) {
     let accounts: Vec<(String, IncomingProtocol)> = {
         let state = app.state::<AppState>();
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         s.accounts
             .iter()
             .map(|a| (a.id.clone(), a.protocol.clone()))
@@ -109,7 +109,7 @@ fn emit_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: Vec
 fn notify_new_mail(app: &AppHandle, account_id: &str, new_count: u32, notices: &[MailNotice]) {
     let (enabled, email) = {
         let state = app.state::<AppState>();
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         let email = match s.accounts.iter().find(|a| a.id == account_id) {
             Some(a) => a.email.clone(),
             None => return,
@@ -294,7 +294,7 @@ fn notice_from_raw(
 /// 当前账户适用的过滤规则快照（用于通知前判断是否应静默）
 fn filter_rules_for(app: &AppHandle, account_id: &str) -> Vec<FilterRule> {
     let state = app.state::<AppState>();
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     s.filters
         .iter()
         .filter(|r| {
@@ -318,7 +318,7 @@ fn creds(
 ) -> Result<Option<(Account, AccountSecret)>, String> {
     let state = app.state::<AppState>();
     let (account, secret) = {
-        let s = state.inner.lock().unwrap();
+        let s = state.lock();
         match (s.account(account_id), s.secret(account_id)) {
             (Ok(a), Ok(sec)) => (a, sec),
             _ => return Ok(None),
@@ -332,7 +332,7 @@ fn creds(
     }
     let refreshed = oauth::refresh_tokens_blocking(&tokens)?;
     let s2 = app.state::<AppState>();
-    let mut s = s2.inner.lock().unwrap();
+    let mut s = s2.lock();
     let Some(mut updated) = s.secrets.get(account_id).cloned() else {
         return Ok(None);
     };
@@ -343,7 +343,7 @@ fn creds(
 
 fn account_exists(app: &AppHandle, account_id: &str) -> bool {
     let state = app.state::<AppState>();
-    let s = state.inner.lock().unwrap();
+    let s = state.lock();
     s.accounts.iter().any(|a| a.id == account_id)
 }
 

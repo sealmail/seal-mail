@@ -17,6 +17,25 @@ pub struct AppStateView {
 pub const POP3_TRASH: &str = "已删除";
 pub const POP3_ARCHIVE: &str = "归档";
 
+/// POP3：服务器 UIDL 消失时，仅删除仍在 INBOX 的本地行。
+/// 用户手动归档/移入回收站的邮件必须保留——POP3 常在收信后清服务器，不能当「用户也删了」。
+pub fn pop3_inbox_rows_gone_from_server<'a>(
+    known: impl IntoIterator<Item = &'a (String, String, u32)>,
+    server_uidls: &std::collections::HashSet<&String>,
+) -> Vec<(String, u32)> {
+    known
+        .into_iter()
+        .filter(|(uidl, folder, _)| folder == "INBOX" && !server_uidls.contains(uidl))
+        .map(|(_, folder, uid)| (folder.clone(), *uid))
+        .collect()
+}
+
+/// IMAP 删除检测：服务器 FLAGS 窗口里没有该 UID 时，是否应删本地行。
+/// `sync_start_max_uid` 是本次同步开始前本地已知最大 UID；更高 UID 可能是并发 sync 刚插入的，不能当「服务器已删」。
+pub fn imap_should_delete_missing_uid(uid: u32, sync_start_max_uid: u32, present_on_server: bool) -> bool {
+    !present_on_server && uid <= sync_start_max_uid
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedList {
@@ -543,12 +562,16 @@ pub fn sync_messages(
     folder: &str,
     secret: &AccountSecret,
 ) -> Result<SyncResult, String> {
+    // 跨 CLI 子进程互斥：同一目录同时只允许一路 sync
+    let _sync_lock = crate::sync_lock::try_acquire(&s.dir, account_id, folder)?;
     let account = s.account(account_id)?;
     let trusted = s.trusted_for_verify(&account);
     match account.protocol {
         IncomingProtocol::Imap => {
             let validity = db::uidvalidity(&s.db, account_id, folder)?;
             let max_uid = db::max_uid(&s.db, account_id, folder)?;
+            // 并发 sync 防护：删除检测只覆盖本次开始前已知的 UID
+            let sync_start_max_uid = max_uid.unwrap_or(0);
             let low = db::window_low(&s.db, account_id, folder, db::FLAG_SYNC_WINDOW)?;
             let sf = imap_client::sync_fetch(
                 &account,
@@ -566,30 +589,45 @@ pub fn sync_messages(
             db::set_server_exists(&s.db, account_id, folder, sf.exists as i64)?;
             let mut added = 0u32;
             let mut new_fulls: Vec<EmailFull> = Vec::new();
+            // 先解析 + 收集联系人（不占 DB 事务），再批量落库，避免首轮同步数百次独立 fsync
+            let mut pending: Vec<(u32, bool, bool, i64, &[u8], Option<EmailFull>)> = Vec::new();
             for m in &sf.new_mails {
                 let parsed = mail::parse_email(
                     &m.raw, m.uid, account_id, folder, m.unread, m.flagged, &trusted,
                 );
-                let ts = match &parsed {
+                let (ts, full_opt) = match parsed {
                     Ok(full) => {
                         s.upsert_contact(
                             &full.meta.from_name,
                             &full.meta.from_addr,
                             full.meta.timestamp,
                         );
-                        full.meta.timestamp
+                        let ts = full.meta.timestamp;
+                        (ts, Some(full))
                     }
-                    Err(_) => 0,
+                    Err(_) => (0, None),
                 };
-                db::upsert_message(
-                    &s.db, account_id, folder, m.uid, None, m.unread, m.flagged, ts, &m.raw,
-                )?;
-                // upsert 会清空 meta_json，解析成功后立即回写，避免列表长期显示「…」
-                if let Ok(full) = parsed {
-                    cache_meta_json(s, account_id, folder, m.uid, &full.meta);
-                    new_fulls.push(full);
+                pending.push((m.uid, m.unread, m.flagged, ts, m.raw.as_slice(), full_opt));
+            }
+            {
+                let tx = s
+                    .db
+                    .unchecked_transaction()
+                    .map_err(|e| format!("邮件缓存读写失败: {e}"))?;
+                for (uid, unread, flagged, ts, raw, full_opt) in pending {
+                    db::upsert_message(
+                        &tx, account_id, folder, uid, None, unread, flagged, ts, raw,
+                    )?;
+                    if let Some(full) = full_opt {
+                        if let Ok(json) = serde_json::to_string(&full.meta) {
+                            let _ = db::set_meta_json(&tx, account_id, folder, uid, &json);
+                        }
+                        new_fulls.push(full);
+                    }
+                    added += 1;
                 }
-                added += 1;
+                tx.commit()
+                    .map_err(|e| format!("邮件缓存读写失败: {e}"))?;
             }
             if !sf.reset {
                 let server: std::collections::HashMap<u32, (bool, bool)> = sf
@@ -602,10 +640,13 @@ pub fn sync_messages(
                         Some((unread, flagged)) => {
                             db::update_flags(&s.db, account_id, folder, uid, *unread, *flagged)?
                         }
-                        None => {
+                        None if imap_should_delete_missing_uid(uid, sync_start_max_uid, false) => {
                             db::delete_row(&s.db, account_id, folder, uid)?;
                             s.mail_cache
                                 .remove(&StoreData::cache_key(account_id, folder, uid));
+                        }
+                        None => {
+                            // uid > sync_start_max_uid：可能是并发 sync 刚写入，跳过
                         }
                     }
                 }
@@ -664,12 +705,11 @@ pub fn sync_messages(
                 added += 1;
             }
             let server: std::collections::HashSet<&String> = ps.all_uidls.iter().collect();
-            for (uidl, fld, uid) in db::pop_known_uidls(&s.db, account_id)? {
-                if !server.contains(&uidl) {
-                    db::delete_row(&s.db, account_id, &fld, uid)?;
-                    s.mail_cache
-                        .remove(&StoreData::cache_key(account_id, &fld, uid));
-                }
+            let known_rows = db::pop_known_uidls(&s.db, account_id)?;
+            for (fld, uid) in pop3_inbox_rows_gone_from_server(&known_rows, &server) {
+                db::delete_row(&s.db, account_id, &fld, uid)?;
+                s.mail_cache
+                    .remove(&StoreData::cache_key(account_id, &fld, uid));
             }
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
@@ -692,6 +732,8 @@ pub fn sync_older_messages(
     folder: &str,
     secret: &AccountSecret,
 ) -> Result<SyncResult, String> {
+    // 与 sync_messages 共用锁：并发回填与增量同步会打架
+    let _sync_lock = crate::sync_lock::try_acquire(&s.dir, account_id, folder)?;
     let account = s.account(account_id)?;
     let trusted = s.trusted_for_verify(&account);
     match account.protocol {

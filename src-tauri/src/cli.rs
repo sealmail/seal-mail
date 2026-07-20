@@ -158,8 +158,44 @@ fn load_attachments(args: &[String]) -> Result<Vec<(String, Vec<u8>)>, String> {
     Ok(files)
 }
 
-fn account_secret(core: &Core, account_id: &str) -> Result<AccountSecret, String> {
-    core.data.secret(account_id)
+/// 取账户凭据；OAuth 临近过期时阻塞刷新并写回 secrets.json（CLI 子进程无 watcher 时也要能续命）。
+fn account_secret(core: &mut Core, account_id: &str) -> Result<AccountSecret, String> {
+    let mut secret = core.data.secret(account_id)?;
+    let Some(tokens) = secret.oauth.clone() else {
+        return Ok(secret);
+    };
+    if !tokens.needs_refresh() {
+        return Ok(secret);
+    }
+    let refreshed = crate::oauth::refresh_tokens_blocking(&tokens)?;
+    secret.oauth = Some(refreshed);
+    core.data.update_secret(account_id, secret.clone())?;
+    Ok(secret)
+}
+
+/// 网络操作 + OAuth 被服务器拒绝时强制刷新令牌并重试一次。
+fn with_oauth_retry<T>(
+    core: &mut Core,
+    account_id: &str,
+    mut op: impl FnMut(&mut Core, &AccountSecret) -> Result<T, String>,
+) -> Result<T, String> {
+    let secret = account_secret(core, account_id)?;
+    let has_oauth = secret.oauth.is_some();
+    match op(core, &secret) {
+        Err(e) if has_oauth && crate::oauth::is_auth_rejected(&e) => {
+            let mut secret = core.data.secret(account_id)?;
+            let Some(tokens) = secret.oauth.clone() else {
+                return Err(e);
+            };
+            let refreshed = crate::oauth::refresh_tokens_blocking(&tokens).map_err(|re| {
+                format!("{e}；强制刷新令牌失败: {re}")
+            })?;
+            secret.oauth = Some(refreshed);
+            core.data.update_secret(account_id, secret.clone())?;
+            op(core, &secret)
+        }
+        other => other,
+    }
 }
 
 fn parse_protocol(value: &str) -> Result<IncomingProtocol, String> {
@@ -351,7 +387,10 @@ pub fn run() -> Result<(), String> {
         },
         "folders" => {
             let account_id = required_flag(&args, "--account")?;
-            let folders = core::list_folders(&core.data, &account_id)?;
+            // with_oauth_retry 会先刷新令牌写回 store；list_folders 从 store 取凭据
+            let folders = with_oauth_retry(&mut core, &account_id, |core, _| {
+                core::list_folders(&core.data, &account_id)
+            })?;
             if json {
                 print_json(&folders)
             } else {
@@ -370,7 +409,9 @@ pub fn run() -> Result<(), String> {
             "create" => {
                 let account_id = required_flag(&args, "--account")?;
                 let folder = required_flag(&args, "--folder")?;
-                core::create_folder(&mut core.data, &account_id, folder.clone())?;
+                with_oauth_retry(&mut core, &account_id, |core, _| {
+                    core::create_folder(&mut core.data, &account_id, folder.clone())
+                })?;
                 if json {
                     print_json(&serde_json::json!({ "created": folder }))
                 } else {
@@ -381,7 +422,9 @@ pub fn run() -> Result<(), String> {
             "delete" => {
                 let account_id = required_flag(&args, "--account")?;
                 let folder = required_flag(&args, "--folder")?;
-                core::delete_folder(&mut core.data, &account_id, &folder)?;
+                with_oauth_retry(&mut core, &account_id, |core, _| {
+                    core::delete_folder(&mut core.data, &account_id, &folder)
+                })?;
                 if json {
                     print_json(&serde_json::json!({ "deleted": folder }))
                 } else {
@@ -398,8 +441,9 @@ pub fn run() -> Result<(), String> {
         "sync" => {
             let account_id = required_flag(&args, "--account")?;
             let folder = required_flag(&args, "--folder")?;
-            let secret = account_secret(&core, &account_id)?;
-            let result = core::sync_messages(&mut core.data, &account_id, &folder, &secret)?;
+            let result = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::sync_messages(&mut core.data, &account_id, &folder, secret)
+            })?;
             if json {
                 print_json(&result)
             } else {
@@ -427,8 +471,9 @@ pub fn run() -> Result<(), String> {
         "sync-older" => {
             let account_id = required_flag(&args, "--account")?;
             let folder = required_flag(&args, "--folder")?;
-            let secret = account_secret(&core, &account_id)?;
-            let result = core::sync_older_messages(&mut core.data, &account_id, &folder, &secret)?;
+            let result = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::sync_older_messages(&mut core.data, &account_id, &folder, secret)
+            })?;
             if json {
                 print_json(&result)
             } else {
@@ -480,8 +525,9 @@ pub fn run() -> Result<(), String> {
         "locate" => {
             let account_id = required_flag(&args, "--account")?;
             let message_id = required_flag(&args, "--message-id")?;
-            let secret = account_secret(&core, &account_id)?;
-            let loc = core::locate_message(&mut core.data, &account_id, &secret, &message_id)?;
+            let loc = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::locate_message(&mut core.data, &account_id, secret, &message_id)
+            })?;
             if json {
                 print_json(&loc)
             } else {
@@ -517,18 +563,19 @@ pub fn run() -> Result<(), String> {
             let body = read_body(&args)?;
             let attachments = load_attachments(&args)?;
             let sign = !args.iter().any(|arg| arg == "--no-sign");
-            let secret = account_secret(&core, &account_id)?;
-            let result = core::send_mail(
-                &mut core.data,
-                &account_id,
-                &secret,
-                to,
-                cc,
-                &subject,
-                &body,
-                sign,
-                attachments,
-            )?;
+            let result = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::send_mail(
+                    &mut core.data,
+                    &account_id,
+                    secret,
+                    to.clone(),
+                    cc.clone(),
+                    &subject,
+                    &body,
+                    sign,
+                    attachments.clone(),
+                )
+            })?;
             if json {
                 print_json(&result)
             } else {
@@ -544,8 +591,9 @@ pub fn run() -> Result<(), String> {
             let folder = required_flag(&args, "--folder")?;
             let target = required_flag(&args, "--target")?;
             let uid = parse_u32_flag(&args, "--uid")?;
-            let secret = account_secret(&core, &account_id)?;
-            core::move_message(&mut core.data, &account_id, &folder, uid, &target, &secret)?;
+            with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::move_message(&mut core.data, &account_id, &folder, uid, &target, secret)
+            })?;
             if json {
                 print_json(&serde_json::json!({ "moved": uid, "target": target }))
             } else {
@@ -557,8 +605,9 @@ pub fn run() -> Result<(), String> {
             let account_id = required_flag(&args, "--account")?;
             let folder = required_flag(&args, "--folder")?;
             let uid = parse_u32_flag(&args, "--uid")?;
-            let secret = account_secret(&core, &account_id)?;
-            core::archive_message(&mut core.data, &account_id, &folder, uid, &secret)?;
+            with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::archive_message(&mut core.data, &account_id, &folder, uid, secret)
+            })?;
             if json {
                 print_json(&serde_json::json!({ "archived": uid }))
             } else {
@@ -571,15 +620,16 @@ pub fn run() -> Result<(), String> {
             let folder = required_flag(&args, "--folder")?;
             let uid = parse_u32_flag(&args, "--uid")?;
             let permanent = args.iter().any(|arg| arg == "--permanent");
-            let secret = account_secret(&core, &account_id)?;
-            core::delete_message(
-                &mut core.data,
-                &account_id,
-                &folder,
-                uid,
-                permanent,
-                &secret,
-            )?;
+            with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::delete_message(
+                    &mut core.data,
+                    &account_id,
+                    &folder,
+                    uid,
+                    permanent,
+                    secret,
+                )
+            })?;
             if json {
                 print_json(&serde_json::json!({ "deleted": uid, "permanent": permanent }))
             } else {
@@ -592,8 +642,9 @@ pub fn run() -> Result<(), String> {
             let folder = required_flag(&args, "--folder")?;
             let uids = parse_uid_list(&args)?;
             let read = parse_bool_flag(&args, "--read", true)?;
-            let secret = account_secret(&core, &account_id)?;
-            core::set_read(&mut core.data, &account_id, &folder, &uids, read, &secret)?;
+            with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::set_read(&mut core.data, &account_id, &folder, &uids, read, secret)
+            })?;
             if json {
                 print_json(&serde_json::json!({ "uids": uids, "read": read }))
             } else {
@@ -606,8 +657,9 @@ pub fn run() -> Result<(), String> {
             let folder = required_flag(&args, "--folder")?;
             let uid = parse_u32_flag(&args, "--uid")?;
             let flagged = parse_bool_flag(&args, "--flagged", true)?;
-            let secret = account_secret(&core, &account_id)?;
-            core::set_flagged(&mut core.data, &account_id, &folder, uid, flagged, &secret)?;
+            with_oauth_retry(&mut core, &account_id, |core, secret| {
+                core::set_flagged(&mut core.data, &account_id, &folder, uid, flagged, secret)
+            })?;
             if json {
                 print_json(&serde_json::json!({ "uid": uid, "flagged": flagged }))
             } else {
@@ -622,16 +674,17 @@ pub fn run() -> Result<(), String> {
                 let uid = parse_u32_flag(&args, "--uid")?;
                 let index = optional_usize_flag(&args, "--index", 0)?;
                 let path = required_flag(&args, "--path")?;
-                let secret = account_secret(&core, &account_id)?;
-                let result = core::save_attachment(
-                    &core.data,
-                    &account_id,
-                    &folder,
-                    uid,
-                    index,
-                    &path,
-                    Some(&secret),
-                )?;
+                let result = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                    core::save_attachment(
+                        &core.data,
+                        &account_id,
+                        &folder,
+                        uid,
+                        index,
+                        &path,
+                        Some(secret),
+                    )
+                })?;
                 if json {
                     print_json(&result)
                 } else {
@@ -647,15 +700,16 @@ pub fn run() -> Result<(), String> {
                 let folder = required_flag(&args, "--folder")?;
                 let uid = parse_u32_flag(&args, "--uid")?;
                 let index = optional_usize_flag(&args, "--index", 0)?;
-                let secret = account_secret(&core, &account_id)?;
-                let result = core::read_attachment(
-                    &core.data,
-                    &account_id,
-                    &folder,
-                    uid,
-                    index,
-                    Some(&secret),
-                )?;
+                let result = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                    core::read_attachment(
+                        &core.data,
+                        &account_id,
+                        &folder,
+                        uid,
+                        index,
+                        Some(secret),
+                    )
+                })?;
                 if json {
                     print_json(&result)
                 } else {
@@ -744,8 +798,9 @@ pub fn run() -> Result<(), String> {
             }
             "apply" => {
                 let account_id = required_flag(&args, "--account")?;
-                let secret = account_secret(&core, &account_id)?;
-                let result = core::apply_filters(&mut core.data, &account_id, &secret)?;
+                let result = with_oauth_retry(&mut core, &account_id, |core, secret| {
+                    core::apply_filters(&mut core.data, &account_id, secret)
+                })?;
                 if json {
                     print_json(&result)
                 } else {

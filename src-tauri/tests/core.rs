@@ -361,6 +361,86 @@ fn e2e_tampered_mail() {
     }
 }
 
+/// 签名时间在 24h 以后 → 即便密钥可信也不给绿标（防离谱未来戳）。
+#[test]
+fn future_signature_date_is_not_verified() {
+    use ed25519_dalek::Signer;
+
+    let id = test_identity();
+    let from = "mara@aragon.eth";
+    let body = "Pay invoice 42";
+    let future = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+    let bh = crypto::body_hash_hex(body);
+    let canon = crypto::canon_string(from, &future, &bh);
+    let sig = id.signing_key.sign(canon.as_bytes());
+    let raw = MessageBuilder::new()
+        .from(("Mara Castellanos", from))
+        .to(vec![("", "aria@example.com")])
+        .subject("Invoice")
+        .text_body(body)
+        .header(crypto::H_VERSION, Raw::new("1"))
+        .header(crypto::H_METHOD, Raw::new("ed25519"))
+        .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
+        .header(crypto::H_FROM, Raw::new(from))
+        .header(crypto::H_DATE, Raw::new(future))
+        .header(crypto::H_BODY_HASH, Raw::new(bh))
+        .header(crypto::H_SIGNATURE, Raw::new(STANDARD.encode(sig.to_bytes())))
+        .write_to_vec()
+        .unwrap();
+    let trusted = trusted_for(&id, "Mara Castellanos", from);
+    let mail = parse_email(&raw, 7, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "signedUnknown");
+    assert!(matches!(mail.verify, VerifyDetail::SignedUnknown { .. }));
+}
+
+/// 攻击者用自签密钥构造含多字节字符的 X-SealMail-Body-Hash。
+/// 旧实现对 `&signed_hash[..12]` 按字节切，会在 UTF-8 字符中间 panic。
+/// 解析路径必须返回 Tampered，绝不能崩溃。
+#[test]
+fn malicious_multibyte_body_hash_does_not_panic() {
+    use ed25519_dalek::Signer;
+
+    let id = test_identity();
+    let from = "attacker@evil.test";
+    let body = "looks fine";
+    // "aa"(2) + 😀×5：字节下标 12 落在第 3 个 emoji 中间 → 旧切片会 panic
+    let evil_hash = format!("aa{}", "😀".repeat(5));
+    let date = "2026-01-01T00:00:00Z";
+    let canon = crypto::canon_string(from, date, &evil_hash);
+    let sig = id.signing_key.sign(canon.as_bytes());
+    let sig_b64 = STANDARD.encode(sig.to_bytes());
+
+    let raw = MessageBuilder::new()
+        .from(("Attacker", from))
+        .to(vec![("", "victim@example.com")])
+        .subject("hi")
+        .text_body(body)
+        .header(crypto::H_VERSION, Raw::new("1"))
+        .header(crypto::H_METHOD, Raw::new("ed25519"))
+        .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
+        .header(crypto::H_FROM, Raw::new(from))
+        .header(crypto::H_DATE, Raw::new(date))
+        .header(crypto::H_BODY_HASH, Raw::new(evil_hash))
+        .header(crypto::H_SIGNATURE, Raw::new(sig_b64))
+        .write_to_vec()
+        .unwrap();
+
+    let mail = parse_email(&raw, 99, "acc1", "INBOX", true, false, &[]).expect("must not panic");
+    assert_eq!(mail.meta.trust, "tampered");
+    match mail.verify {
+        VerifyDetail::Tampered { signed_hash, got_hash, .. } => {
+            assert!(
+                signed_hash.ends_with('…'),
+                "展示用哈希应安全截断并带省略号: {signed_hash}"
+            );
+            assert!(got_hash.ends_with('…'), "got_hash 也应安全截断: {got_hash}");
+            // 截断后的字符串必须仍是合法 UTF-8（能构造 String 即通过；再断言不含替换符）
+            assert!(!signed_hash.contains('\u{FFFD}'));
+        }
+        other => panic!("应为 Tampered，实际 {:?}", other),
+    }
+}
+
 #[test]
 fn e2e_impersonation_by_display_name() {
     let id = test_identity();

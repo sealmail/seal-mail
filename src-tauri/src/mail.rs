@@ -9,6 +9,26 @@ fn domain_of(addr: &str) -> String {
     addr.rsplit('@').next().unwrap_or("").to_lowercase()
 }
 
+/// 展示用哈希/摘要前缀：按字符截断，避免不可信字符串按字节切片时切进 UTF-8 中间 panic。
+fn hash_prefix_display(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return format!("{s}…");
+    }
+    let prefix: String = s.chars().take(max_chars).collect();
+    format!("{prefix}…")
+}
+
+/// 签名时间明显在未来（>24h）时不可给绿标：时钟攻击或头被拼装。
+/// 真正的重放防护需要 canon 绑定收件人/Message-ID（后续 v2）；此处只挡离谱未来戳。
+fn signature_date_implausible(signed_date: &str) -> bool {
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(signed_date.trim()) else {
+        return false;
+    };
+    let now = chrono::Utc::now();
+    dt > now + chrono::Duration::hours(24)
+}
+
 fn header_text(msg: &mail_parser::Message, name: &str) -> Option<String> {
     msg.header(name)
         .and_then(|h| h.as_text())
@@ -789,14 +809,22 @@ pub fn verify_message(
         Ok((fingerprint, body_ok, signed_hash, got_hash)) => {
             if !body_ok {
                 return VerifyDetail::Tampered {
-                    signed_hash: format!("{}…", &signed_hash[..12.min(signed_hash.len())]),
-                    got_hash: format!("{}…", &got_hash[..12.min(got_hash.len())]),
+                    signed_hash: hash_prefix_display(&signed_hash, 12),
+                    got_hash: hash_prefix_display(&got_hash, 12),
                     fingerprint,
                     method,
                 };
             }
+            // 正文哈希一致但签名时间离谱 → 不当作已验证（仍可显示为有效签名·未知）
+            let date_ok = !signature_date_implausible(&signed_date);
             if let Some(t) = by_addr {
                 if t.fingerprint.eq_ignore_ascii_case(&fingerprint) {
+                    if !date_ok {
+                        return VerifyDetail::SignedUnknown {
+                            fingerprint,
+                            method,
+                        };
+                    }
                     return VerifyDetail::Verified {
                         fingerprint,
                         method,
@@ -833,7 +861,7 @@ pub fn verify_message(
         }
         Err(_) => VerifyDetail::Tampered {
             signed_hash: "签名校验失败".into(),
-            got_hash: crypto::body_hash_hex(body_text)[..12].to_string() + "…",
+            got_hash: hash_prefix_display(&crypto::body_hash_hex(body_text), 12),
             fingerprint: "—".into(),
             method,
         },

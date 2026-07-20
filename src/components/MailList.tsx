@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import type { AppError } from "../errors";
 import { useI18n } from "../i18n";
 import { CATEGORY_LABEL, CATEGORY_TAG, classifyMail, type MailCategory } from "../mailCategory";
 import { Seal } from "./Seal";
@@ -13,7 +14,7 @@ interface Props {
   accountLabels?: Record<string, string>;
   loading: boolean;
   syncing: boolean;
-  error: string | null;
+  error: AppError | string | null;
   notice?: string | null;
   filterMode: "all" | "unread" | "flagged";
   categoryMode: MailCategory;
@@ -31,6 +32,16 @@ interface Props {
   onSelect: (m: EmailMeta) => void;
   onOpenWindow: (m: EmailMeta) => void;
   onRefresh: () => void;
+  onDismissError?: () => void;
+  onReauth?: () => void;
+}
+
+function errorText(error: AppError | string): string {
+  return typeof error === "string" ? error : error.message;
+}
+
+function errorIsAuth(error: AppError | string): boolean {
+  return typeof error !== "string" && error.kind === "auth";
 }
 
 const BAR_COLOR: Record<string, string> = {
@@ -111,6 +122,26 @@ export function MailList(p: Props) {
     setScrollTop(0);
   }, [p.filterMode, p.categoryMode, p.title]);
 
+  // j/k 或程序选中后，把选中行滚进可视区（虚拟列表不会自动 scrollIntoView）
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !p.selectedKey) return;
+    const idx = rows.findIndex((r) => r.selected);
+    if (idx < 0) return;
+    const rowTop = idx * ROW_HEIGHT;
+    const rowBottom = rowTop + ROW_HEIGHT;
+    const viewTop = el.scrollTop;
+    const viewBottom = viewTop + el.clientHeight;
+    if (rowTop < viewTop) {
+      el.scrollTop = rowTop;
+      setScrollTop(rowTop);
+    } else if (rowBottom > viewBottom) {
+      const next = Math.max(0, rowBottom - el.clientHeight);
+      el.scrollTop = next;
+      setScrollTop(next);
+    }
+  }, [p.selectedKey, rows]);
+
   function handleScroll(e: UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
     setScrollTop(el.scrollTop);
@@ -174,15 +205,38 @@ export function MailList(p: Props) {
       </div>
       <div className="list-scroll" ref={scrollRef} onScroll={handleScroll}>
         {p.loading && p.messages.length === 0 && <div className="empty-pane">{t("正在读取本地缓存…")}</div>}
-        {p.error && p.messages.length > 0 && <div className="list-error-bar">⚠ {p.error}</div>}
+        {p.error && p.messages.length > 0 && (
+          <div className="list-error-bar">
+            <span className="list-error-text">⚠ {errorText(p.error)}</span>
+            <span className="list-error-actions">
+              {errorIsAuth(p.error) && p.onReauth && (
+                <button type="button" className="list-error-btn" onClick={p.onReauth}>
+                  {t("重新授权")}
+                </button>
+              )}
+              {p.onDismissError && (
+                <button type="button" className="list-error-btn" onClick={p.onDismissError} title={t("收起错误")}>
+                  ×
+                </button>
+              )}
+            </span>
+          </div>
+        )}
         {!p.error && p.notice && <div className="list-notice-bar">{p.notice}</div>}
         {!p.loading && p.error && p.messages.length === 0 && (
           <div className="empty-pane">
             <div style={{ fontSize: 20 }}>⚠</div>
-            {p.error}
-            <button className="btn-ghost" onClick={p.onRefresh}>
-              {t("重试")}
-            </button>
+            {errorText(p.error)}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              {errorIsAuth(p.error) && p.onReauth && (
+                <button className="btn-primary" style={{ height: 34 }} onClick={p.onReauth}>
+                  {t("重新授权")}
+                </button>
+              )}
+              <button className="btn-ghost" onClick={p.onRefresh}>
+                {t("重试")}
+              </button>
+            </div>
           </div>
         )}
         {!p.loading && !p.error && p.messages.length === 0 && (

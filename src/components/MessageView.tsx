@@ -42,7 +42,9 @@ function fmtSize(n: number) {
   return `${n} B`;
 }
 
-function defaultShowHtml(bodyHtml: string | null | undefined) {
+/** 未签名：有 HTML 则优先 HTML；已签名：默认纯文本（签名只覆盖 text/plain，防 HTML 调包）。 */
+function defaultShowHtml(bodyHtml: string | null | undefined, signed: boolean) {
+  if (signed) return false;
   return !!bodyHtml?.trim();
 }
 
@@ -245,12 +247,15 @@ export function MessageView(p: Props) {
   function renderBody(mail: EmailFull, mode: boolean | null, setMode: (next: boolean) => void) {
     const hasHtml = !!mail.bodyHtml;
     const signed = mail.verify.status !== "unsigned";
-    const showHtml = hasHtml && (mode ?? defaultShowHtml(mail.bodyHtml));
+    const showHtml = hasHtml && (mode ?? defaultShowHtml(mail.bodyHtml, signed));
     return (
       <>
         {hasHtml && (
           <div className="body-toolbar">
             {signed && showHtml && <span className="body-note">⚠ {t("签名校验针对纯文本正文，HTML 版式仅供参考")}</span>}
+            {signed && !showHtml && hasHtml && (
+              <span className="body-note">{t("已签名邮件默认显示纯文本（签名覆盖范围）")}</span>
+            )}
             <button className="btn-ghost" style={{ height: 24, padding: "0 10px", fontSize: 11 }} onClick={() => setMode(!showHtml)}>
               {showHtml ? t("查看纯文本") : t("查看 HTML 版式")}
             </button>

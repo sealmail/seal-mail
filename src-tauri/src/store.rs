@@ -2,12 +2,20 @@ use crate::crypto::{restrict_perms, Identity};
 use crate::models::*;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 pub struct AppState {
     pub inner: Mutex<StoreData>,
+}
+
+impl AppState {
+    /// 取全局状态锁；若曾有线程持锁 panic，恢复内部数据而不是永久毒化。
+    pub fn lock(&self) -> MutexGuard<'_, StoreData> {
+        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 pub struct StoreData {
@@ -37,16 +45,80 @@ pub struct StoreData {
     pub db: rusqlite::Connection,
 }
 
-fn read_json<T: DeserializeOwned + Default>(path: &PathBuf) -> T {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+/// 文件不存在 → 默认值（首次启动）。
+/// 文件存在但 JSON 损坏 → 报错，并把坏文件改名为 `*.corrupt.<ts>`，避免后续 save 用空表覆盖真数据。
+fn read_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
+    match fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        Err(e) => Err(format!("读取 {} 失败: {e}", path.display())),
+        Ok(raw) => {
+            if raw.trim().is_empty() {
+                return Ok(T::default());
+            }
+            match serde_json::from_str(&raw) {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    let label = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("配置文件");
+                    let backup = corrupt_backup_path(path);
+                    match fs::rename(path, &backup) {
+                        Ok(()) => {
+                            let backup_name = backup
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("*.corrupt");
+                            Err(format!("解析 {label} 失败（已备份为 {backup_name}）: {e}"))
+                        }
+                        Err(rename_err) => Err(format!(
+                            "解析 {label} 失败: {e}（备份失败: {rename_err}）"
+                        )),
+                    }
+                }
+            }
+        }
+    }
 }
 
-fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
+fn corrupt_backup_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    path.with_file_name(format!("{name}.corrupt.{ts}"))
+}
+
+/// 原子落盘：写临时文件 → fsync → rename，避免写一半断电把配置截断成损坏 JSON。
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    fs::write(path, s).map_err(|e| e.to_string())
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("无效路径: {}", path.display()))?;
+    let tmp_path = path.with_file_name(format!("{file_name}.tmp"));
+    {
+        let mut f = File::create(&tmp_path)
+            .map_err(|e| format!("写入 {} 失败: {e}", tmp_path.display()))?;
+        f.write_all(s.as_bytes())
+            .map_err(|e| format!("写入 {} 失败: {e}", tmp_path.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("fsync {} 失败: {e}", tmp_path.display()))?;
+    }
+    fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!("替换 {} 失败: {e}", path.display())
+    })?;
+    if let Some(parent) = path.parent() {
+        if let Ok(dirf) = File::open(parent) {
+            let _ = dirf.sync_all();
+        }
+    }
+    Ok(())
 }
 
 impl StoreData {
@@ -54,22 +126,22 @@ impl StoreData {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let identity = crate::crypto::load_or_create_identity(&dir)?;
         let db = crate::db::open(&dir)?;
-        let prefs: AppPrefs = read_json(&dir.join("prefs.json"));
+        let prefs: AppPrefs = read_json(&dir.join("prefs.json"))?;
         // 用户可见文案（错误/通知）的语言全局：加载偏好时同步
         crate::i18n::set_lang_from_pref(&prefs.language);
         Ok(StoreData {
             db,
-            accounts: read_json(&dir.join("accounts.json")),
-            secrets: read_json(&dir.join("secrets.json")),
-            filters: read_json(&dir.join("filters.json")),
-            trusted: read_json(&dir.join("trusted.json")),
-            local_folders: read_json(&dir.join("local_folders.json")),
-            hidden_folders: read_json(&dir.join("hidden_folders.json")),
-            local_assign: read_json(&dir.join("local_assign.json")),
-            local_read: read_json(&dir.join("local_read.json")),
-            contacts: read_json(&dir.join("contacts.json")),
-            drafts: read_json(&dir.join("drafts.json")),
-            identity_config: read_json(&dir.join("identity.json")),
+            accounts: read_json(&dir.join("accounts.json"))?,
+            secrets: read_json(&dir.join("secrets.json"))?,
+            filters: read_json(&dir.join("filters.json"))?,
+            trusted: read_json(&dir.join("trusted.json"))?,
+            local_folders: read_json(&dir.join("local_folders.json"))?,
+            hidden_folders: read_json(&dir.join("hidden_folders.json"))?,
+            local_assign: read_json(&dir.join("local_assign.json"))?,
+            local_read: read_json(&dir.join("local_read.json"))?,
+            contacts: read_json(&dir.join("contacts.json"))?,
+            drafts: read_json(&dir.join("drafts.json"))?,
+            identity_config: read_json(&dir.join("identity.json"))?,
             prefs,
             mail_cache: HashMap::new(),
             identity,
@@ -86,8 +158,8 @@ impl StoreData {
     }
 
     /// 只重读偏好（GUI 常驻进程在 CLI 子进程改完 prefs 后刷新内存态用）
-    pub fn load_prefs(dir: &std::path::Path) -> AppPrefs {
-        read_json(&dir.join("prefs.json").to_path_buf())
+    pub fn load_prefs(dir: &Path) -> Result<AppPrefs, String> {
+        read_json(&dir.join("prefs.json"))
     }
 
     /// 当前生效的签名身份标识（本地=Ed25519 指纹，Ledger=0x 地址）
@@ -109,6 +181,14 @@ impl StoreData {
         let p = self.dir.join("secrets.json");
         write_json(&p, &self.secrets)?;
         restrict_perms(&p);
+        Ok(())
+    }
+
+    /// CLI 子进程改完账户/凭据后，GUI 常驻进程重读磁盘并更新内存。
+    /// 否则新账户没有 watcher、已删账户仍被旧凭据轮询。
+    pub fn reload_accounts_and_secrets_from_disk(&mut self) -> Result<(), String> {
+        self.accounts = read_json(&self.dir.join("accounts.json"))?;
+        self.secrets = read_json(&self.dir.join("secrets.json"))?;
         Ok(())
     }
 
