@@ -17,6 +17,48 @@ fn test_identity() -> Identity {
     }
 }
 
+fn sign_content<'a>(
+    subject: &'a str,
+    body: &'a str,
+    recipients: &'a [String],
+    attachments: &'a [(String, Vec<u8>)],
+) -> crypto::SignContent<'a> {
+    crypto::SignContent {
+        subject,
+        body_text: body,
+        body_html: None,
+        recipients,
+        attachments,
+    }
+}
+
+fn default_recipients() -> Vec<String> {
+    vec!["aria@example.com".into()]
+}
+
+fn seal_headers_from(signed: &crypto::SignedHeaders) -> crypto::SealHeaders {
+    let get = |k: &str| {
+        signed
+            .headers
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    crypto::SealHeaders {
+        pubkey: get(crypto::H_PUBKEY),
+        signature: get(crypto::H_SIGNATURE),
+        from: get(crypto::H_FROM),
+        date: get(crypto::H_DATE),
+        body_hash: get(crypto::H_BODY_HASH),
+        version: get(crypto::H_VERSION),
+        subject_hash: get(crypto::H_SUBJECT_HASH),
+        html_hash: get(crypto::H_HTML_HASH),
+        attach_hash: get(crypto::H_ATTACH_HASH),
+        to_hash: get(crypto::H_TO_HASH),
+    }
+}
+
 /// 构造一封（可选签名的）原始邮件
 fn build_raw(
     from_name: &str,
@@ -25,13 +67,15 @@ fn build_raw(
     body: &str,
     identity: Option<&Identity>,
 ) -> Vec<u8> {
+    let recipients = default_recipients();
     let mut b = MessageBuilder::new()
         .from((from_name, from_addr))
         .to(vec![("", "aria@example.com")])
         .subject(subject)
         .text_body(body);
     if let Some(id) = identity {
-        for (name, value) in crypto::sign_email(id, from_addr, body).headers {
+        let content = sign_content(subject, body, &recipients, &[]);
+        for (name, value) in crypto::sign_email(id, from_addr, &content).headers {
             b = b.header(name, Raw::new(value));
         }
     }
@@ -53,44 +97,44 @@ fn trusted_for(identity: &Identity, name: &str, email: &str) -> Vec<TrustedConta
 fn sign_then_verify_roundtrip() {
     let id = test_identity();
     let body = "Hello Aria,\r\n\r\nPlease review the doc.\r\n";
-    let signed = crypto::sign_email(&id, "mara@example.com", body);
-    let get = |k: &str| {
-        signed
-            .headers
-            .iter()
-            .find(|(n, _)| n == k)
-            .map(|(_, v)| v.clone())
-            .unwrap()
-    };
-    let h = crypto::SealHeaders {
-        pubkey: get(crypto::H_PUBKEY),
-        signature: get(crypto::H_SIGNATURE),
-        from: get(crypto::H_FROM),
-        date: get(crypto::H_DATE),
-        body_hash: get(crypto::H_BODY_HASH),
-    };
+    let body_norm = "Hello Aria,\n\nPlease review the doc.";
+    let recipients = default_recipients();
+    let content = sign_content("Review", body, &recipients, &[]);
+    let signed = crypto::sign_email(&id, "mara@example.com", &content);
+    let h = seal_headers_from(&signed);
+    assert_eq!(h.version, "2");
+    let actual = sign_content("Review", body_norm, &recipients, &[]);
     // CRLF→LF 等规范化后应当一致
-    let (fpr, body_ok, _, _) =
-        crypto::verify_headers(&h, "Hello Aria,\n\nPlease review the doc.").unwrap();
+    let (fpr, body_ok, _, _) = crypto::verify_headers(&h, &actual).unwrap();
     assert!(body_ok, "规范化后的正文哈希必须一致");
     assert_eq!(fpr, id.fingerprint());
 
     // 正文被篡改 → body_ok = false
-    let (_, tampered_ok, signed_hash, got_hash) =
-        crypto::verify_headers(&h, "Hello Aria,\n\nPlease send 5000 USDC now.").unwrap();
+    let tampered = sign_content(
+        "Review",
+        "Hello Aria,\n\nPlease send 5000 USDC now.",
+        &recipients,
+        &[],
+    );
+    let (_, tampered_ok, signed_hash, got_hash) = crypto::verify_headers(&h, &tampered).unwrap();
     assert!(!tampered_ok);
     assert_ne!(signed_hash, got_hash);
 
+    // 主题被改 → v2 失败
+    let wrong_subject = sign_content("HACKED", body_norm, &recipients, &[]);
+    let (_, subject_ok, _, _) = crypto::verify_headers(&h, &wrong_subject).unwrap();
+    assert!(!subject_ok);
+
+    // 收件人被改 → v2 失败（防重放给他人）
+    let other_rcpt = vec!["victim@evil.test".into()];
+    let wrong_to = sign_content("Review", body_norm, &other_rcpt, &[]);
+    let (_, to_ok, _, _) = crypto::verify_headers(&h, &wrong_to).unwrap();
+    assert!(!to_ok);
+
     // 签名本身被篡改 → Err
-    let mut bad = crypto::SealHeaders {
-        pubkey: h.pubkey.clone(),
-        signature: h.signature.clone(),
-        from: h.from.clone(),
-        date: h.date.clone(),
-        body_hash: h.body_hash.clone(),
-    };
+    let mut bad = h.clone();
     bad.from = "attacker@evil.com".into();
-    assert!(crypto::verify_headers(&bad, "Hello Aria,\n\nPlease review the doc.").is_err());
+    assert!(crypto::verify_headers(&bad, &actual).is_err());
 }
 
 #[test]
@@ -369,21 +413,36 @@ fn future_signature_date_is_not_verified() {
     let id = test_identity();
     let from = "mara@aragon.eth";
     let body = "Pay invoice 42";
+    let subject = "Invoice";
+    let recipients = default_recipients();
     let future = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
-    let bh = crypto::body_hash_hex(body);
-    let canon = crypto::canon_string(from, &future, &bh);
+    let content = sign_content(subject, body, &recipients, &[]);
+    let hashes = crypto::content_hashes(&content);
+    let canon = crypto::canon_string_v2(
+        from,
+        &future,
+        &hashes.subject,
+        &hashes.body,
+        &hashes.html,
+        &hashes.attach,
+        &hashes.to,
+    );
     let sig = id.signing_key.sign(canon.as_bytes());
     let raw = MessageBuilder::new()
         .from(("Mara Castellanos", from))
         .to(vec![("", "aria@example.com")])
-        .subject("Invoice")
+        .subject(subject)
         .text_body(body)
-        .header(crypto::H_VERSION, Raw::new("1"))
+        .header(crypto::H_VERSION, Raw::new("2"))
         .header(crypto::H_METHOD, Raw::new("ed25519"))
         .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
         .header(crypto::H_FROM, Raw::new(from))
         .header(crypto::H_DATE, Raw::new(future))
-        .header(crypto::H_BODY_HASH, Raw::new(bh))
+        .header(crypto::H_SUBJECT_HASH, Raw::new(hashes.subject))
+        .header(crypto::H_BODY_HASH, Raw::new(hashes.body))
+        .header(crypto::H_HTML_HASH, Raw::new(hashes.html))
+        .header(crypto::H_ATTACH_HASH, Raw::new(hashes.attach))
+        .header(crypto::H_TO_HASH, Raw::new(hashes.to))
         .header(crypto::H_SIGNATURE, Raw::new(STANDARD.encode(sig.to_bytes())))
         .write_to_vec()
         .unwrap();
@@ -439,6 +498,64 @@ fn malicious_multibyte_body_hash_does_not_panic() {
         }
         other => panic!("应为 Tampered，实际 {:?}", other),
     }
+}
+
+/// v1 签名 + 另附 HTML：正文签名有效但 HTML 未覆盖 → 不得给完整绿标 Verified
+#[test]
+fn v1_signed_with_html_is_not_full_verified() {
+    use ed25519_dalek::Signer;
+
+    let id = test_identity();
+    let from = "mara@aragon.eth";
+    let body = "Pay 100 only.";
+    let date = chrono::Utc::now().to_rfc3339();
+    let bh = crypto::body_hash_hex(body);
+    let canon = crypto::canon_string(from, &date, &bh);
+    let sig = id.signing_key.sign(canon.as_bytes());
+    let raw = MessageBuilder::new()
+        .from(("Mara Castellanos", from))
+        .to(vec![("", "aria@example.com")])
+        .subject("Pay")
+        .text_body(body)
+        .html_body("<b>Pay 99999 instead</b>")
+        .header(crypto::H_VERSION, Raw::new("1"))
+        .header(crypto::H_METHOD, Raw::new("ed25519"))
+        .header(crypto::H_PUBKEY, Raw::new(id.public_key_b64()))
+        .header(crypto::H_FROM, Raw::new(from))
+        .header(crypto::H_DATE, Raw::new(date))
+        .header(crypto::H_BODY_HASH, Raw::new(bh))
+        .header(crypto::H_SIGNATURE, Raw::new(STANDARD.encode(sig.to_bytes())))
+        .write_to_vec()
+        .unwrap();
+    let trusted = trusted_for(&id, "Mara Castellanos", from);
+    let mail = parse_email(&raw, 88, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "signedUnknown");
+}
+
+/// v2：附件被替换 → Tampered
+#[test]
+fn v2_attachment_swap_is_tampered() {
+    let id = test_identity();
+    let from = "mara@aragon.eth";
+    let body = "see attachment";
+    let subject = "Invoice PDF";
+    let recipients = default_recipients();
+    let attach = vec![("invoice.pdf".into(), b"PDF-REAL".to_vec())];
+    let content = sign_content(subject, body, &recipients, &attach);
+    let signed = crypto::sign_email(&id, from, &content);
+    let mut b = MessageBuilder::new()
+        .from(("Mara Castellanos", from))
+        .to(vec![("", "aria@example.com")])
+        .subject(subject)
+        .text_body(body)
+        .attachment("application/pdf", "invoice.pdf", b"PDF-FAKE".as_slice());
+    for (name, value) in signed.headers {
+        b = b.header(name, Raw::new(value));
+    }
+    let raw = b.write_to_vec().unwrap();
+    let trusted = trusted_for(&id, "Mara Castellanos", from);
+    let mail = parse_email(&raw, 77, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "tampered");
 }
 
 #[test]
@@ -512,7 +629,9 @@ fn build_raw_eth(
     secret: &[u8; 32],
     address: &str,
 ) -> Vec<u8> {
-    let signed = crypto::sign_email_eth(address, from_addr, body, |msg| {
+    let recipients = default_recipients();
+    let content = sign_content(subject, body, &recipients, &[]);
+    let signed = crypto::sign_email_eth(address, from_addr, &content, |msg| {
         crypto::eth_personal_sign_with_key(secret, msg)
     })
     .unwrap();
@@ -610,10 +729,12 @@ fn e2e_eth_tampered_mail() {
 fn eth_sign_rejects_wrong_address_binding() {
     // 设备返回的签名恢复出的地址与绑定地址不一致时必须报错（自检）
     let secret = [5u8; 32];
+    let recipients = default_recipients();
+    let content = sign_content("s", "hi", &recipients, &[]);
     let err = crypto::sign_email_eth(
         "0x0000000000000000000000000000000000000001",
         "a@b.c",
-        "hi",
+        &content,
         |msg| crypto::eth_personal_sign_with_key(&secret, msg),
     );
     assert!(err.is_err());
@@ -858,3 +979,5 @@ fn e2e_self_signed_mail_is_verified() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+

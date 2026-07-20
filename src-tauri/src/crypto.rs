@@ -10,10 +10,20 @@ pub const H_SIGNATURE: &str = "X-SealMail-Signature";
 pub const H_FROM: &str = "X-SealMail-From";
 pub const H_DATE: &str = "X-SealMail-Date";
 pub const H_BODY_HASH: &str = "X-SealMail-Body-Hash";
+/// v2：主题 / HTML / 附件清单 / 收件人 的哈希头
+pub const H_SUBJECT_HASH: &str = "X-SealMail-Subject-Hash";
+pub const H_HTML_HASH: &str = "X-SealMail-Html-Hash";
+pub const H_ATTACH_HASH: &str = "X-SealMail-Attach-Hash";
+pub const H_TO_HASH: &str = "X-SealMail-To-Hash";
 /// 签名方案：ed25519（本地密钥）| eth-personal（Ledger secp256k1 EIP-191）
 pub const H_METHOD: &str = "X-SealMail-Method";
 /// eth-personal 方案下签名者的以太坊地址（验证时与 ecrecover 结果比对）
 pub const H_ADDRESS: &str = "X-SealMail-Address";
+
+/// 当前发送使用的 canon 版本
+pub const CANON_VERSION_CURRENT: &str = "2";
+pub const CANON_VERSION_V1: &str = "1";
+pub const EMPTY_HASH_TOKEN: &str = "-";
 
 pub struct Identity {
     pub signing_key: SigningKey,
@@ -95,30 +105,149 @@ pub fn body_hash_hex(body: &str) -> String {
     hex::encode(Sha256::digest(normalize_body(body).as_bytes()))
 }
 
+pub fn bytes_hash_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+/// 待签名/待验证的邮件内容（v2 覆盖主题、HTML、附件、收件人）。
+pub struct SignContent<'a> {
+    pub subject: &'a str,
+    pub body_text: &'a str,
+    pub body_html: Option<&'a str>,
+    /// To + Cc，规范化后排序哈希（防整封重放给其他人）
+    pub recipients: &'a [String],
+    /// (文件名, 内容)
+    pub attachments: &'a [(String, Vec<u8>)],
+}
+
+#[derive(Clone, Debug)]
+pub struct ContentHashes {
+    pub subject: String,
+    pub body: String,
+    pub html: String,
+    pub attach: String,
+    pub to: String,
+}
+
+pub fn content_hashes(c: &SignContent<'_>) -> ContentHashes {
+    ContentHashes {
+        subject: body_hash_hex(c.subject),
+        body: body_hash_hex(c.body_text),
+        html: match c.body_html {
+            Some(h) if !h.trim().is_empty() => body_hash_hex(h),
+            _ => EMPTY_HASH_TOKEN.into(),
+        },
+        attach: attachments_hash_hex(c.attachments),
+        to: recipients_hash_hex(c.recipients),
+    }
+}
+
+pub fn recipients_hash_hex(addrs: &[String]) -> String {
+    let mut list: Vec<String> = addrs
+        .iter()
+        .map(|a| a.trim().to_lowercase())
+        .filter(|a| !a.is_empty())
+        .collect();
+    list.sort();
+    list.dedup();
+    if list.is_empty() {
+        return EMPTY_HASH_TOKEN.into();
+    }
+    body_hash_hex(&list.join(","))
+}
+
+pub fn attachments_hash_hex(attachments: &[(String, Vec<u8>)]) -> String {
+    if attachments.is_empty() {
+        return EMPTY_HASH_TOKEN.into();
+    }
+    let mut lines: Vec<String> = attachments
+        .iter()
+        .map(|(name, data)| {
+            let safe = name.replace('|', "_").replace('\n', " ");
+            format!("{safe}:{}:{}", data.len(), bytes_hash_hex(data))
+        })
+        .collect();
+    lines.sort();
+    bytes_hash_hex(lines.join("\n").as_bytes())
+}
+
+/// v1 canon（历史邮件）：仅 from|date|body_hash
 pub fn canon_string(from: &str, date: &str, body_hash: &str) -> String {
     format!("sealmail-v1|{}|{}|{}", from.to_lowercase(), date, body_hash)
+}
+
+/// v2 canon：主题/纯文本/HTML/附件/收件人
+pub fn canon_string_v2(
+    from: &str,
+    date: &str,
+    subject_hash: &str,
+    body_hash: &str,
+    html_hash: &str,
+    attach_hash: &str,
+    to_hash: &str,
+) -> String {
+    format!(
+        "sealmail-v2|{}|{}|{}|{}|{}|{}|{}",
+        from.to_lowercase(),
+        date,
+        subject_hash.trim().to_lowercase(),
+        body_hash.trim().to_lowercase(),
+        html_hash.trim().to_lowercase(),
+        attach_hash.trim().to_lowercase(),
+        to_hash.trim().to_lowercase()
+    )
 }
 
 pub struct SignedHeaders {
     pub headers: Vec<(String, String)>,
 }
 
-pub fn sign_email(identity: &Identity, from_addr: &str, body: &str) -> SignedHeaders {
-    let date = chrono::Utc::now().to_rfc3339();
-    let bh = body_hash_hex(body);
-    let canon = canon_string(from_addr, &date, &bh);
-    let sig = identity.signing_key.sign(canon.as_bytes());
+fn headers_for_v2(
+    method: &str,
+    id_header: (&str, String),
+    from_addr: &str,
+    date: String,
+    hashes: &ContentHashes,
+    signature: String,
+) -> SignedHeaders {
     SignedHeaders {
         headers: vec![
-            (H_VERSION.into(), "1".into()),
-            (H_METHOD.into(), "ed25519".into()),
-            (H_PUBKEY.into(), identity.public_key_b64()),
+            (H_VERSION.into(), CANON_VERSION_CURRENT.into()),
+            (H_METHOD.into(), method.into()),
+            (id_header.0.into(), id_header.1),
             (H_FROM.into(), from_addr.to_lowercase()),
             (H_DATE.into(), date),
-            (H_BODY_HASH.into(), bh),
-            (H_SIGNATURE.into(), B64.encode(sig.to_bytes())),
+            (H_SUBJECT_HASH.into(), hashes.subject.clone()),
+            (H_BODY_HASH.into(), hashes.body.clone()),
+            (H_HTML_HASH.into(), hashes.html.clone()),
+            (H_ATTACH_HASH.into(), hashes.attach.clone()),
+            (H_TO_HASH.into(), hashes.to.clone()),
+            (H_SIGNATURE.into(), signature),
         ],
     }
+}
+
+pub fn sign_email(identity: &Identity, from_addr: &str, content: &SignContent<'_>) -> SignedHeaders {
+    let date = chrono::Utc::now().to_rfc3339();
+    let hashes = content_hashes(content);
+    let canon = canon_string_v2(
+        from_addr,
+        &date,
+        &hashes.subject,
+        &hashes.body,
+        &hashes.html,
+        &hashes.attach,
+        &hashes.to,
+    );
+    let sig = identity.signing_key.sign(canon.as_bytes());
+    headers_for_v2(
+        "ed25519",
+        (H_PUBKEY, identity.public_key_b64()),
+        from_addr,
+        date,
+        &hashes,
+        B64.encode(sig.to_bytes()),
+    )
 }
 
 /// Ledger 签名（EIP-191 personal_sign）。`sign` 回调把 canon 字节送往设备并返回 65 字节 r‖s‖v——
@@ -126,12 +255,20 @@ pub fn sign_email(identity: &Identity, from_addr: &str, body: &str) -> SignedHea
 pub fn sign_email_eth(
     address: &str,
     from_addr: &str,
-    body: &str,
+    content: &SignContent<'_>,
     sign: impl FnOnce(&[u8]) -> Result<[u8; 65], String>,
 ) -> Result<SignedHeaders, String> {
     let date = chrono::Utc::now().to_rfc3339();
-    let bh = body_hash_hex(body);
-    let canon = canon_string(from_addr, &date, &bh);
+    let hashes = content_hashes(content);
+    let canon = canon_string_v2(
+        from_addr,
+        &date,
+        &hashes.subject,
+        &hashes.body,
+        &hashes.html,
+        &hashes.attach,
+        &hashes.to,
+    );
     let rsv = sign(canon.as_bytes())?;
     // 自检：签名必须能恢复出绑定地址，避免把坏签名发出去
     let recovered = eth_personal_recover(canon.as_bytes(), &rsv)?;
@@ -140,17 +277,14 @@ pub fn sign_email_eth(
             "设备返回的签名与绑定地址不符（恢复出 {recovered}，期望 {address}）。请确认 Ledger 上选择的是绑定时的账户。"
         ));
     }
-    Ok(SignedHeaders {
-        headers: vec![
-            (H_VERSION.into(), "1".into()),
-            (H_METHOD.into(), "eth-personal".into()),
-            (H_ADDRESS.into(), address.to_lowercase()),
-            (H_FROM.into(), from_addr.to_lowercase()),
-            (H_DATE.into(), date),
-            (H_BODY_HASH.into(), bh),
-            (H_SIGNATURE.into(), hex::encode(rsv)),
-        ],
-    })
+    Ok(headers_for_v2(
+        "eth-personal",
+        (H_ADDRESS, address.to_lowercase()),
+        from_addr,
+        date,
+        &hashes,
+        hex::encode(rsv),
+    ))
 }
 
 /// EIP-191 personal_sign 的 ecrecover：返回小写 0x 地址。
@@ -196,28 +330,71 @@ pub fn eth_personal_sign_with_key(secret: &[u8; 32], message: &[u8]) -> Result<[
     Ok(out)
 }
 
+#[derive(Clone, Debug)]
 pub struct SealHeaders {
     pub pubkey: String,
     pub signature: String,
     pub from: String,
     pub date: String,
     pub body_hash: String,
+    /// "1" | "2"；缺省按 v1
+    pub version: String,
+    pub subject_hash: String,
+    pub html_hash: String,
+    pub attach_hash: String,
+    pub to_hash: String,
 }
 
-/// 验证签名头。返回 Ok((fingerprint, body_hash_matches, signed_hash, got_hash, signed_from))
+impl SealHeaders {
+    pub fn is_v2(&self) -> bool {
+        self.version.trim() == CANON_VERSION_CURRENT || self.version.trim() == "2"
+    }
+}
+
+/// 验证签名头。
+/// 返回 Ok((fingerprint, content_matches, signed_body_hash, got_body_hash))
+/// content_matches：v1 只比 body；v2 比 subject/body/html/attach/to 全部。
 pub fn verify_headers(
     h: &SealHeaders,
-    actual_body: &str,
+    actual: &SignContent<'_>,
 ) -> Result<(String, bool, String, String), String> {
     let pk_bytes = B64.decode(h.pubkey.trim()).map_err(|_| "公钥格式错误")?;
     let pk_arr: [u8; 32] = pk_bytes.try_into().map_err(|_| "公钥长度错误")?;
     let vk = VerifyingKey::from_bytes(&pk_arr).map_err(|_| "公钥无效")?;
     let sig_bytes = B64.decode(h.signature.trim()).map_err(|_| "签名格式错误")?;
     let sig = Signature::from_slice(&sig_bytes).map_err(|_| "签名长度错误")?;
-    let canon = canon_string(&h.from, &h.date, &h.body_hash);
+    let canon = if h.is_v2() {
+        canon_string_v2(
+            &h.from,
+            &h.date,
+            &h.subject_hash,
+            &h.body_hash,
+            &h.html_hash,
+            &h.attach_hash,
+            &h.to_hash,
+        )
+    } else {
+        canon_string(&h.from, &h.date, &h.body_hash)
+    };
     vk.verify(canon.as_bytes(), &sig)
         .map_err(|_| "签名校验失败")?;
-    let got = body_hash_hex(actual_body);
-    let matches = got == h.body_hash.trim().to_lowercase();
-    Ok((fingerprint_of(&vk), matches, h.body_hash.clone(), got))
+    let got = content_hashes(actual);
+    let matches = if h.is_v2() {
+        got.subject == h.subject_hash.trim().to_lowercase()
+            && got.body == h.body_hash.trim().to_lowercase()
+            && got.html == h.html_hash.trim().to_lowercase()
+            && got.attach == h.attach_hash.trim().to_lowercase()
+            && got.to == h.to_hash.trim().to_lowercase()
+    } else {
+        got.body == h.body_hash.trim().to_lowercase()
+    };
+    Ok((fingerprint_of(&vk), matches, h.body_hash.clone(), got.body))
+}
+
+/// v1 签名且邮件含 HTML/附件时：正文绿标可信范围不足，不应给完整 Verified。
+pub fn v1_unsigned_surface_present(body_html: Option<&str>, attachment_count: usize) -> bool {
+    attachment_count > 0
+        || body_html
+            .map(|h| !h.trim().is_empty())
+            .unwrap_or(false)
 }

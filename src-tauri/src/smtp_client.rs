@@ -119,6 +119,16 @@ pub fn send_mail(
 
     // 签名证明只放在 X-SealMail-* 邮件头里；正文必须保持用户输入原样。
     let final_body = body.to_string();
+    let mut recipients: Vec<String> = to.iter().chain(cc.iter()).cloned().collect();
+    // 规范化：签名 to_hash 与验证侧一致
+    recipients.retain(|a| !a.trim().is_empty());
+    let sign_content = crypto::SignContent {
+        subject,
+        body_text: &final_body,
+        body_html: None, // 写信器当前只发 text/plain
+        recipients: &recipients,
+        attachments: &attachments,
+    };
 
     let mut builder = MessageBuilder::new()
         .from((account.display_name.as_str(), account.email.as_str()))
@@ -134,7 +144,7 @@ pub fn send_mail(
             .map(|a| ("", a.as_str()))
             .collect::<Vec<(&str, &str)>>());
     }
-    // 附件（注意：签名 canon 只覆盖纯文本正文，附件不在签名范围内）
+    // 附件：v2 canon 覆盖附件清单哈希
     for (name, data) in &attachments {
         builder = builder.attachment(guess_mime(name), name.as_str(), &data[..]);
     }
@@ -142,13 +152,13 @@ pub fn send_mail(
     match &signer {
         Signer::None => {}
         Signer::Local(id) => {
-            for (name, value) in crypto::sign_email(id, &account.email, &final_body).headers {
+            for (name, value) in crypto::sign_email(id, &account.email, &sign_content).headers {
                 builder = builder.header(name, Raw::new(value));
             }
         }
         Signer::Ledger { path, address } => {
             // 这里会阻塞等待用户在 Ledger 设备上确认
-            let headers = crypto::sign_email_eth(address, &account.email, &final_body, |msg| {
+            let headers = crypto::sign_email_eth(address, &account.email, &sign_content, |msg| {
                 crate::ledger::sign_personal_message(path, msg)
             })?;
             for (name, value) in headers.headers {
