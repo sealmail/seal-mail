@@ -47,6 +47,52 @@
   --serif: "IBM Plex Serif", serif;
 }
 
+html[data-theme="dark"] {
+  --bg: #141614;
+  --bg-warm: #141614;
+  --bg-side: #121412;
+  --bg-chip: #1e221e;
+  --bg-hover: #1a1e1a;
+  --bg-active: #1a2a20;
+  --bg-active-deep: #1f3328;
+  --border: #2a2e2a;
+  --border-2: #353a35;
+  --border-3: #424842;
+  --border-soft: #242824;
+  --line: #2a2e2a;
+  --ink: #eef1ec;
+  --ink-2: #e2e6df;
+  --ink-3: #cfd6cb;
+  --body: #c5cdc0;
+  --mut: #8a9288;
+  --mut-2: #7a8278;
+  --mut-3: #6a7268;
+  --mut-4: #5a6258;
+  --jade: #2db87a;
+  --jade-deep: #249a66;
+  --jade-btn-hover: #28a86f;
+  --jade-bg: #163024;
+  --jade-ok: #35c484;
+  --seal: #2db87a;
+  --red: #e07068;
+  --red-bg: #3a1e1c;
+  --red-bg-strong: #4a2824;
+  --red-bad: #e88880;
+  --warn: #d4a84a;
+  --warn-bg: #2e2818;
+  --warn-border: #5a4c28;
+  --gold: #d4a84a;
+  --gray: #9aa398;
+  --gray-bg: #1e221e;
+}
+.search-scope-hint {
+  font-size: 10px;
+  color: var(--mut-3);
+  white-space: nowrap;
+  padding: 0 8px 0 0;
+  align-self: center;
+}
+
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; }
 html {

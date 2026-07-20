@@ -13,6 +13,7 @@ pub mod mail;
 pub mod models;
 pub mod oauth;
 pub mod pop3_client;
+pub mod secrets_store;
 pub mod smtp_client;
 pub mod store;
 pub mod sync_lock;

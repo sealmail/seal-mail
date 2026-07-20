@@ -1,11 +1,15 @@
-use crate::crypto::{restrict_perms, Identity};
+use crate::crypto::Identity;
 use crate::models::*;
+use crate::secrets_store;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+
+/// 完整邮件内存缓存上限（LRU）
+const MAIL_CACHE_CAP: usize = 256;
 
 pub struct AppState {
     pub inner: Mutex<StoreData>,
@@ -39,8 +43,10 @@ pub struct StoreData {
     pub contacts: HashMap<String, Contact>,
     /// 写信草稿（本地）
     pub drafts: Vec<Draft>,
-    /// 内存缓存：完整邮件，key = account/folder/uid
+    /// 内存缓存：完整邮件，key = account/folder/uid（LRU，见 MAIL_CACHE_CAP）
     pub mail_cache: HashMap<String, EmailFull>,
+    /// LRU 顺序：队尾最近访问
+    mail_cache_order: VecDeque<String>,
     /// SQLite 邮件缓存（mail.db；原始邮件 + 列表状态，离线可读）
     pub db: rusqlite::Connection,
 }
@@ -132,7 +138,7 @@ impl StoreData {
         Ok(StoreData {
             db,
             accounts: read_json(&dir.join("accounts.json"))?,
-            secrets: read_json(&dir.join("secrets.json"))?,
+            secrets: secrets_store::load(&dir)?,
             filters: read_json(&dir.join("filters.json"))?,
             trusted: read_json(&dir.join("trusted.json"))?,
             local_folders: read_json(&dir.join("local_folders.json"))?,
@@ -144,9 +150,45 @@ impl StoreData {
             identity_config: read_json(&dir.join("identity.json"))?,
             prefs,
             mail_cache: HashMap::new(),
+            mail_cache_order: VecDeque::new(),
             identity,
             dir,
         })
+    }
+
+    pub fn cache_get(&mut self, key: &str) -> Option<&EmailFull> {
+        if self.mail_cache.contains_key(key) {
+            self.mail_cache_order.retain(|k| k != key);
+            self.mail_cache_order.push_back(key.to_string());
+            self.mail_cache.get(key)
+        } else {
+            None
+        }
+    }
+
+    pub fn cache_put(&mut self, key: String, full: EmailFull) {
+        if self.mail_cache.contains_key(&key) {
+            self.mail_cache_order.retain(|k| k != &key);
+        }
+        self.mail_cache.insert(key.clone(), full);
+        self.mail_cache_order.push_back(key);
+        while self.mail_cache_order.len() > MAIL_CACHE_CAP {
+            if let Some(old) = self.mail_cache_order.pop_front() {
+                self.mail_cache.remove(&old);
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub fn cache_remove(&mut self, key: &str) -> Option<EmailFull> {
+        self.mail_cache_order.retain(|k| k != key);
+        self.mail_cache.remove(key)
+    }
+
+    pub fn cache_clear(&mut self) {
+        self.mail_cache.clear();
+        self.mail_cache_order.clear();
     }
 
     pub fn save_identity_config(&self) -> Result<(), String> {
@@ -178,30 +220,24 @@ impl StoreData {
         write_json(&self.dir.join("accounts.json"), &self.accounts)
     }
     pub fn save_secrets(&self) -> Result<(), String> {
-        let p = self.dir.join("secrets.json");
-        write_json(&p, &self.secrets)?;
-        restrict_perms(&p);
-        Ok(())
+        secrets_store::save(&self.dir, &self.secrets)
     }
 
     /// CLI 子进程改完账户/凭据后，GUI 常驻进程重读磁盘并更新内存。
     /// 否则新账户没有 watcher、已删账户仍被旧凭据轮询。
     pub fn reload_accounts_and_secrets_from_disk(&mut self) -> Result<(), String> {
         self.accounts = read_json(&self.dir.join("accounts.json"))?;
-        self.secrets = read_json(&self.dir.join("secrets.json"))?;
+        self.secrets = secrets_store::load(&self.dir)?;
         Ok(())
     }
 
     /// 合并更新单个账户凭据。GUI 常驻进程的内存状态可能落后于 CLI 子进程；
     /// 写入前必须重读磁盘，避免 OAuth 刷新把后来新增的账户凭据整表覆盖掉。
     pub fn update_secret(&mut self, account_id: &str, secret: AccountSecret) -> Result<(), String> {
-        let p = self.dir.join("secrets.json");
-        let raw = fs::read_to_string(&p).map_err(|e| format!("读取账户凭据失败: {e}"))?;
-        let mut latest: HashMap<String, AccountSecret> =
-            serde_json::from_str(&raw).map_err(|e| format!("解析账户凭据失败: {e}"))?;
+        // 重读最新（钥匙串或文件），避免多进程覆盖
+        let mut latest = secrets_store::load(&self.dir)?;
         latest.insert(account_id.to_string(), secret);
-        write_json(&p, &latest)?;
-        restrict_perms(&p);
+        secrets_store::save(&self.dir, &latest)?;
         self.secrets = latest;
         Ok(())
     }

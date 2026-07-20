@@ -739,6 +739,7 @@ pub fn run() -> Result<(), String> {
                     subject: required_flag(&args, "--subject")?,
                     body: read_body(&args)?,
                     sign: !args.iter().any(|arg| arg == "--no-sign"),
+                    attachment_paths: repeated_flag_values(&args, "--attach")?,
                     updated_at: 0,
                 };
                 let saved = core::save_draft(&mut core.data, draft)?;
@@ -945,8 +946,15 @@ pub fn run() -> Result<(), String> {
                     let value = core::set_language(&mut core.data, language)?;
                     changed.insert("language".into(), serde_json::Value::String(value));
                 }
+                if let Some(theme) = flag_value(&args, "--theme")? {
+                    let value = core::set_theme(&mut core.data, theme)?;
+                    changed.insert("theme".into(), serde_json::Value::String(value));
+                }
                 if changed.is_empty() {
-                    return Err("pref set 需要 --close-behavior、--notify-new-mail 或 --language".into());
+                    return Err(
+                        "pref set 需要 --close-behavior、--notify-new-mail、--language 或 --theme"
+                            .into(),
+                    );
                 }
                 if json {
                     print_json(&serde_json::Value::Object(changed))

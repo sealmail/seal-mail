@@ -15,15 +15,19 @@ pub const H_SUBJECT_HASH: &str = "X-SealMail-Subject-Hash";
 pub const H_HTML_HASH: &str = "X-SealMail-Html-Hash";
 pub const H_ATTACH_HASH: &str = "X-SealMail-Attach-Hash";
 pub const H_TO_HASH: &str = "X-SealMail-To-Hash";
+pub const H_MID_HASH: &str = "X-SealMail-MessageId-Hash";
 /// 签名方案：ed25519（本地密钥）| eth-personal（Ledger secp256k1 EIP-191）
 pub const H_METHOD: &str = "X-SealMail-Method";
 /// eth-personal 方案下签名者的以太坊地址（验证时与 ecrecover 结果比对）
 pub const H_ADDRESS: &str = "X-SealMail-Address";
 
-/// 当前发送使用的 canon 版本
-pub const CANON_VERSION_CURRENT: &str = "2";
+/// 当前发送使用的 canon 版本（v3 = v2 + Message-ID）
+pub const CANON_VERSION_CURRENT: &str = "3";
 pub const CANON_VERSION_V1: &str = "1";
+pub const CANON_VERSION_V2: &str = "2";
 pub const EMPTY_HASH_TOKEN: &str = "-";
+/// 超过此天数的签名不再给完整 Verified 绿标（防旧邮件重放当「当前指令」）
+pub const MAX_VERIFIED_AGE_DAYS: i64 = 180;
 
 pub struct Identity {
     pub signing_key: SigningKey,
@@ -109,7 +113,7 @@ pub fn bytes_hash_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// 待签名/待验证的邮件内容（v2 覆盖主题、HTML、附件、收件人）。
+/// 待签名/待验证的邮件内容（v3：主题、HTML、附件、收件人、Message-ID）。
 pub struct SignContent<'a> {
     pub subject: &'a str,
     pub body_text: &'a str,
@@ -118,6 +122,8 @@ pub struct SignContent<'a> {
     pub recipients: &'a [String],
     /// (文件名, 内容)
     pub attachments: &'a [(String, Vec<u8>)],
+    /// Message-ID（含尖括号）；缺省不参与 v2，v3 发送时必填
+    pub message_id: Option<&'a str>,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +133,7 @@ pub struct ContentHashes {
     pub html: String,
     pub attach: String,
     pub to: String,
+    pub mid: String,
 }
 
 pub fn content_hashes(c: &SignContent<'_>) -> ContentHashes {
@@ -139,7 +146,35 @@ pub fn content_hashes(c: &SignContent<'_>) -> ContentHashes {
         },
         attach: attachments_hash_hex(c.attachments),
         to: recipients_hash_hex(c.recipients),
+        mid: match c.message_id {
+            Some(m) if !m.trim().is_empty() => body_hash_hex(&normalize_message_id(m)),
+            _ => EMPTY_HASH_TOKEN.into(),
+        },
     }
+}
+
+/// Message-ID 规范化：统一成 `<...>` 形式再哈希，避免 builder/parser 尖括号差异。
+pub fn normalize_message_id(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if t.starts_with('<') && t.ends_with('>') {
+        t.to_string()
+    } else {
+        format!("<{t}>")
+    }
+}
+
+/// 生成签名用 Message-ID
+pub fn generate_message_id() -> String {
+    let mut rnd = [0u8; 8];
+    let _ = getrandom::getrandom(&mut rnd);
+    format!(
+        "<sm.{}.{}@sealmail.local>",
+        chrono::Utc::now().timestamp_millis(),
+        hex::encode(rnd)
+    )
 }
 
 pub fn recipients_hash_hex(addrs: &[String]) -> String {
@@ -198,39 +233,69 @@ pub fn canon_string_v2(
     )
 }
 
+/// v3 = v2 + Message-ID 哈希（绑定单封邮件身份，抑制同内容跨会话重放）
+pub fn canon_string_v3(
+    from: &str,
+    date: &str,
+    subject_hash: &str,
+    body_hash: &str,
+    html_hash: &str,
+    attach_hash: &str,
+    to_hash: &str,
+    mid_hash: &str,
+) -> String {
+    format!(
+        "sealmail-v3|{}|{}|{}|{}|{}|{}|{}|{}",
+        from.to_lowercase(),
+        date,
+        subject_hash.trim().to_lowercase(),
+        body_hash.trim().to_lowercase(),
+        html_hash.trim().to_lowercase(),
+        attach_hash.trim().to_lowercase(),
+        to_hash.trim().to_lowercase(),
+        mid_hash.trim().to_lowercase()
+    )
+}
+
 pub struct SignedHeaders {
     pub headers: Vec<(String, String)>,
 }
 
-fn headers_for_v2(
+fn headers_for_current(
     method: &str,
     id_header: (&str, String),
     from_addr: &str,
     date: String,
     hashes: &ContentHashes,
     signature: String,
+    message_id: Option<&str>,
 ) -> SignedHeaders {
-    SignedHeaders {
-        headers: vec![
-            (H_VERSION.into(), CANON_VERSION_CURRENT.into()),
-            (H_METHOD.into(), method.into()),
-            (id_header.0.into(), id_header.1),
-            (H_FROM.into(), from_addr.to_lowercase()),
-            (H_DATE.into(), date),
-            (H_SUBJECT_HASH.into(), hashes.subject.clone()),
-            (H_BODY_HASH.into(), hashes.body.clone()),
-            (H_HTML_HASH.into(), hashes.html.clone()),
-            (H_ATTACH_HASH.into(), hashes.attach.clone()),
-            (H_TO_HASH.into(), hashes.to.clone()),
-            (H_SIGNATURE.into(), signature),
-        ],
+    let mut headers = vec![
+        (H_VERSION.into(), CANON_VERSION_CURRENT.into()),
+        (H_METHOD.into(), method.into()),
+        (id_header.0.into(), id_header.1),
+        (H_FROM.into(), from_addr.to_lowercase()),
+        (H_DATE.into(), date),
+        (H_SUBJECT_HASH.into(), hashes.subject.clone()),
+        (H_BODY_HASH.into(), hashes.body.clone()),
+        (H_HTML_HASH.into(), hashes.html.clone()),
+        (H_ATTACH_HASH.into(), hashes.attach.clone()),
+        (H_TO_HASH.into(), hashes.to.clone()),
+        (H_MID_HASH.into(), hashes.mid.clone()),
+        (H_SIGNATURE.into(), signature),
+    ];
+    if let Some(mid) = message_id {
+        if !mid.trim().is_empty() {
+            headers.insert(0, ("Message-ID".into(), mid.trim().to_string()));
+        }
     }
+    SignedHeaders { headers }
 }
 
 pub fn sign_email(identity: &Identity, from_addr: &str, content: &SignContent<'_>) -> SignedHeaders {
     let date = chrono::Utc::now().to_rfc3339();
     let hashes = content_hashes(content);
-    let canon = canon_string_v2(
+    let canon = canon_string_v3(
         from_addr,
         &date,
         &hashes.subject,
@@ -238,15 +303,17 @@ pub fn sign_email(identity: &Identity, from_addr: &str, content: &SignContent<'_
         &hashes.html,
         &hashes.attach,
         &hashes.to,
+        &hashes.mid,
     );
     let sig = identity.signing_key.sign(canon.as_bytes());
-    headers_for_v2(
+    headers_for_current(
         "ed25519",
         (H_PUBKEY, identity.public_key_b64()),
         from_addr,
         date,
         &hashes,
         B64.encode(sig.to_bytes()),
+        content.message_id,
     )
 }
 
@@ -260,7 +327,7 @@ pub fn sign_email_eth(
 ) -> Result<SignedHeaders, String> {
     let date = chrono::Utc::now().to_rfc3339();
     let hashes = content_hashes(content);
-    let canon = canon_string_v2(
+    let canon = canon_string_v3(
         from_addr,
         &date,
         &hashes.subject,
@@ -268,6 +335,7 @@ pub fn sign_email_eth(
         &hashes.html,
         &hashes.attach,
         &hashes.to,
+        &hashes.mid,
     );
     let rsv = sign(canon.as_bytes())?;
     // 自检：签名必须能恢复出绑定地址，避免把坏签名发出去
@@ -277,13 +345,14 @@ pub fn sign_email_eth(
             "设备返回的签名与绑定地址不符（恢复出 {recovered}，期望 {address}）。请确认 Ledger 上选择的是绑定时的账户。"
         ));
     }
-    Ok(headers_for_v2(
+    Ok(headers_for_current(
         "eth-personal",
         (H_ADDRESS, address.to_lowercase()),
         from_addr,
         date,
         &hashes,
         hex::encode(rsv),
+        content.message_id,
     ))
 }
 
@@ -337,23 +406,27 @@ pub struct SealHeaders {
     pub from: String,
     pub date: String,
     pub body_hash: String,
-    /// "1" | "2"；缺省按 v1
+    /// "1" | "2" | "3"；缺省按 v1
     pub version: String,
     pub subject_hash: String,
     pub html_hash: String,
     pub attach_hash: String,
     pub to_hash: String,
+    pub mid_hash: String,
 }
 
 impl SealHeaders {
-    pub fn is_v2(&self) -> bool {
-        self.version.trim() == CANON_VERSION_CURRENT || self.version.trim() == "2"
+    pub fn version_num(&self) -> u8 {
+        match self.version.trim() {
+            "3" => 3,
+            "2" => 2,
+            _ => 1,
+        }
     }
 }
 
 /// 验证签名头。
 /// 返回 Ok((fingerprint, content_matches, signed_body_hash, got_body_hash))
-/// content_matches：v1 只比 body；v2 比 subject/body/html/attach/to 全部。
 pub fn verify_headers(
     h: &SealHeaders,
     actual: &SignContent<'_>,
@@ -363,8 +436,9 @@ pub fn verify_headers(
     let vk = VerifyingKey::from_bytes(&pk_arr).map_err(|_| "公钥无效")?;
     let sig_bytes = B64.decode(h.signature.trim()).map_err(|_| "签名格式错误")?;
     let sig = Signature::from_slice(&sig_bytes).map_err(|_| "签名长度错误")?;
-    let canon = if h.is_v2() {
-        canon_string_v2(
+    let v = h.version_num();
+    let canon = match v {
+        3 => canon_string_v3(
             &h.from,
             &h.date,
             &h.subject_hash,
@@ -372,21 +446,39 @@ pub fn verify_headers(
             &h.html_hash,
             &h.attach_hash,
             &h.to_hash,
-        )
-    } else {
-        canon_string(&h.from, &h.date, &h.body_hash)
+            &h.mid_hash,
+        ),
+        2 => canon_string_v2(
+            &h.from,
+            &h.date,
+            &h.subject_hash,
+            &h.body_hash,
+            &h.html_hash,
+            &h.attach_hash,
+            &h.to_hash,
+        ),
+        _ => canon_string(&h.from, &h.date, &h.body_hash),
     };
     vk.verify(canon.as_bytes(), &sig)
         .map_err(|_| "签名校验失败")?;
     let got = content_hashes(actual);
-    let matches = if h.is_v2() {
-        got.subject == h.subject_hash.trim().to_lowercase()
-            && got.body == h.body_hash.trim().to_lowercase()
-            && got.html == h.html_hash.trim().to_lowercase()
-            && got.attach == h.attach_hash.trim().to_lowercase()
-            && got.to == h.to_hash.trim().to_lowercase()
-    } else {
-        got.body == h.body_hash.trim().to_lowercase()
+    let matches = match v {
+        3 => {
+            got.subject == h.subject_hash.trim().to_lowercase()
+                && got.body == h.body_hash.trim().to_lowercase()
+                && got.html == h.html_hash.trim().to_lowercase()
+                && got.attach == h.attach_hash.trim().to_lowercase()
+                && got.to == h.to_hash.trim().to_lowercase()
+                && got.mid == h.mid_hash.trim().to_lowercase()
+        }
+        2 => {
+            got.subject == h.subject_hash.trim().to_lowercase()
+                && got.body == h.body_hash.trim().to_lowercase()
+                && got.html == h.html_hash.trim().to_lowercase()
+                && got.attach == h.attach_hash.trim().to_lowercase()
+                && got.to == h.to_hash.trim().to_lowercase()
+        }
+        _ => got.body == h.body_hash.trim().to_lowercase(),
     };
     Ok((fingerprint_of(&vk), matches, h.body_hash.clone(), got.body))
 }
@@ -397,4 +489,13 @@ pub fn v1_unsigned_surface_present(body_html: Option<&str>, attachment_count: us
         || body_html
             .map(|h| !h.trim().is_empty())
             .unwrap_or(false)
+}
+
+/// 签名时间是否过旧，不宜作为「当前可信指令」绿标（历史归档仍可看 SignedUnknown）。
+pub fn signature_too_old(signed_date: &str) -> bool {
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(signed_date.trim()) else {
+        return false;
+    };
+    let age = chrono::Utc::now().signed_duration_since(dt.with_timezone(&chrono::Utc));
+    age.num_days() > MAX_VERIFIED_AGE_DAYS
 }

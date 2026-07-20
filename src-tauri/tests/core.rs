@@ -22,6 +22,7 @@ fn sign_content<'a>(
     body: &'a str,
     recipients: &'a [String],
     attachments: &'a [(String, Vec<u8>)],
+    message_id: Option<&'a str>,
 ) -> crypto::SignContent<'a> {
     crypto::SignContent {
         subject,
@@ -29,6 +30,7 @@ fn sign_content<'a>(
         body_html: None,
         recipients,
         attachments,
+        message_id,
     }
 }
 
@@ -56,6 +58,7 @@ fn seal_headers_from(signed: &crypto::SignedHeaders) -> crypto::SealHeaders {
         html_hash: get(crypto::H_HTML_HASH),
         attach_hash: get(crypto::H_ATTACH_HASH),
         to_hash: get(crypto::H_TO_HASH),
+        mid_hash: get(crypto::H_MID_HASH),
     }
 }
 
@@ -68,13 +71,14 @@ fn build_raw(
     identity: Option<&Identity>,
 ) -> Vec<u8> {
     let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
     let mut b = MessageBuilder::new()
         .from((from_name, from_addr))
         .to(vec![("", "aria@example.com")])
         .subject(subject)
         .text_body(body);
     if let Some(id) = identity {
-        let content = sign_content(subject, body, &recipients, &[]);
+        let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
         for (name, value) in crypto::sign_email(id, from_addr, &content).headers {
             b = b.header(name, Raw::new(value));
         }
@@ -99,11 +103,12 @@ fn sign_then_verify_roundtrip() {
     let body = "Hello Aria,\r\n\r\nPlease review the doc.\r\n";
     let body_norm = "Hello Aria,\n\nPlease review the doc.";
     let recipients = default_recipients();
-    let content = sign_content("Review", body, &recipients, &[]);
+    let mid = crypto::generate_message_id();
+    let content = sign_content("Review", body, &recipients, &[], Some(mid.as_str()));
     let signed = crypto::sign_email(&id, "mara@example.com", &content);
     let h = seal_headers_from(&signed);
-    assert_eq!(h.version, "2");
-    let actual = sign_content("Review", body_norm, &recipients, &[]);
+    assert_eq!(h.version, "3");
+    let actual = sign_content("Review", body_norm, &recipients, &[], Some(mid.as_str()));
     // CRLF→LF 等规范化后应当一致
     let (fpr, body_ok, _, _) = crypto::verify_headers(&h, &actual).unwrap();
     assert!(body_ok, "规范化后的正文哈希必须一致");
@@ -115,19 +120,20 @@ fn sign_then_verify_roundtrip() {
         "Hello Aria,\n\nPlease send 5000 USDC now.",
         &recipients,
         &[],
+        Some(mid.as_str()),
     );
     let (_, tampered_ok, signed_hash, got_hash) = crypto::verify_headers(&h, &tampered).unwrap();
     assert!(!tampered_ok);
     assert_ne!(signed_hash, got_hash);
 
     // 主题被改 → v2 失败
-    let wrong_subject = sign_content("HACKED", body_norm, &recipients, &[]);
+    let wrong_subject = sign_content("HACKED", body_norm, &recipients, &[], Some(mid.as_str()));
     let (_, subject_ok, _, _) = crypto::verify_headers(&h, &wrong_subject).unwrap();
     assert!(!subject_ok);
 
     // 收件人被改 → v2 失败（防重放给他人）
     let other_rcpt = vec!["victim@evil.test".into()];
-    let wrong_to = sign_content("Review", body_norm, &other_rcpt, &[]);
+    let wrong_to = sign_content("Review", body_norm, &other_rcpt, &[], Some(mid.as_str()));
     let (_, to_ok, _, _) = crypto::verify_headers(&h, &wrong_to).unwrap();
     assert!(!to_ok);
 
@@ -416,7 +422,8 @@ fn future_signature_date_is_not_verified() {
     let subject = "Invoice";
     let recipients = default_recipients();
     let future = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
-    let content = sign_content(subject, body, &recipients, &[]);
+    // v2 无 Message-ID：验证旧版兼容与未来戳降级
+    let content = sign_content(subject, body, &recipients, &[], None);
     let hashes = crypto::content_hashes(&content);
     let canon = crypto::canon_string_v2(
         from,
@@ -541,7 +548,8 @@ fn v2_attachment_swap_is_tampered() {
     let subject = "Invoice PDF";
     let recipients = default_recipients();
     let attach = vec![("invoice.pdf".into(), b"PDF-REAL".to_vec())];
-    let content = sign_content(subject, body, &recipients, &attach);
+    let mid = crypto::generate_message_id();
+    let content = sign_content(subject, body, &recipients, &attach, Some(mid.as_str()));
     let signed = crypto::sign_email(&id, from, &content);
     let mut b = MessageBuilder::new()
         .from(("Mara Castellanos", from))
@@ -630,7 +638,8 @@ fn build_raw_eth(
     address: &str,
 ) -> Vec<u8> {
     let recipients = default_recipients();
-    let content = sign_content(subject, body, &recipients, &[]);
+    let mid = crypto::generate_message_id();
+    let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
     let signed = crypto::sign_email_eth(address, from_addr, &content, |msg| {
         crypto::eth_personal_sign_with_key(secret, msg)
     })
@@ -730,7 +739,8 @@ fn eth_sign_rejects_wrong_address_binding() {
     // 设备返回的签名恢复出的地址与绑定地址不一致时必须报错（自检）
     let secret = [5u8; 32];
     let recipients = default_recipients();
-    let content = sign_content("s", "hi", &recipients, &[]);
+    let mid = crypto::generate_message_id();
+    let content = sign_content("s", "hi", &recipients, &[], Some(mid.as_str()));
     let err = crypto::sign_email_eth(
         "0x0000000000000000000000000000000000000001",
         "a@b.c",

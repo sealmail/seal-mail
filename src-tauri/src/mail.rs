@@ -778,6 +778,8 @@ pub fn verify_message(
     let signed_html_hash = header_text(msg, crypto::H_HTML_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
     let signed_attach_hash = header_text(msg, crypto::H_ATTACH_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
     let signed_to_hash = header_text(msg, crypto::H_TO_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
+    let signed_mid_hash = header_text(msg, crypto::H_MID_HASH).unwrap_or_else(|| crypto::EMPTY_HASH_TOKEN.into());
+    let message_id = header_text(msg, "Message-ID");
 
     // 签名头声明的发件人必须与实际 From 一致，否则是头部重放/冒充
     if !signed_from.eq_ignore_ascii_case(from_addr) {
@@ -796,8 +798,13 @@ pub fn verify_message(
         body_html,
         recipients,
         attachments,
+        message_id: message_id.as_deref(),
     };
-    let is_v2 = version.trim() == "2" || version.trim() == crypto::CANON_VERSION_CURRENT;
+    let ver = match version.trim() {
+        "3" => 3,
+        "2" => 2,
+        _ => 1,
+    };
 
     // 按签名方案校验，统一产出 (指纹/地址, 内容是否一致, 签名时 body 哈希, 收到时 body 哈希)
     let (method, outcome): (String, Result<(String, bool, String, String), String>) =
@@ -807,8 +814,8 @@ pub fn verify_message(
                 let rsv: [u8; 65] = sig_bytes
                     .try_into()
                     .map_err(|_| "签名长度错误".to_string())?;
-                let canon = if is_v2 {
-                    crypto::canon_string_v2(
+                let canon = match ver {
+                    3 => crypto::canon_string_v3(
                         &signed_from,
                         &signed_date,
                         &signed_subject_hash,
@@ -816,23 +823,41 @@ pub fn verify_message(
                         &signed_html_hash,
                         &signed_attach_hash,
                         &signed_to_hash,
-                    )
-                } else {
-                    crypto::canon_string(&signed_from, &signed_date, &signed_body_hash)
+                        &signed_mid_hash,
+                    ),
+                    2 => crypto::canon_string_v2(
+                        &signed_from,
+                        &signed_date,
+                        &signed_subject_hash,
+                        &signed_body_hash,
+                        &signed_html_hash,
+                        &signed_attach_hash,
+                        &signed_to_hash,
+                    ),
+                    _ => crypto::canon_string(&signed_from, &signed_date, &signed_body_hash),
                 };
                 let recovered = crypto::eth_personal_recover(canon.as_bytes(), &rsv)?;
                 if !recovered.eq_ignore_ascii_case(&id_source) {
                     return Err("签名与声明地址不符".to_string());
                 }
                 let got = crypto::content_hashes(&actual);
-                let ok = if is_v2 {
-                    got.subject == signed_subject_hash.trim().to_lowercase()
-                        && got.body == signed_body_hash.trim().to_lowercase()
-                        && got.html == signed_html_hash.trim().to_lowercase()
-                        && got.attach == signed_attach_hash.trim().to_lowercase()
-                        && got.to == signed_to_hash.trim().to_lowercase()
-                } else {
-                    got.body == signed_body_hash.trim().to_lowercase()
+                let ok = match ver {
+                    3 => {
+                        got.subject == signed_subject_hash.trim().to_lowercase()
+                            && got.body == signed_body_hash.trim().to_lowercase()
+                            && got.html == signed_html_hash.trim().to_lowercase()
+                            && got.attach == signed_attach_hash.trim().to_lowercase()
+                            && got.to == signed_to_hash.trim().to_lowercase()
+                            && got.mid == signed_mid_hash.trim().to_lowercase()
+                    }
+                    2 => {
+                        got.subject == signed_subject_hash.trim().to_lowercase()
+                            && got.body == signed_body_hash.trim().to_lowercase()
+                            && got.html == signed_html_hash.trim().to_lowercase()
+                            && got.attach == signed_attach_hash.trim().to_lowercase()
+                            && got.to == signed_to_hash.trim().to_lowercase()
+                    }
+                    _ => got.body == signed_body_hash.trim().to_lowercase(),
                 };
                 Ok((recovered, ok, signed_body_hash.clone(), got.body))
             })();
@@ -849,6 +874,7 @@ pub fn verify_message(
                 html_hash: signed_html_hash.clone(),
                 attach_hash: signed_attach_hash.clone(),
                 to_hash: signed_to_hash.clone(),
+                mid_hash: signed_mid_hash.clone(),
             };
             (
                 "SealMail · Ed25519".to_string(),
@@ -866,11 +892,12 @@ pub fn verify_message(
                     method,
                 };
             }
-            // 正文哈希一致但签名时间离谱 → 不当作已验证（仍可显示为有效签名·未知）
-            let date_ok = !signature_date_implausible(&signed_date);
+            // 时间窗：未来戳 / 过旧签名 → 不当作完整 Verified
+            let date_ok = !signature_date_implausible(&signed_date)
+                && !crypto::signature_too_old(&signed_date);
             // v1 未覆盖 HTML/附件：可信表面不足，最高只能 SignedUnknown
-            let v1_partial = !is_v2
-                && crypto::v1_unsigned_surface_present(body_html, attachments.len());
+            let v1_partial =
+                ver == 1 && crypto::v1_unsigned_surface_present(body_html, attachments.len());
             if let Some(t) = by_addr {
                 if t.fingerprint.eq_ignore_ascii_case(&fingerprint) {
                     if !date_ok || v1_partial {

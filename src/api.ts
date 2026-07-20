@@ -31,6 +31,7 @@ interface AppPrefsJson {
   closeBehavior: "hide" | "quit";
   notifyNewMail: boolean;
   language: "system" | "zh" | "en";
+  theme?: "system" | "light" | "dark";
 }
 
 type CliArg = string | number | boolean;
@@ -94,6 +95,18 @@ export async function setLanguagePref(language: "system" | "zh" | "en"): Promise
 export async function setNotifyNewMail(enabled: boolean): Promise<boolean> {
   const result = await cliJson<Pick<AppPrefsJson, "notifyNewMail">>(["pref", "set", "--notify-new-mail", String(enabled)]);
   return result.notifyNewMail;
+}
+
+export type ThemePref = "system" | "light" | "dark";
+
+export async function getThemePref(): Promise<ThemePref> {
+  const prefs = await cliJson<AppPrefsJson>(["prefs"]);
+  return prefs.theme ?? "system";
+}
+
+export async function setThemePref(theme: ThemePref): Promise<ThemePref> {
+  const result = await cliJson<Pick<AppPrefsJson, "theme">>(["pref", "set", "--theme", theme]);
+  return result.theme ?? "system";
 }
 
 export async function openPendingNotificationMail(): Promise<NotificationMailTarget | null> {
@@ -163,6 +176,8 @@ export interface CachedList {
 export interface SyncResult {
   added: number;
   total: number;
+  /** UIDVALIDITY 变化导致本地该目录缓存被清空 */
+  uidvalidityReset?: boolean;
 }
 
 /** 本地缓存分页读取（秒出、可离线） */
@@ -334,6 +349,9 @@ export async function saveDraft(draft: Draft): Promise<Draft> {
   pushFlag(args, "--to", draft.to);
   pushFlag(args, "--cc", draft.cc);
   if (!draft.sign) args.push("--no-sign");
+  for (const path of draft.attachmentPaths ?? []) {
+    args.push("--attach", path);
+  }
   return cliJson(args);
 }
 

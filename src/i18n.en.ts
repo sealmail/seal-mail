@@ -356,6 +356,15 @@ export const EN: Record<string, string> = {
   "保存新凭据": "Save new credentials",
   "收起错误": "Dismiss",
   "重新授权 {name}": "Re-authorize {name}",
+  "仅本地缓存": "Local cache only",
+  "仅搜索当前列表已缓存的主题、发件人与地址，不含正文与服务器全库":
+    "Searches cached subject/from/address in the current list only — not full body or the server",
+  "服务器目录标识已变化（UIDVALIDITY），已重建本地缓存；更早邮件需重新同步。":
+    "Server folder identity changed (UIDVALIDITY). Local cache was rebuilt; re-sync older mail if needed.",
+  "外观主题": "Appearance",
+  "浅色、深色或跟随系统外观": "Light, dark, or follow system appearance",
+  "浅色": "Light",
+  "深色": "Dark",
 
   // ── 账户 ──
   "添加邮箱账户": "Add Email Account",

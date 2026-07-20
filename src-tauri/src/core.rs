@@ -49,6 +49,9 @@ pub struct CachedList {
 pub struct SyncResult {
     pub added: u32,
     pub total: i64,
+    /// UIDVALIDITY 变化导致本地该目录缓存被清空重建
+    #[serde(default)]
+    pub uidvalidity_reset: bool,
 }
 
 #[derive(Serialize)]
@@ -196,6 +199,19 @@ pub fn set_notify_new_mail(s: &mut StoreData, enabled: bool) -> Result<bool, Str
     Ok(enabled)
 }
 
+pub fn set_theme(s: &mut StoreData, theme: String) -> Result<String, String> {
+    if theme != "system" && theme != "light" && theme != "dark" {
+        return Err(format!("无效的主题: {}", theme));
+    }
+    s.prefs.theme = theme.clone();
+    s.save_prefs()?;
+    Ok(theme)
+}
+
+pub fn get_theme(s: &StoreData) -> String {
+    s.prefs.theme.clone()
+}
+
 pub fn list_contacts(s: &StoreData, query: Option<String>) -> Vec<Contact> {
     let q = query.unwrap_or_default().trim().to_lowercase();
     let mut list: Vec<&Contact> = s
@@ -295,7 +311,7 @@ pub fn remove_trusted(s: &mut StoreData, email: String) -> Result<Vec<TrustedCon
 /// 清空持久化的元信息缓存与内存缓存，下次读取会用最新信任关系重新解析。
 fn invalidate_meta_cache(s: &mut StoreData) {
     let _ = db::clear_all_meta_json(&s.db);
-    s.mail_cache.clear();
+    s.cache_clear();
 }
 
 pub fn test_connection(account: &Account, secret: &AccountSecret) -> Result<(), String> {
@@ -584,6 +600,17 @@ pub fn sync_messages(
             )?;
             if sf.reset {
                 db::clear_folder(&s.db, account_id, folder)?;
+                // 内存缓存里该目录的条目一并丢弃（key 前缀 account/folder/）
+                let prefix = format!("{account_id}/{folder}/");
+                let stale: Vec<String> = s
+                    .mail_cache
+                    .keys()
+                    .filter(|k| k.starts_with(&prefix))
+                    .cloned()
+                    .collect();
+                for k in stale {
+                    s.cache_remove(&k);
+                }
             }
             db::set_uidvalidity(&s.db, account_id, folder, sf.uidvalidity)?;
             db::set_server_exists(&s.db, account_id, folder, sf.exists as i64)?;
@@ -642,8 +669,7 @@ pub fn sync_messages(
                         }
                         None if imap_should_delete_missing_uid(uid, sync_start_max_uid, false) => {
                             db::delete_row(&s.db, account_id, folder, uid)?;
-                            s.mail_cache
-                                .remove(&StoreData::cache_key(account_id, folder, uid));
+                            s.cache_remove(&StoreData::cache_key(account_id, folder, uid));
                         }
                         None => {
                             // uid > sync_start_max_uid：可能是并发 sync 刚写入，跳过
@@ -661,6 +687,7 @@ pub fn sync_messages(
             Ok(SyncResult {
                 added,
                 total: db::count(&s.db, account_id, folder)?,
+                uidvalidity_reset: sf.reset,
             })
         }
         IncomingProtocol::Pop3 => {
@@ -708,8 +735,7 @@ pub fn sync_messages(
             let known_rows = db::pop_known_uidls(&s.db, account_id)?;
             for (fld, uid) in pop3_inbox_rows_gone_from_server(&known_rows, &server) {
                 db::delete_row(&s.db, account_id, &fld, uid)?;
-                s.mail_cache
-                    .remove(&StoreData::cache_key(account_id, &fld, uid));
+                s.cache_remove(&StoreData::cache_key(account_id, &fld, uid));
             }
             if let Err(e) = s.save_contacts() {
                 eprintln!("[contacts] 保存失败: {}", e);
@@ -721,6 +747,7 @@ pub fn sync_messages(
             Ok(SyncResult {
                 added,
                 total: db::count(&s.db, account_id, folder)?,
+                uidvalidity_reset: false,
             })
         }
     }
@@ -771,6 +798,7 @@ pub fn sync_older_messages(
             Ok(SyncResult {
                 added,
                 total: db::count(&s.db, account_id, folder)?,
+                uidvalidity_reset: false,
             })
         }
         IncomingProtocol::Pop3 => {
@@ -814,6 +842,7 @@ pub fn sync_older_messages(
             Ok(SyncResult {
                 added,
                 total: db::count(&s.db, account_id, folder)?,
+                uidvalidity_reset: false,
             })
         }
     }
@@ -826,7 +855,7 @@ pub fn get_message(
     uid: u32,
 ) -> Result<EmailFull, String> {
     let key = StoreData::cache_key(account_id, folder, uid);
-    if let Some(full) = s.mail_cache.get(&key) {
+    if let Some(full) = s.cache_get(&key) {
         return Ok(full.clone());
     }
     let account = s.account(account_id)?;
@@ -846,7 +875,7 @@ pub fn get_message(
     if let Ok(json) = serde_json::to_string(&full.meta) {
         let _ = db::set_meta_json(&s.db, account_id, folder, uid, &json);
     }
-    s.mail_cache.insert(key, full.clone());
+    s.cache_put(key, full.clone());
     Ok(full)
 }
 
@@ -925,18 +954,13 @@ pub fn move_message(
         IncomingProtocol::Imap => {
             imap_client::move_message(&account, secret, folder, uid, target)?;
             db::delete_row(&s.db, account_id, folder, uid)?;
-            s.mail_cache
-                .remove(&StoreData::cache_key(account_id, folder, uid));
+            s.cache_remove(&StoreData::cache_key(account_id, folder, uid));
         }
         IncomingProtocol::Pop3 => {
             db::set_folder(&s.db, account_id, folder, uid, target)?;
-            if let Some(mut full) = s
-                .mail_cache
-                .remove(&StoreData::cache_key(account_id, folder, uid))
-            {
+            if let Some(mut full) = s.cache_remove(&StoreData::cache_key(account_id, folder, uid)) {
                 full.meta.folder = target.to_string();
-                s.mail_cache
-                    .insert(StoreData::cache_key(account_id, target, uid), full);
+                s.cache_put(StoreData::cache_key(account_id, target, uid), full);
             }
         }
     }
@@ -956,8 +980,7 @@ pub fn archive_message(
             let target = imap_client::archive_message(&account, secret, folder, uid)?;
             if !target.eq_ignore_ascii_case(folder) {
                 db::delete_row(&s.db, account_id, folder, uid)?;
-                s.mail_cache
-                    .remove(&StoreData::cache_key(account_id, folder, uid));
+                s.cache_remove(&StoreData::cache_key(account_id, folder, uid));
             }
         }
         IncomingProtocol::Pop3 => {
@@ -966,13 +989,10 @@ pub fn archive_message(
                 s.save_local_folders()?;
             }
             db::set_folder(&s.db, account_id, folder, uid, POP3_ARCHIVE)?;
-            if let Some(mut full) = s
-                .mail_cache
-                .remove(&StoreData::cache_key(account_id, folder, uid))
-            {
+            if let Some(mut full) = s.cache_remove(&StoreData::cache_key(account_id, folder, uid)) {
+
                 full.meta.folder = POP3_ARCHIVE.into();
-                s.mail_cache
-                    .insert(StoreData::cache_key(account_id, POP3_ARCHIVE, uid), full);
+                s.cache_put(StoreData::cache_key(account_id, POP3_ARCHIVE, uid), full);
             }
         }
     }
@@ -1038,8 +1058,7 @@ pub fn delete_message(
         IncomingProtocol::Imap => {
             imap_client::delete_message(&account, secret, folder, uid, permanent)?;
             db::delete_row(&s.db, account_id, folder, uid)?;
-            s.mail_cache
-                .remove(&StoreData::cache_key(account_id, folder, uid));
+            s.cache_remove(&StoreData::cache_key(account_id, folder, uid));
         }
         IncomingProtocol::Pop3 => {
             if permanent {
@@ -1050,8 +1069,7 @@ pub fn delete_message(
             } else {
                 db::set_folder(&s.db, account_id, folder, uid, POP3_TRASH)?;
             }
-            s.mail_cache
-                .remove(&StoreData::cache_key(account_id, folder, uid));
+            s.cache_remove(&StoreData::cache_key(account_id, folder, uid));
         }
     }
     Ok(())
@@ -1215,8 +1233,7 @@ pub fn organize_by_filters(
             for plan in &plans {
                 for uid in &plan.uids {
                     db::delete_row(&s.db, account_id, folder, *uid)?;
-                    s.mail_cache
-                        .remove(&StoreData::cache_key(account_id, folder, *uid));
+                    s.cache_remove(&StoreData::cache_key(account_id, folder, *uid));
                 }
             }
         }
@@ -1227,16 +1244,13 @@ pub fn organize_by_filters(
                     if plan.mark_read {
                         db::set_unread(&s.db, account_id, &plan.target, &[*uid], false)?;
                     }
-                    if let Some(mut full) = s
-                        .mail_cache
-                        .remove(&StoreData::cache_key(account_id, folder, *uid))
-                    {
+                    if let Some(mut full) = s.cache_remove(&StoreData::cache_key(account_id, folder, *uid)) {
+
                         full.meta.folder = plan.target.clone();
                         if plan.mark_read {
                             full.meta.unread = false;
                         }
-                        s.mail_cache
-                            .insert(StoreData::cache_key(account_id, &plan.target, *uid), full);
+                        s.cache_put(StoreData::cache_key(account_id, &plan.target, *uid), full);
                     }
                 }
             }

@@ -333,6 +333,15 @@ function MailApp() {
     // 界面语言尽早生效（默认中文，英文用户首屏可能闪一下中文）
     api.getLanguagePref().then(applyLangPref).catch(() => {});
     api
+      .getThemePref()
+      .then((theme) => {
+        const dark =
+          theme === "dark" ||
+          (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      })
+      .catch(() => {});
+    api
       .getState()
       .then((s) => {
         setState(s);
@@ -551,15 +560,25 @@ function MailApp() {
     //    不再挂着神秘绿点（缓存数字会随回填自行增长）。
     setSyncing(true);
     try {
+      let resetCache = false;
       if (folder === UNIFIED_FOLDER) {
         const settled = await Promise.allSettled(accounts.map((a) => api.syncMessages(a.id, "INBOX")));
         const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
         if (failed) throw failed.reason;
+        resetCache = settled.some(
+          (r) => r.status === "fulfilled" && r.value.uidvalidityReset
+        );
       } else {
         const realFolder = folder === RISK_FOLDER ? "INBOX" : folder;
-        await api.syncMessages(accountId, realFolder);
+        const res = await api.syncMessages(accountId, realFolder);
+        resetCache = !!res.uidvalidityReset;
       }
       if (!fetchRequests.current.isCurrent(request)) return;
+      if (resetCache) {
+        reportListMessage(
+          t("服务器目录标识已变化（UIDVALIDITY），已重建本地缓存；更早邮件需重新同步。")
+        );
+      }
       await loadCached(request);
     } catch (e) {
       if (fetchRequests.current.isCurrent(request)) reportListError(e, t("同步失败（本地缓存仍可用）："));
@@ -1339,6 +1358,11 @@ function MailApp() {
                   ×
                 </button>
               )}
+            </div>
+          )}
+          {hasAccounts && search.trim() && (
+            <div className="search-scope-hint" title={t("仅搜索当前列表已缓存的主题、发件人与地址，不含正文与服务器全库")}>
+              {t("仅本地缓存")}
             </div>
           )}
         </div>

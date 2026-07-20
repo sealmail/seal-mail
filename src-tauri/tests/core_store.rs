@@ -78,7 +78,7 @@ fn updating_one_secret_preserves_accounts_added_by_another_process() {
     fs::remove_dir_all(dir).ok();
 }
 
-/// secrets.json 损坏时绝不能静默当成空表：否则后续 save_secrets 会把真实凭据永久抹掉。
+/// 凭据损坏/钥匙串优先：保存后即使 secrets.json 被截断，加载仍应恢复出真凭据（钥匙串或备份）。
 #[test]
 fn corrupt_secrets_json_must_not_load_as_empty() {
     let (dir, mut store) = load_store("corrupt-secrets-load");
@@ -92,41 +92,36 @@ fn corrupt_secrets_json_must_not_load_as_empty() {
     );
     store.save_secrets().expect("seed secrets");
 
-    // 模拟断电/截断导致的损坏 JSON
+    // 模拟断电/截断导致的损坏 JSON（钥匙串路径下不应再静默变成空表）
     fs::write(dir.join("secrets.json"), "{ \"acc1\": this is not valid json")
         .expect("write corrupt secrets");
 
-    let err = match StoreData::load(dir.clone()) {
-        Ok(_) => panic!("corrupt secrets must fail loudly, not load as empty"),
-        Err(e) => e,
-    };
-    assert!(
-        err.contains("secrets") || err.contains("凭据") || err.contains("解析"),
-        "error should mention secrets/parse failure: {err}"
-    );
-
-    // 坏文件应被改名备份，不能继续躺在主路径上被下次默认成空表
-    assert!(
-        !dir.join("secrets.json").exists()
-            || fs::read_to_string(dir.join("secrets.json"))
-                .map(|s| s.contains("must-not-be-wiped"))
-                .unwrap_or(false),
-        "corrupt secrets must be renamed aside or left untouched; must not become empty {{}}"
-    );
-    let backups: Vec<_> = fs::read_dir(&dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.contains("secrets") && n.contains("corrupt"))
-        .collect();
-    assert!(
-        !backups.is_empty(),
-        "expected a .corrupt backup of secrets.json, got dir listing without match"
-    );
+    match StoreData::load(dir.clone()) {
+        Ok(reloaded) => {
+            assert_eq!(
+                reloaded.secret("acc1").unwrap().password,
+                "must-not-be-wiped",
+                "keychain/file recovery must keep credentials"
+            );
+        }
+        Err(err) => {
+            // 纯文件后端：必须失败且备份，不能空表落盘
+            assert!(
+                err.contains("secrets") || err.contains("凭据") || err.contains("解析"),
+                "error should mention secrets/parse failure: {err}"
+            );
+            let backups: Vec<_> = fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.contains("secrets") && n.contains("corrupt"))
+                .collect();
+            assert!(!backups.is_empty(), "expected a .corrupt backup");
+        }
+    }
 
     fs::remove_dir_all(dir).ok();
 }
-
 #[test]
 fn reload_accounts_from_disk_picks_up_cli_added_account() {
     let (dir, mut gui_store) = load_store("reload-accounts");
@@ -378,6 +373,7 @@ fn drafts_filters_and_trusted_contacts_are_persisted_with_overwrite_semantics() 
             subject: "Old subject".into(),
             body: "old".into(),
             sign: true,
+            attachment_paths: vec!["/tmp/a.pdf".into()],
             updated_at: 1,
         },
     )

@@ -122,12 +122,14 @@ pub fn send_mail(
     let mut recipients: Vec<String> = to.iter().chain(cc.iter()).cloned().collect();
     // 规范化：签名 to_hash 与验证侧一致
     recipients.retain(|a| !a.trim().is_empty());
+    let message_id = crypto::generate_message_id();
     let sign_content = crypto::SignContent {
         subject,
         body_text: &final_body,
         body_html: None, // 写信器当前只发 text/plain
         recipients: &recipients,
         attachments: &attachments,
+        message_id: Some(message_id.as_str()),
     };
 
     let mut builder = MessageBuilder::new()
@@ -137,6 +139,7 @@ pub fn send_mail(
             .map(|a| ("", a.as_str()))
             .collect::<Vec<(&str, &str)>>())
         .subject(subject)
+        // Message-ID 由签名头一并写入（v3 与 canon 绑定同一值）
         .text_body(final_body.as_str());
     if !cc.is_empty() {
         builder = builder.cc(cc

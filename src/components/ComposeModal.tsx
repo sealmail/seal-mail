@@ -38,7 +38,7 @@ export function ComposeModal(p: Props) {
   const [body, setBody] = useState(p.draft?.body ?? p.prefill?.body ?? "");
   const [sign, setSign] = useState(p.draft?.sign ?? true);
   /** 附件：本地文件绝对路径（发送时后端读取） */
-  const [attachPaths, setAttachPaths] = useState<string[]>([]);
+  const [attachPaths, setAttachPaths] = useState<string[]>(p.draft?.attachmentPaths ?? []);
   const draftIdRef = useRef(p.draft?.id ?? "");
 
   async function pickAttachments() {
@@ -97,13 +97,27 @@ export function ComposeModal(p: Props) {
     }
   }
 
-  const hasContent = !!(to.trim() || cc.trim() || subject.trim() || body.trim());
+  const hasContent = !!(to.trim() || cc.trim() || subject.trim() || body.trim() || attachPaths.length);
+
+  function draftPayload(): Draft {
+    return {
+      id: draftIdRef.current,
+      accountId: account.id,
+      to,
+      cc,
+      subject,
+      body,
+      sign,
+      attachmentPaths: attachPaths,
+      updatedAt: 0,
+    };
+  }
 
   // 草稿自动保存（防抖 800ms；仅撰写阶段）
   useEffect(() => {
     if (step !== 0 || countdown !== null || !hasContent) return;
     const timer = setTimeout(() => {
-      saveDraft({ id: draftIdRef.current, accountId: account.id, to, cc, subject, body, sign, updatedAt: 0 })
+      saveDraft(draftPayload())
         .then((d) => {
           draftIdRef.current = d.id;
         })
@@ -111,12 +125,12 @@ export function ComposeModal(p: Props) {
     }, 800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, cc, subject, body, sign, step, countdown]);
+  }, [to, cc, subject, body, sign, attachPaths, step, countdown]);
 
   function handleClose() {
     // 关闭前最后存一次，防抖窗口里的输入不丢
     if (step === 0 && hasContent) {
-      saveDraft({ id: draftIdRef.current, accountId: account.id, to, cc, subject, body, sign, updatedAt: 0 }).catch(
+      saveDraft(draftPayload()).catch(
         (e) => console.error("草稿保存失败", e)
       );
     }

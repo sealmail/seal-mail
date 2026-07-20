@@ -348,7 +348,8 @@ fn account_exists(app: &AppHandle, account_id: &str) -> bool {
 }
 
 fn watch_imap(app: &AppHandle, account_id: &str) {
-    let mut last_exists: Option<u32> = None;
+    // 用 UIDNEXT 判断新邮件（EXISTS 在删信+收信对冲时会漏报）
+    let mut last_uid_next: Option<u32> = None;
     let mut force_refresh = false;
     loop {
         let (account, secret) = match creds(app, account_id, force_refresh) {
@@ -361,7 +362,7 @@ fn watch_imap(app: &AppHandle, account_id: &str) {
             }
         };
         force_refresh = false;
-        if let Err(e) = idle_session(app, account_id, &account, &secret, &mut last_exists) {
+        if let Err(e) = idle_session(app, account_id, &account, &secret, &mut last_uid_next) {
             eprintln!("[watcher] {} IDLE 连接中断: {}", account_id, e);
             // token 被服务器提前作废时，本地 expires_at 判断不出来，下一轮强制刷新
             force_refresh = secret.oauth.is_some() && oauth::is_auth_rejected(&e);
@@ -376,14 +377,12 @@ fn idle_session(
     account_id: &str,
     account: &Account,
     secret: &AccountSecret,
-    last_exists: &mut Option<u32>,
+    last_uid_next: &mut Option<u32>,
 ) -> Result<(), String> {
     let mut sess = imap_client::connect(account, secret)?;
     let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-    let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
-    check_exists(app, account_id, mb.exists, last_exists, || {
-        fetch_imap_notices(app, account, secret, new_count)
-    });
+    let uid_next = mb.uid_next.unwrap_or(0);
+    maybe_emit_uid_next(app, account_id, uid_next, last_uid_next, account, secret);
     for _ in 0..IDLE_ROUNDS_PER_CONN {
         if !account_exists(app, account_id) {
             let _ = sess.logout();
@@ -395,15 +394,39 @@ fn idle_session(
             .wait_with_timeout(IDLE_ROUND)
             .map_err(|e| e.to_string())?;
         let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
-        let new_count = mb.exists.saturating_sub(last_exists.unwrap_or(mb.exists));
-        check_exists(app, account_id, mb.exists, last_exists, || {
-            fetch_imap_notices(app, account, secret, new_count)
-        });
+        let uid_next = mb.uid_next.unwrap_or(0);
+        maybe_emit_uid_next(app, account_id, uid_next, last_uid_next, account, secret);
     }
     let _ = sess.logout();
     Ok(())
 }
 
+fn maybe_emit_uid_next(
+    app: &AppHandle,
+    account_id: &str,
+    uid_next: u32,
+    last: &mut Option<u32>,
+    account: &Account,
+    secret: &AccountSecret,
+) {
+    if uid_next == 0 {
+        return;
+    }
+    if let Some(prev) = *last {
+        if uid_next > prev {
+            let n = (uid_next - prev).min(3);
+            emit_new_mail(
+                app,
+                account_id,
+                uid_next - prev,
+                fetch_imap_notices(app, account, secret, n),
+            );
+        }
+    }
+    *last = Some(uid_next);
+}
+
+/// POP3：用邮件数量差判断新邮件（协议无 UIDNEXT）
 fn check_exists<F>(
     app: &AppHandle,
     account_id: &str,

@@ -6,10 +6,13 @@ import {
   getCloseBehavior,
   getLanguagePref,
   getNotifyNewMail,
+  getThemePref,
   setCloseBehavior,
   setLanguagePref,
   setNotifyNewMail,
+  setThemePref,
   useLocalKey,
+  type ThemePref,
 } from "../api";
 import { applyLangPref, useI18n, type LangPref } from "../i18n";
 import { LedgerBindModal } from "./LedgerBindModal";
@@ -71,6 +74,31 @@ export function KeysView(p: Props) {
       const saved = await setLanguagePref(next);
       setLangPref(saved);
       applyLangPref(saved);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // ── 外观主题 ──
+  const [themePref, setThemePrefState] = useState<ThemePref | null>(null);
+  useEffect(() => {
+    getThemePref()
+      .then(setThemePrefState)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  function applyTheme(theme: ThemePref) {
+    const dark =
+      theme === "dark" ||
+      (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }
+
+  async function handleTheme(next: ThemePref) {
+    try {
+      const saved = await setThemePref(next);
+      setThemePrefState(saved);
+      applyTheme(saved);
     } catch (e) {
       setError(String(e));
     }
@@ -412,6 +440,31 @@ export function KeysView(p: Props) {
               <option value="system">{t("跟随系统")}</option>
               <option value="zh">中文</option>
               <option value="en">English</option>
+            </select>
+          </div>
+
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 14, marginTop: 16,
+              paddingTop: 16, borderTop: "1px solid var(--border-soft)",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)" }}>{t("外观主题")}</div>
+              <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, lineHeight: 1.5 }}>
+                {t("浅色、深色或跟随系统外观")}
+              </div>
+            </div>
+            <select
+              className="select"
+              style={{ width: 130 }}
+              value={themePref ?? "system"}
+              disabled={themePref === null}
+              onChange={(e) => void handleTheme(e.target.value as ThemePref)}
+            >
+              <option value="system">{t("跟随系统")}</option>
+              <option value="light">{t("浅色")}</option>
+              <option value="dark">{t("深色")}</option>
             </select>
           </div>
 

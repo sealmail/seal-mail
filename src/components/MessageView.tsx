@@ -152,6 +152,8 @@ export function MessageView(p: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [imagePreview]);
 
+  const downloadGen = useRef(0);
+
   async function downloadAttachment(mail: EmailFull, i: number, name: string) {
     const warning = attachmentWarning(name);
     // WKWebView 里 window.confirm 是 no-op（静默返回 false），必须走 dialog 插件
@@ -161,13 +163,21 @@ export function MessageView(p: Props) {
     const path = await saveFileDialog({ defaultPath, title: t("保存附件") });
     if (!path) return;
     const stateKey = `${mail.meta.accountId}/${mail.meta.folder}/${mail.meta.uid}/${i}`;
+    const gen = ++downloadGen.current;
     setAttachState((s) => ({ ...s, [stateKey]: t("保存中…") }));
     try {
       await saveAttachment(mail.meta.accountId, mail.meta.folder, mail.meta.uid, i, path);
+      if (gen !== downloadGen.current) return; // 已取消/新下载抢占
       setAttachState((s) => ({ ...s, [stateKey]: t("已保存 ✓") }));
     } catch (e) {
+      if (gen !== downloadGen.current) return;
       setAttachState((s) => ({ ...s, [stateKey]: t("失败：") + e }));
     }
+  }
+
+  function cancelAttachmentDownloads() {
+    downloadGen.current += 1;
+    setAttachState({});
   }
 
   async function previewImageAttachment(mail: EmailFull, i: number, a: AttachmentMeta) {
@@ -216,10 +226,14 @@ export function MessageView(p: Props) {
           className="btn-ghost attach-save"
           onClick={(e) => {
             e.stopPropagation();
+            if (attachState[stateKey] === t("保存中…")) {
+              cancelAttachmentDownloads();
+              return;
+            }
             downloadAttachment(mail, i, a.name);
           }}
         >
-          {t("保存")}
+          {attachState[stateKey] === t("保存中…") ? t("取消") : t("保存")}
         </button>
       </div>
     );
