@@ -58,10 +58,17 @@ fn read_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(e) => Err(format!("读取 {} 失败: {e}", path.display())),
         Ok(raw) => {
-            if raw.trim().is_empty() {
-                return Ok(T::default());
-            }
-            match serde_json::from_str(&raw) {
+            // 空文件不是合法状态:write_json 永远写完整 JSON,空内容意味着写入被截断。
+            // 静默当默认值会把仅存的备份线索(原文件)覆盖掉。
+            let parsed = if raw.trim().is_empty() {
+                Err(serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "文件为空,疑似写入被截断",
+                )))
+            } else {
+                serde_json::from_str(&raw)
+            };
+            match parsed {
                 Ok(v) => Ok(v),
                 Err(e) => {
                     let label = path
@@ -100,31 +107,46 @@ fn corrupt_backup_path(path: &Path) -> PathBuf {
 }
 
 /// 原子落盘：写临时文件 → fsync → rename，避免写一半断电把配置截断成损坏 JSON。
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    let s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+/// 临时文件名含 pid + 进程内序号：GUI 与 CLI 子进程并发保存同一文件时,
+/// 固定 tmp 名会互相截断对方写到一半的内容,rename 后把半截字节顶进正式文件。
+pub(crate) fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| format!("无效路径: {}", path.display()))?;
-    let tmp_path = path.with_file_name(format!("{file_name}.tmp"));
-    {
+    let tmp_path = path.with_file_name(format!(
+        "{file_name}.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let write_result = (|| {
         let mut f = File::create(&tmp_path)
             .map_err(|e| format!("写入 {} 失败: {e}", tmp_path.display()))?;
-        f.write_all(s.as_bytes())
+        // 秘密文件的权限要在写入内容前收紧,rename 之后再 chmod 会留下可读窗口
+        crate::crypto::restrict_perms(&tmp_path);
+        f.write_all(bytes)
             .map_err(|e| format!("写入 {} 失败: {e}", tmp_path.display()))?;
         f.sync_all()
             .map_err(|e| format!("fsync {} 失败: {e}", tmp_path.display()))?;
-    }
-    fs::rename(&tmp_path, path).map_err(|e| {
+        fs::rename(&tmp_path, path).map_err(|e| format!("替换 {} 失败: {e}", path.display()))
+    })();
+    if let Err(e) = write_result {
         let _ = fs::remove_file(&tmp_path);
-        format!("替换 {} 失败: {e}", path.display())
-    })?;
+        return Err(e);
+    }
     if let Some(parent) = path.parent() {
         if let Ok(dirf) = File::open(parent) {
             let _ = dirf.sync_all();
         }
     }
     Ok(())
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    atomic_write_bytes(path, s.as_bytes())
 }
 
 impl StoreData {

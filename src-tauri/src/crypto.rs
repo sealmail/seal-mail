@@ -292,7 +292,21 @@ fn headers_for_current(
     SignedHeaders { headers }
 }
 
-pub fn sign_email(identity: &Identity, from_addr: &str, content: &SignContent<'_>) -> SignedHeaders {
+/// v3 canon 绑定 Message-ID,签名时必须有值:签 `-` 的 mid 哈希会匹配任何
+/// 缺 Message-ID 头的未来邮件,削弱逐信绑定。
+fn require_message_id(content: &SignContent<'_>) -> Result<(), String> {
+    match content.message_id {
+        Some(mid) if !mid.trim().is_empty() => Ok(()),
+        _ => Err("v3 签名要求 Message-ID,不能为空".into()),
+    }
+}
+
+pub fn sign_email(
+    identity: &Identity,
+    from_addr: &str,
+    content: &SignContent<'_>,
+) -> Result<SignedHeaders, String> {
+    require_message_id(content)?;
     let date = chrono::Utc::now().to_rfc3339();
     let hashes = content_hashes(content);
     let canon = canon_string_v3(
@@ -306,7 +320,7 @@ pub fn sign_email(identity: &Identity, from_addr: &str, content: &SignContent<'_
         &hashes.mid,
     );
     let sig = identity.signing_key.sign(canon.as_bytes());
-    headers_for_current(
+    Ok(headers_for_current(
         "ed25519",
         (H_PUBKEY, identity.public_key_b64()),
         from_addr,
@@ -314,7 +328,7 @@ pub fn sign_email(identity: &Identity, from_addr: &str, content: &SignContent<'_
         &hashes,
         B64.encode(sig.to_bytes()),
         content.message_id,
-    )
+    ))
 }
 
 /// Ledger 签名（EIP-191 personal_sign）。`sign` 回调把 canon 字节送往设备并返回 65 字节 r‖s‖v——
@@ -325,6 +339,7 @@ pub fn sign_email_eth(
     content: &SignContent<'_>,
     sign: impl FnOnce(&[u8]) -> Result<[u8; 65], String>,
 ) -> Result<SignedHeaders, String> {
+    require_message_id(content)?;
     let date = chrono::Utc::now().to_rfc3339();
     let hashes = content_hashes(content);
     let canon = canon_string_v3(
@@ -493,8 +508,10 @@ pub fn v1_unsigned_surface_present(body_html: Option<&str>, attachment_count: us
 
 /// 签名时间是否过旧，不宜作为「当前可信指令」绿标（历史归档仍可看 SignedUnknown）。
 pub fn signature_too_old(signed_date: &str) -> bool {
+    // 日期是签名者自选的:解析不了必须按"过旧"处理(fail-closed),
+    // 否则乱写日期就能同时躲过过期与未来时间两个降级
     let Ok(dt) = chrono::DateTime::parse_from_rfc3339(signed_date.trim()) else {
-        return false;
+        return true;
     };
     let age = chrono::Utc::now().signed_duration_since(dt.with_timezone(&chrono::Utc));
     age.num_days() > MAX_VERIFIED_AGE_DAYS

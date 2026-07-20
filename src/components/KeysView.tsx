@@ -15,6 +15,7 @@ import {
   type ThemePref,
 } from "../api";
 import { applyLangPref, useI18n, type LangPref } from "../i18n";
+import { applyTheme } from "../theme";
 import { LedgerBindModal } from "./LedgerBindModal";
 import { shortFpr } from "../trust";
 import {
@@ -86,13 +87,6 @@ export function KeysView(p: Props) {
       .then(setThemePrefState)
       .catch((e) => setError(String(e)));
   }, []);
-
-  function applyTheme(theme: ThemePref) {
-    const dark =
-      theme === "dark" ||
-      (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-  }
 
   async function handleTheme(next: ThemePref) {
     try {

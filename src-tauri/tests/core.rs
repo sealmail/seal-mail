@@ -79,7 +79,7 @@ fn build_raw(
         .text_body(body);
     if let Some(id) = identity {
         let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
-        for (name, value) in crypto::sign_email(id, from_addr, &content).headers {
+        for (name, value) in crypto::sign_email(id, from_addr, &content).unwrap().headers {
             b = b.header(name, Raw::new(value));
         }
     }
@@ -105,7 +105,7 @@ fn sign_then_verify_roundtrip() {
     let recipients = default_recipients();
     let mid = crypto::generate_message_id();
     let content = sign_content("Review", body, &recipients, &[], Some(mid.as_str()));
-    let signed = crypto::sign_email(&id, "mara@example.com", &content);
+    let signed = crypto::sign_email(&id, "mara@example.com", &content).unwrap();
     let h = seal_headers_from(&signed);
     assert_eq!(h.version, "3");
     let actual = sign_content("Review", body_norm, &recipients, &[], Some(mid.as_str()));
@@ -469,8 +469,9 @@ fn malicious_multibyte_body_hash_does_not_panic() {
     let id = test_identity();
     let from = "attacker@evil.test";
     let body = "looks fine";
-    // "aa"(2) + 😀×5：字节下标 12 落在第 3 个 emoji 中间 → 旧切片会 panic
-    let evil_hash = format!("aa{}", "😀".repeat(5));
+    // "aa"(2) + 😀×11(共 13 字符)：字节下标 12 落在第 3 个 emoji 中间 → 旧切片会 panic；
+    // 超过 12 字符,展示层必须按字符截断并带省略号
+    let evil_hash = format!("aa{}", "😀".repeat(11));
     let date = "2026-01-01T00:00:00Z";
     let canon = crypto::canon_string(from, date, &evil_hash);
     let sig = id.signing_key.sign(canon.as_bytes());
@@ -550,7 +551,7 @@ fn v2_attachment_swap_is_tampered() {
     let attach = vec![("invoice.pdf".into(), b"PDF-REAL".to_vec())];
     let mid = crypto::generate_message_id();
     let content = sign_content(subject, body, &recipients, &attach, Some(mid.as_str()));
-    let signed = crypto::sign_email(&id, from, &content);
+    let signed = crypto::sign_email(&id, from, &content).unwrap();
     let mut b = MessageBuilder::new()
         .from(("Mara Castellanos", from))
         .to(vec![("", "aria@example.com")])
@@ -991,3 +992,40 @@ fn e2e_self_signed_mail_is_verified() {
 }
 
 
+
+#[test]
+fn folded_html_part_cannot_ride_on_plaintext_signature() {
+    // 攻击:把签名过的纯文本邮件重打包成 multipart/alternative,HTML 部件用 RFC 折行头
+    // (Content-Type:\r\n\ttext/html)。HTML 检测若只扫原始子串就漏掉 → 攻击 HTML 顶绿标。
+    let id = test_identity();
+    let subject = "Quarterly report";
+    let body = "All numbers are in the attached sheet.";
+    let recipients = default_recipients();
+    let mid = crypto::generate_message_id();
+    let content = sign_content(subject, body, &recipients, &[], Some(mid.as_str()));
+    let signed = crypto::sign_email(&id, "mara@example.com", &content).unwrap();
+    let mut seal_headers = String::new();
+    for (name, value) in &signed.headers {
+        seal_headers.push_str(&format!("{name}: {value}\r\n"));
+    }
+    let raw = format!(
+        "From: Mara <mara@example.com>\r\nTo: aria@example.com\r\nSubject: {subject}\r\n{seal_headers}MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"b1\"\r\n\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n--b1\r\nContent-Type:\r\n\ttext/html; charset=utf-8\r\n\r\n<b>attacker controlled html</b>\r\n--b1--\r\n"
+    );
+    let trusted = trusted_for(&id, "Mara", "mara@example.com");
+    let mail = parse_email(raw.as_bytes(), 301, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(
+        mail.meta.trust, "tampered",
+        "folded-header HTML part must break the plaintext signature"
+    );
+}
+
+#[test]
+fn plaintext_body_mentioning_html_content_type_still_verifies() {
+    // 误报回归:正文引用 "content-type: text/html" 字样的合法纯文本签名邮件不能被判 tampered。
+    let id = test_identity();
+    let body = "Set the header content-type: text/html when serving the page.";
+    let raw = build_raw("Mara", "mara@example.com", "MIME howto", body, Some(&id));
+    let trusted = trusted_for(&id, "Mara", "mara@example.com");
+    let mail = parse_email(&raw, 302, "acc1", "INBOX", true, false, &trusted).unwrap();
+    assert_eq!(mail.meta.trust, "verified");
+}

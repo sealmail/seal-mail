@@ -592,3 +592,24 @@ fn locate_in_db_finds_mail_moved_out_of_inbox() {
 
     fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn truncated_empty_accounts_json_blocks_load_with_backup() {
+    // 空文件 = 写入被截断的典型产物;静默当默认值会把仅存线索覆盖掉
+    let dir = temp_config_dir("empty-accounts");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("accounts.json"), "").unwrap();
+    let err = match StoreData::load(dir.clone()) {
+        Ok(_) => panic!("空 accounts.json 必须报错"),
+        Err(e) => e,
+    };
+    assert!(err.contains("accounts.json"), "{err}");
+    let backups: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("accounts") && n.contains("corrupt"))
+        .collect();
+    assert!(!backups.is_empty(), "应留下 .corrupt 备份");
+    let _ = std::fs::remove_dir_all(&dir);
+}

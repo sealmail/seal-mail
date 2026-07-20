@@ -381,6 +381,12 @@ fn idle_session(
 ) -> Result<(), String> {
     let mut sess = imap_client::connect(account, secret)?;
     let mb = sess.examine("INBOX").map_err(|e| e.to_string())?;
+    // UIDNEXT 是可选返回:缺失时新邮件推送整条链路会静默失效,必须留痕
+    if mb.uid_next.is_none() {
+        crate::logging::log(format!(
+            "[watcher] {account_id} EXAMINE 未返回 UIDNEXT,新邮件推送不可用"
+        ));
+    }
     let uid_next = mb.uid_next.unwrap_or(0);
     maybe_emit_uid_next(app, account_id, uid_next, last_uid_next, account, secret);
     for _ in 0..IDLE_ROUNDS_PER_CONN {

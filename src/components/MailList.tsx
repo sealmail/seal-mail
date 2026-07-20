@@ -122,12 +122,21 @@ export function MailList(p: Props) {
     setScrollTop(0);
   }, [p.filterMode, p.categoryMode, p.title]);
 
-  // j/k 或程序选中后，把选中行滚进可视区（虚拟列表不会自动 scrollIntoView）
+  // j/k 或程序选中后，把选中行滚进可视区（虚拟列表不会自动 scrollIntoView）。
+  // 只在 selectedKey 真正变化时滚动：后台同步刷新 rows 不能把用户手动滚走的
+  // 列表又拽回选中行。
+  const scrolledForKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (p.selectedKey === scrolledForKeyRef.current) return;
+    if (!p.selectedKey) {
+      scrolledForKeyRef.current = null;
+      return;
+    }
     const el = scrollRef.current;
-    if (!el || !p.selectedKey) return;
+    if (!el) return;
     const idx = rows.findIndex((r) => r.selected);
-    if (idx < 0) return;
+    if (idx < 0) return; // 选中行还没进列表（rows 稍后更新），届时再滚
+    scrolledForKeyRef.current = p.selectedKey;
     const rowTop = idx * ROW_HEIGHT;
     const rowBottom = rowTop + ROW_HEIGHT;
     const viewTop = el.scrollTop;

@@ -223,8 +223,10 @@ async fn cli_json(
         if brief.starts_with("pref") {
             refresh_prefs_in_memory(&app2);
         }
-        // 加/删账户：刷新账户+凭据并补齐 watcher（否则新账户收不到推送）
-        if brief.starts_with("account") {
+        // 加/删账户：刷新账户+凭据并补齐 watcher（否则新账户收不到推送）。
+        // 只在写操作后刷新:account list/test 也以 "account" 开头,
+        // 不能每次列账户都重读钥匙串+重建 watcher
+        if brief.starts_with("account add") || brief.starts_with("account remove") {
             refresh_accounts_in_memory(&app2);
         }
     }

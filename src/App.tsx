@@ -5,6 +5,7 @@ import { WebviewWindow, getCurrentWebviewWindow } from "@tauri-apps/api/webviewW
 import * as api from "./api";
 import { classifyError, classifyErrorWithPrefix, type AppError } from "./errors";
 import { applyLangPref, t, useI18n } from "./i18n";
+import { useTheme } from "./theme";
 import { AccountModal } from "./components/AccountModal";
 import { ComposeModal, type ComposePrefill } from "./components/ComposeModal";
 import { FiltersModal } from "./components/FiltersModal";
@@ -159,6 +160,7 @@ function PaneResizer({
 
 function PopoutApp({ storageKey }: { storageKey: string }) {
   useZoomShortcuts({ persist: false });
+  useTheme();
   const [mail] = useState<EmailFull | null>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -217,6 +219,7 @@ export default function App() {
 
 function MailApp() {
   useI18n();
+  useTheme();
   const [state, setState] = useState<AppStateView | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState("");
@@ -332,15 +335,6 @@ function MailApp() {
   useEffect(() => {
     // 界面语言尽早生效（默认中文，英文用户首屏可能闪一下中文）
     api.getLanguagePref().then(applyLangPref).catch(() => {});
-    api
-      .getThemePref()
-      .then((theme) => {
-        const dark =
-          theme === "dark" ||
-          (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-      })
-      .catch(() => {});
     api
       .getState()
       .then((s) => {
@@ -575,7 +569,9 @@ function MailApp() {
       }
       if (!fetchRequests.current.isCurrent(request)) return;
       if (resetCache) {
-        reportListMessage(
+        // 信息性提示走 notice 通道（list-notice-bar），不能占用错误通道
+        // （错误通道渲染 ⚠ 琥珀色错误条，且会压住真正的 notice）
+        setLoadMoreNotice(
           t("服务器目录标识已变化（UIDVALIDITY），已重建本地缓存；更早邮件需重新同步。")
         );
       }

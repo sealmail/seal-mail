@@ -155,7 +155,7 @@ pub fn send_mail(
     match &signer {
         Signer::None => {}
         Signer::Local(id) => {
-            for (name, value) in crypto::sign_email(id, &account.email, &sign_content).headers {
+            for (name, value) in crypto::sign_email(id, &account.email, &sign_content)?.headers {
                 builder = builder.header(name, Raw::new(value));
             }
         }

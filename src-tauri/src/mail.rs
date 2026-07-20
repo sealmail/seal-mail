@@ -9,19 +9,19 @@ fn domain_of(addr: &str) -> String {
     addr.rsplit('@').next().unwrap_or("").to_lowercase()
 }
 
-/// 原始 RFC822 是否含真实 text/html 部件（不含 mail-parser 由纯文本合成的 HTML）。
-fn mime_has_text_html(raw: &[u8]) -> bool {
-    let lower = String::from_utf8_lossy(raw).to_ascii_lowercase();
-    lower.contains("content-type: text/html")
-        || lower.contains("content-type:text/html")
-        || lower.contains("content-type: text/html;")
+/// 邮件是否含真实 text/html 部件（不含 mail-parser 由纯文本合成的 HTML）。
+/// 必须看解析后的 MIME 结构：扫原始字节会被折行头绕过，也会被正文里的字面量误触发。
+fn message_has_real_html(msg: &mail_parser::Message) -> bool {
+    (0..msg.html_body_count())
+        .filter_map(|pos| msg.html_part(pos as u32))
+        .any(|p| matches!(p.body, mail_parser::PartType::Html(_)))
 }
 
 /// 展示用哈希/摘要前缀：按字符截断，避免不可信字符串按字节切片时切进 UTF-8 中间 panic。
 fn hash_prefix_display(s: &str, max_chars: usize) -> String {
     let count = s.chars().count();
     if count <= max_chars {
-        return format!("{s}…");
+        return s.to_string();
     }
     let prefix: String = s.chars().take(max_chars).collect();
     format!("{prefix}…")
@@ -30,8 +30,9 @@ fn hash_prefix_display(s: &str, max_chars: usize) -> String {
 /// 签名时间明显在未来（>24h）时不可给绿标：时钟攻击或头被拼装。
 /// 真正的重放防护需要 canon 绑定收件人/Message-ID（后续 v2）；此处只挡离谱未来戳。
 fn signature_date_implausible(signed_date: &str) -> bool {
+    // fail-closed:解析不了的日期视为不可信(签名者自选字段,不能给豁免)
     let Ok(dt) = chrono::DateTime::parse_from_rfc3339(signed_date.trim()) else {
-        return false;
+        return true;
     };
     let now = chrono::Utc::now();
     dt > now + chrono::Duration::hours(24)
@@ -1115,7 +1116,7 @@ pub fn parse_email(
     recipients.extend(cc.iter().cloned());
 
     // mail-parser 的 body_html 会把纯文本合成 HTML；签名只覆盖真实的 text/html MIME 部件
-    let html_for_sign = if mime_has_text_html(raw) {
+    let html_for_sign = if message_has_real_html(&msg) {
         body_html.as_deref()
     } else {
         None
