@@ -1,5 +1,8 @@
 //! 账户凭据存储：优先系统钥匙串（macOS Keychain / Windows Credential Manager / secret-service），
-//! 不可用时回退到 secrets.json（0600）。首次从文件迁移到钥匙串后文件改为占位标记。
+//! 不可用时回退到 secrets.json（0600）。
+//!
+//! 钥匙串写入成功后，磁盘上只保留 `{"backend":"keychain"}` 占位标记，**不再**落盘明文密码。
+//! 这样 CLI 与 GUI 同用户同配置目录仍可从钥匙串读到凭据；无钥匙串环境才用文件。
 
 use crate::models::AccountSecret;
 use serde::{Deserialize, Serialize};
@@ -19,9 +22,7 @@ enum SecretsFile {
 /// 每个配置目录独立钥匙串条目，避免测试/多 profile 互踩。
 fn entry_for(dir: &Path) -> Result<keyring::Entry, String> {
     use sha2::{Digest, Sha256};
-    let canon = dir
-        .canonicalize()
-        .unwrap_or_else(|_| dir.to_path_buf());
+    let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     let digest = Sha256::digest(canon.to_string_lossy().as_bytes());
     let name = format!("secrets-{}", hex::encode(&digest[..8]));
     keyring::Entry::new(SERVICE, &name).map_err(|e| format!("钥匙串不可用: {e}"))
@@ -50,7 +51,9 @@ fn write_marker(dir: &Path) -> Result<(), String> {
     let p = file_path(dir);
     let marker = serde_json::json!({ "backend": "keychain" });
     let s = serde_json::to_string_pretty(&marker).map_err(|e| e.to_string())?;
-    fs::write(&p, s).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("json.tmp");
+    fs::write(&tmp, &s).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
     crate::crypto::restrict_perms(&p);
     Ok(())
 }
@@ -58,12 +61,21 @@ fn write_marker(dir: &Path) -> Result<(), String> {
 fn write_file_map(dir: &Path, map: &HashMap<String, AccountSecret>) -> Result<(), String> {
     let p = file_path(dir);
     let s = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
-    // 原子写
     let tmp = p.with_extension("json.tmp");
     fs::write(&tmp, &s).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
     crate::crypto::restrict_perms(&p);
     Ok(())
+}
+
+fn file_is_keychain_marker(dir: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(file_path(dir)) else {
+        return false;
+    };
+    matches!(
+        serde_json::from_str::<SecretsFile>(&raw),
+        Ok(SecretsFile::Marker { .. })
+    )
 }
 
 fn read_file_map(dir: &Path) -> Result<HashMap<String, AccountSecret>, String> {
@@ -76,7 +88,6 @@ fn read_file_map(dir: &Path) -> Result<HashMap<String, AccountSecret>, String> {
             Ok(SecretsFile::Map(m)) => Ok(m),
             Ok(SecretsFile::Marker { .. }) => Ok(HashMap::new()),
             Err(e) => {
-                // 损坏：改名备份
                 let backup = p.with_extension(format!(
                     "json.corrupt.{}",
                     std::time::SystemTime::now()
@@ -91,40 +102,40 @@ fn read_file_map(dir: &Path) -> Result<HashMap<String, AccountSecret>, String> {
     }
 }
 
-/// 加载凭据：钥匙串优先；若钥匙串空/失败则读文件，并尽量迁移到钥匙串。
+/// 加载凭据：钥匙串优先；失败且磁盘声明在钥匙串时要报错，不能静默变空表。
 pub fn load(dir: &Path) -> Result<HashMap<String, AccountSecret>, String> {
     match keychain_read(dir) {
-        Ok(m) if !m.is_empty() => return Ok(m),
-        Ok(_) => {
-            // 钥匙串空：可能是新机，尝试文件迁移
+        Ok(m) if !m.is_empty() => Ok(m),
+        Ok(_empty) => {
+            // 钥匙串空：尝试从文件迁移旧明文
+            let file_map = read_file_map(dir)?;
+            if !file_map.is_empty() {
+                if keychain_write(dir, &file_map).is_ok() {
+                    let _ = write_marker(dir);
+                }
+            }
+            Ok(file_map)
         }
-        Err(_) => {
-            // 无钥匙串环境（CI/测试）：纯文件
-            return read_file_map(dir);
+        Err(kc_err) => {
+            // 磁盘写着 keychain 占位，却读不出钥匙串 → 绝不能当成无账户
+            if file_is_keychain_marker(dir) {
+                return Err(format!(
+                    "凭据保存在系统钥匙串中，但当前无法读取：{kc_err}"
+                ));
+            }
+            read_file_map(dir)
         }
     }
-    let file_map = read_file_map(dir)?;
-    if !file_map.is_empty() {
-        if keychain_write(dir, &file_map).is_ok() {
-            let _ = write_marker(dir);
-        }
-    }
-    Ok(file_map)
 }
 
-/// 保存凭据：优先钥匙串；失败则写文件。
+/// 保存凭据：优先钥匙串；成功后磁盘只留标记（无明文）。钥匙串失败才写文件。
 pub fn save(dir: &Path, map: &HashMap<String, AccountSecret>) -> Result<(), String> {
     match keychain_write(dir, map) {
         Ok(()) => {
-            let _ = write_marker(dir);
-            // 同步写一份文件备份，便于备份/迁移；权限 0600
-            let _ = write_file_map(dir, map);
-            Ok(())
+            // 故意不把明文再写回 secrets.json
+            write_marker(dir)
         }
-        Err(_kc_err) => {
-            // 回退文件，保证 CLI/测试可用
-            write_file_map(dir, map)
-        }
+        Err(_kc_err) => write_file_map(dir, map),
     }
 }
 
@@ -165,6 +176,16 @@ mod tests {
         write_file_map(&dir, &m).unwrap();
         let loaded = read_file_map(&dir).unwrap();
         assert_eq!(loaded.get("a1").unwrap().password, "p");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn marker_file_is_not_treated_as_account_map() {
+        let dir = temp();
+        write_marker(&dir).unwrap();
+        let m = read_file_map(&dir).unwrap();
+        assert!(m.is_empty());
+        assert!(file_is_keychain_marker(&dir));
         let _ = fs::remove_dir_all(dir);
     }
 }
