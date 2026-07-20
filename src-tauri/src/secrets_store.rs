@@ -48,6 +48,20 @@ pub(crate) trait KeychainBackend {
 
 struct SystemKeychain;
 
+/// 平台是否根本没有可用的安全存储（→ 纯文件模式）。
+/// Linux 无 secret-service（无头服务器/CI）时，keyring 表现为 NoStorageAccess 或
+/// PlatformFailure（zbus ServiceUnknown / 无 session bus）；这类机器上保存同样落不到
+/// 钥匙串，不存在顶掉风险，按「无钥匙串条目」处理。macOS/Windows 钥匙串必然存在，
+/// PlatformFailure 是真实错误，必须传播——静默当空表会让下一次保存把钥匙串里的
+/// 其它账户整表抹掉。注意 Marker 分支不受此豁免影响：文件指向钥匙串时读失败仍硬报错。
+fn keychain_storage_absent(err: &keyring::Error) -> bool {
+    match err {
+        keyring::Error::NoStorageAccess(_) => true,
+        keyring::Error::PlatformFailure(_) => cfg!(target_os = "linux"),
+        _ => false,
+    }
+}
+
 /// 每个配置目录独立钥匙串条目，避免测试/多 profile 互踩。
 fn entry_for(dir: &Path) -> Result<keyring::Entry, String> {
     use sha2::{Digest, Sha256};
@@ -65,11 +79,10 @@ impl KeychainBackend for SystemKeychain {
                 .map(Some)
                 .map_err(|err| format!("解析钥匙串凭据失败: {err}")),
             Err(keyring::Error::NoEntry) => Ok(None),
-            // 平台根本没有可用的钥匙串存储（无 secret-service 的 Linux）：
-            // 本来就走纯文件模式，保存也落不到钥匙串，不存在顶掉风险 → 当无钥匙串条目。
-            // 注意「读不出来」的其它错误（钥匙串锁定/D-Bus 抖动等）必须在下面报错，
+            // 平台根本没有可用安全存储时按无钥匙串条目处理（见 keychain_storage_absent）；
+            // 其它「读不出来」的错误（钥匙串锁定/D-Bus 抖动等）必须在下面报错，
             // 静默当空表会让下一次保存把钥匙串里的其它账户整表抹掉。
-            Err(keyring::Error::NoStorageAccess(_)) => Ok(None),
+            Err(err) if keychain_storage_absent(&err) => Ok(None),
             Err(err) => Err(format!("读取钥匙串失败: {err}")),
         }
     }
@@ -424,6 +437,23 @@ mod tests {
         let fresh = load_with(&FakeKeychain::default(), &dir).unwrap();
         assert!(fresh.is_empty());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// 平台无安全存储的分类：NoStorageAccess 一律算「无钥匙串」；
+    /// PlatformFailure 只在 Linux（无 secret-service 的无头环境/CI）算，
+    /// macOS/Windows 上必须继续当真实错误传播；NoEntry 等真实结果不受影响。
+    #[test]
+    fn keychain_storage_absent_classification() {
+        assert!(keychain_storage_absent(&keyring::Error::NoStorageAccess(
+            "no storage".into()
+        )));
+        assert_eq!(
+            keychain_storage_absent(&keyring::Error::PlatformFailure(
+                "zbus ServiceUnknown".into()
+            )),
+            cfg!(target_os = "linux")
+        );
+        assert!(!keychain_storage_absent(&keyring::Error::NoEntry));
     }
 
     #[test]
